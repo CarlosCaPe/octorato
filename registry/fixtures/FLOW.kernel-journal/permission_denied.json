@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "PermissionDenied",
+  "session_id": "kernel-selftest-session",
+  "agent_id": "kernel-selftest-agent",
+  "agent_type": "Reality Checker",
+  "transcript_path": "",
+  "cwd": "/home/agent/workspace",
+  "permission_mode": "acceptEdits",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_permdenied_1",
+  "tool_input": {"command": "rm -rf /"},
+  "reason": "Claude requested permissions to use Bash, but you haven't granted it yet."
+}

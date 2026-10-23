@@ -1,0 +1,10 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "command": "git stash"
+  },
+  "cwd": "{{SANDBOX}}",
+  "agent_id": "agent-b"
+}

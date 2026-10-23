@@ -1,6 +1,6 @@
 ---
 name: summarize-100
-description: "Comprime cualquier tema, documento o respuesta a ~100 palabras, las mas densas semanticamente. Dispara con '100 palabras', 'version 100', 'tldr 100', 'elevator pitch', 'comprime a 100'."
+description: "Compresses any topic, document or answer to ~100 words, the most semantically dense ones. Triggers on '100 palabras', 'version 100', 'tldr 100', 'elevator pitch', 'comprime a 100'."
 ---
 
 # summarize-100 — 100-Word Compression Skill

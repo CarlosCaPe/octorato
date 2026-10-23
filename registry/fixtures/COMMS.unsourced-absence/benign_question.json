@@ -1,0 +1,4 @@
+{
+  "transcript_path": "benign_question_transcript.jsonl",
+  "stop_hook_active": false
+}

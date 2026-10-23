@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-raw-python-urllib",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "python3 -c \"import urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:8080/api/send', data=b'{}'))\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_raw_python_urllib_transcript.jsonl"
+}

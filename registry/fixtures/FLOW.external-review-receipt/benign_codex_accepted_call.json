@@ -1,0 +1,10 @@
+{
+  "command": "{{NODE}} {{CODEX}} exec --skip-git-repo-check -m review-model 'Review this block and end with the panel lines.'",
+  "expect_complete": 1,
+  "expect_fields": {
+    "engine": "codex",
+    "requested_model": "review-model",
+    "exit_code": 0
+  },
+  "output": "Reviewed.\nPANEL-VERDICT: PASS\nPANEL-SHA256: 0000000000000000000000000000000000000000000000000000000000000000\n"
+}

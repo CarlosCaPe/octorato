@@ -6,6 +6,25 @@
 
 Octorato is an open-source AI-agent operating system. Its name fuses two ideas — *octopus* + *tesseract* — and that fusion runs all the way down through the architecture. Most of the vocabulary below falls into one of five families: **structure** (Brain, Arm, Company brain, CLASS/OBJECT/ARM), **flow** (4D Paradigm and its gates), **intelligence** (Connectome, Skills, Agents, Divisions), **money** (FinOps, Budget cap, Trace event), and **operations** (the sync scripts, the generic-safety guard, the self-growth loop).
 
+## Plain words first
+
+The A→Z below uses the brain's own vocabulary. If you only want the everyday meaning, this table is enough.
+
+| Word | Plain meaning |
+|---|---|
+| Brain | The shared folder of rules and guides, `~/.claude`. Public and generic: no client data in it, ever. |
+| Arm | One client, project or topic in its own sealed folder. An arm never knows another arm exists. |
+| Skill | A how-to guide the assistant loads when a task needs it. |
+| Agent | A role card: a text file describing a job (reviewer, data engineer, writer). Not a person. |
+| Hook | An automatic check that runs before or after the assistant acts. It can refuse the action. |
+| Gate | A hook that refuses. Fail-closed means "when in doubt, refuse". |
+| Kernel | New in v8. The part that gives every run an identity, a journal and a cap on steps and minutes. |
+| Friction | New in v10. A check refusing legitimate work. The brain counts it per check (`octo friction`). |
+| Connectome | An index that finds the right skill or agent for a task. |
+| 4D | The four steps every action follows: describe, delegate, check, disclose. |
+| Provenance footer | The receipt at the end of every answer: basis, engine, files touched, how it was verified. |
+| Operator | The human who runs the brain. The only bridge between arms. |
+
 ---
 
 ## A
@@ -40,6 +59,9 @@ The procedure for creating a new client arm: scaffold `.claude/CLAUDE.md` (sourc
 ---
 
 ## B
+
+### Base_Update_Verifier
+The re-review a pull request gets when its head moved only because master was merged into it. Started with `/requa <pr>` in Claude Code, it runs as a reviewer subagent, reads master from GitHub rather than a local branch, checks the new head's two parents, and compares the patch with the one that already passed QA (`scripts/requa.py`). Only an identical patch earns a QA receipt for the new head; a rebase or any other change gets a full review. The merge gate itself does not change. New in v10. See [[Getting-Started]].
 
 ### Brain
 The shared, open-source core: `~/.claude/` itself — *which IS the `octorato` repo*. It holds the rules (`CLAUDE.md`), the [[Skills]] (HOW), the [[Agents]] (WHO), the [[#Connectome (neural_map.json)]], the enforcement scripts, and templates. It is the **CLASS** (the DNA) in the [[#CLASS / OBJECT / ARM]] model and the central brain in the octopus metaphor: sets high-level intent, distributes generic knowledge down to arms. Octorato runs **1 + N brains** (applying the [[#8→∞ (lemniscate)]] anchor): one central brain here, plus one sealed [[#Arm memory]] brain per arm, N unbounded. It is *not* anyone's identity, client list, or credentials — those live in the [[#Company brain]].
@@ -106,6 +128,9 @@ The flow of **generic** brain knowledge (rules, paradigms, skills, identity) *do
 
 ## F
 
+### Friction_Ledger
+A local, gitignored log (`~/.claude/.cache/friction/ledger.jsonl`) with one line per check refusal or Stop block: check name, session, tool, reason code and a digest of the input. It never stores the prompt, the message or the reason text. A Stop reflex fills it from what the harness already wrote to the transcript, so no check had to change. `octo friction` reads it. New in v10. See [`docs/architecture/v10-friction.md`](../architecture/v10-friction.md).
+
 ### FinOps
 **Financial Operations for AI agents** — Octorato's commercial wedge. Three capabilities that observability tools (LangSmith, Datadog) lack: **per-arm cost attribution** (every [[#Trace event]] tags the client), **air-gapped multi-tenancy** ([[#Arm isolation]]), and **[[#Budget cap]]s that actually halt agents**. The pipeline tags every trace with the client who incurred it, rolls up USD per project/month/skill via a shared `_pricing.py` table, and reconciles estimated vs. billed cost against the Anthropic Enterprise Analytics API. Built so consultants can bill clients fairly per token.
 
@@ -116,7 +141,7 @@ The **Change Gate** — the synapse between the afferent and efferent halves of 
 The framework's **nervous system protocol** — every signal (brain↔arm↔agent↔human) follows four phases: **[[#Describe]] → [[#Delegate]] → [[#Diligent]] → [[#Disclose]]**. The first two are *afferent* (sensory, before acting); the last two are *efferent* (motor, after acting); the [[#4D Gate]] sits between them. Named "4D" after the **tesseract** (the 4-dimensional analog of a cube): the four phases are not sequential steps but *dimensions* active simultaneously in every action — the control plane, not a checklist. Full protocol in `skills/4d-paradigm-protocol/SKILL.md`.
 
 ### 4D+S
-**4D + Spec-Driven Development.** For tasks above trivial complexity, the 4D Paradigm integrates with an [[#SDD]] workflow, scaled by a complexity score: **0–2 TRIVIAL** (4D only), **3–5 MEDIUM** (4D + `plan.md`), **6+ LARGE** (4D + full SDD: `feature.md` → `plan.md` → implement → `review.md` → archive). Orchestrated by the `4d-spec` skill. Signals raise the score: +2 for touching 4–10 files, +4 for 10+, +3 for an architecture decision, +5 if the user requests a spec.
+**4D + Spec-Driven Development.** For tasks above trivial complexity, the 4D Paradigm integrates with an [[#SDD]] workflow, scaled by a complexity score: **0–2 TRIVIAL** (4D only), **3–5 MEDIUM** (4D + `plan.md`), **6+ LARGE** (4D + full SDD: `feature.md` → `plan.md` → analyze → implement ⇄ converge → `review.md` → archive). Orchestrated by the `4d-spec` skill. Signals raise the score: +2 for touching 4–10 files, +4 for 10+, +3 for an architecture decision, +5 if the user requests a spec.
 
 ---
 
@@ -162,6 +187,9 @@ The brain's **multi-engine database CLI** — `qm -e <engine> -c <conn> "<query>
 
 ## R
 
+### Replay_Harness
+`scripts/replay_harness.py`. It runs real past tool calls and turns through a check the way the harness would, and compares each decision with a stored baseline. A change that turns a refusal labelled correct into an allow fails. The cases hold real prompts, so they stay in the gitignored `company/friction-corpus/`; the tracked baseline (`registry/friction-baseline.json`) holds only counts, hashes, decisions and labels. Where a check depends on state the replay cannot rebuild, it is marked LOW-FIDELITY and its numbers are not treated as evidence. New in v10.
+
 ### RULE #1 (Wired or Corrupt)
 
 The constitution's first rule: every rule must be wired to a live mechanism, or the brain is CORRUPT. A rule with no registered, live mechanism in the [[#Rule registry]] is not a rule, it is rot. `brain_doctor` enforces it, reconciling both directions (every rule has a mechanism, every live hook has a rule); a miss exits non-zero and `.githooks/pre-push` blocks the push. "Wired" means covered (a gate, reflex, detector, or presence-assert), not 100% mechanically forced. See [`wired-or-corrupt.md`](../architecture/wired-or-corrupt.md).
@@ -187,7 +215,7 @@ The skill (`skills/skill-creator/SKILL.md`) that governs **how new skills are au
 The sync script that propagates one arm's `.claude/CLAUDE.md` into the tool-specific config files — `.github/copilot-instructions.md` (Copilot) and `.cursorrules` (Cursor) — so **one source of truth keeps three AI tools in sync**. Run `sync-ai-docs` for all arms or `sync-ai-docs <arm>` for one. Called automatically by [[#ai-push]] and [[#ai-pull]]. Part of the "glial layer" — infrastructure that doesn't fire signals but keeps the neurons alive.
 
 ### SDD
-**Spec-Driven Development** — a phased implementation pipeline (`feature.md` → `plan.md` → implement → `review.md` → archive) handled by the `sdd-*` skill cluster and activated by [[#4D+S]] on larger tasks. Archived specs in `docs/specs-archive/` become institutional memory. **SDD artifacts (`feature*.md`, `plan*.md`, `spec*.md`) must never sit at the brain root** — even client-free, they leak roadmap; [[#check-generic]] rejects them there.
+**Spec-Driven Development** — a phased implementation pipeline (`feature.md` → `plan.md` → analyze → implement ⇄ converge → `review.md` → archive) handled by the `sdd-*` skill cluster. Since v9, completion is a converge verdict computed by an independent verifier, never a checkbox the builder ticks and activated by [[#4D+S]] on larger tasks. Each spec lives in its own `docs/specs/<yyyymmddHHMM>-<name>/` directory from day one and becomes institutional memory there (older ones sit in `docs/specs-archive/`). **SDD artifacts (`feature*.md`, `plan*.md`, `spec*.md`) must never sit at the brain root** — even client-free, they leak roadmap; [[#check-generic]] rejects them there.
 
 ---
 

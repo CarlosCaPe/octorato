@@ -7,6 +7,9 @@
 # Without this the link shows up untracked in every worktree and could be
 # committed, publishing the private path layout.
 company
+# The public seed templates under templates/company/ are framework, not company data.
+!templates/company/
+!templates/company/**
 
 # External reference repos (cloned separately, not part of the brain repo)
 *-ref/
@@ -62,6 +65,33 @@ knowledge/
 # with provisional content. This rule is the canonical companion of skills/learned/
 # (see skills/session-learn-extractor/SKILL.md).
 skills/learned/
+
+# Installed packages (v8 PACKAGE). A vendored skill is a third party's code living
+# in the always-on discovery path; it belongs to packages.lock.json (tracked), not to
+# this repo's tree. `octo pkg sync` restores it from the lock on every machine, so
+# committing the bytes would fork the package from its signature. The symlink at
+# skills/<name> is excluded per machine in .git/info/exclude by the installer.
+skills/vendor/
+# Skills the harness syncs from its own catalog into the brain tree (skills/synced/<id>/...).
+# Foreign code, harness-owned and regenerated; never part of the public brain.
+skills/synced/
+# Removed skills the harness parks in skills/.trash/<id>/ before deleting them. Never brain content.
+skills/.trash/
+agents/vendor/
+# packages.lock.json.<pid>.tmp (atomic replace) and packages.lock.json.lock
+# (the advisory guard octo_pkg holds around load-modify-save). Both are per-process
+# scratch beside a tracked file at the repo ROOT; neither is ever committed.
+#
+# ANCHORED and NAMED, not `*.tmp`. A bare `*.tmp` is repo-wide and matches at any
+# depth: `git check-ignore -v --no-index` confirmed it swallowed docs/foo.tmp,
+# scripts/bar.tmp and registry/fixtures/x.tmp as well. Zero tracked files matched, so
+# nothing was shadowed yet, but registry/fixtures/ is where every gate fixture lives
+# and `fixture-seeds-tracked` FAILs precisely on a fixture file "ignored by a generic
+# rule": a pattern this wide was one .tmp fixture away from turning a gate's proof
+# into a file that ships on no other checkout. The leading slash pins it to the root,
+# where the lockfile is.
+/packages.lock.json.*.tmp
+/packages.lock.json.lock
 
 # Nested project memories (per-arm .claude/ dirs)
 .claude/
@@ -203,7 +233,7 @@ incidents/
 # company/ (gitignored). At the brain root they leak internal roadmap,
 # inspiration sources, and strategic plans into the public repo even when
 # they contain zero client identifiers (check-generic.py won't catch them).
-# Root-anchored so docs/specs-archive/ and templates/ are still allowed.
+# Root-anchored so docs/specs/, docs/specs-archive/ and templates/ are still allowed.
 /feature.md
 /feature-*.md
 /plan.md
@@ -266,3 +296,20 @@ registry/fixtures/**/home/.wa-fixture/*.db
 /daemon-auth-cooldown
 /daemon-auth-status.json
 /remote-settings.json
+
+# Fixture seeds are proof data, never private config: a seed under a fixture
+# `home/.claude/` or `home/.claude/.cache/` must be tracked, or the gate it
+# proves is dead on every other checkout (2026-09-05: two gates shipped without
+# their seeds). Only the two directory rules are negated, nothing else.
+!registry/fixtures/**/.claude/
+!registry/fixtures/**/.cache/
+# Same reason for `company/`: the kernel quota gate reads its caps from
+# company/config/kernel.json, so its seed lives under a fixture `company/`
+# directory. This negates ONLY that directory under registry/fixtures; the
+# real /company/ at the brain root stays ignored by the rules at the top.
+!registry/fixtures/**/company/
+# Same reason for `projects/`: a panel receipt is anchored to a reviewer
+# transcript the gate only reads under ~/.claude/projects/, so its seed lives
+# under a fixture `home/.claude/projects/`. Only that directory under
+# registry/fixtures is negated; the real projects/ stays ignored.
+!registry/fixtures/**/projects/

@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": "revisa el estado del sitio"}, "uuid": "u-fx-nbsp-deploy", "parentUuid": null, "sessionId": "fx-session", "timestamp": "2026-10-01T12:50:00.000Z"}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "echo a\u00a0#; npx wrangler deploy"}}]}, "uuid": "a-fx-nbsp-deploy", "parentUuid": "u-fx-nbsp-deploy", "sessionId": "fx-session", "timestamp": "2026-10-01T12:50:00.000Z"}

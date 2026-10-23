@@ -55,7 +55,7 @@ Once a day, the local cron supervisor (`~/dataqbs-local-cron/runner.py`, workflo
                           └───────────────────────┬─────────────────────┘
                                                    ▼
                           ┌─────────────────────────────────────────────┐
-                          │  STAGE 3 · LLM QA GATE  (Groq llama-3.3-70b)  │
+                          │  STAGE 3 · LLM QA GATE  (Groq gpt-oss-120b)   │
                           │                                              │
                           │   one batched prompt over the survivors:     │
                           │   "does this beat what we already have?"      │
@@ -103,7 +103,7 @@ Bucket assignment runs cheap regexes over name + description + topics: MCP keywo
 
 ### Stage 3 — LLM QA gate
 
-The heuristic survivors go through one **batched** Groq call (`llama-3.3-70b-versatile`, `temperature=0`). A single prompt lists every survivor; the model returns exactly N lines of `KEEP <reason>` / `DROP <reason>`. Cost is roughly 20–30 items in one call per day — negligible (see [[FinOps]]). If `GROQ_API_KEY` is absent or the call fails, the loop surfaces the heuristic survivors as-is rather than crashing.
+The heuristic survivors go through one **batched** Groq call (`openai/gpt-oss-120b`, `temperature=0`, `reasoning_effort=low`). A single prompt lists every survivor; the model returns exactly N lines of `KEEP <reason>` / `DROP <reason>`. Verdicts are matched by position, so the parser keeps only KEEP/DROP lines (numbering stripped) and applies them only when there is exactly one per survivor. Cost is roughly 20–30 items in one call per day — negligible (see [[FinOps]]). If `GROQ_API_KEY` is absent or the call fails, the loop surfaces the heuristic survivors as-is rather than crashing.
 
 > **Hard-won detail:** Groq sits behind Cloudflare, which 403s the default `Python-urllib` user-agent with "error code: 1010". A browser-like UA gets through. The loop ships that UA.
 

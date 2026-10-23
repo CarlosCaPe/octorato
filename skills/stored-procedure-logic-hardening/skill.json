@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "stored-procedure-logic-hardening",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Stored Procedure Logic Hardening"
+}

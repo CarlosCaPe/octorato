@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "deterministic-shutdown-backstop",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "A long-lived service that hangs INTERMITTENTLY on SIGTERM (non-reproducible, the init system kills it at the timeout, a false OnFailure alert fires and then self-recovers) is not a bug to chase. Install a deterministic daemon-timer backstop (os._exit after N seconds) inside the shutdown path. The race is unfixable by inspection; the backstop is."
+}

@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-g",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git status"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_bash_other_transcript.jsonl"
+}

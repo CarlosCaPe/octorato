@@ -6,6 +6,7 @@ metadata:
   source: https://github.com/Open-Dev-Society/OpenStock
   discovered_on: 2026-05-26
   via: github-trending-curation (auto-promoted)
+  provenance: "https://github.com/Open-Dev-Society/OpenStock is AGPL-3.0, both at entry on 2026-05-26 (LICENSE added 2025-10-06) and today. This skill DECLARES no license and its manifest carries the repo default over ORIGINAL text (measured against the upstream README at the entry ref f2d72d88: ratio 0.0166, longest shared run 12 characters), so this repo's own terms cover what is written here. The TOOL is copyleft and network-triggered: read its LICENSE before embedding it in anything delivered to a client."
 ---
 
 # openstock

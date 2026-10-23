@@ -1,0 +1,7 @@
+{
+  "tool_name": "Agent",
+  "tool_input": {
+    "prompt": "x"
+  },
+  "cwd": "/nonexistent/fixture-hot/work"
+}

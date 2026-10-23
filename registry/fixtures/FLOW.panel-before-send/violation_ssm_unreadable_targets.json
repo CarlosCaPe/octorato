@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-ssm-unreadable-targets",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws ssm send-command --targets Key=tag:Role,Values=bridge --document-name AWS-RunShellScript --parameters \"commands=['echo aGk= | base64 -d | bash']\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_ssm_unreadable_targets_transcript.jsonl"
+}

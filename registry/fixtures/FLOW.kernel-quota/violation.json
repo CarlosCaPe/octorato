@@ -1,0 +1,9 @@
+{
+  "_why": "subagent `over` has 401 tool lines journaled against a 400-call cap: the next call is refused.",
+  "session_id": "sid-parent",
+  "agent_id": "over",
+  "tool_name": "Read",
+  "tool_use_id": "toolu_quota_calls",
+  "tool_input": {"file_path": "/tmp/x"},
+  "cwd": "/tmp"
+}

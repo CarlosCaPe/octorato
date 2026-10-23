@@ -33,6 +33,13 @@ import os
 import sys
 from pathlib import Path
 
+# Hook payloads are UTF-8 JSON; the Windows default (cp1252) mangles any
+# non-ASCII character before it is read.
+try:
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
+
 FETCH_CALLS_MIN = 6
 FETCH_BYTES_MIN = 40_000
 WAIVER = "delegation-ok"
@@ -103,11 +110,29 @@ def _ledger_records(data: dict):
 _WRITE_VERBS = ("send", "create", "update", "delete", "revoke", "draft", "label")
 
 
+# Interactive browser driving is not a bulk fetch: the session lives in the
+# operator's own Chrome, a sub-agent cannot share it, and a click-by-click edit
+# of a web app is the work itself, not a sweep to digest. The v10 census found
+# 29 of 45 resolvable audit blocks were mostly these calls (~70% FP).
+# Only the INTERACTION tools are exempt (navigate, click/type, fill, find, tab
+# and shortcut handling, page scripting). The page READERS (get_page_text,
+# read_page) and every other browser tool still count as fetches, because
+# reading pages in bulk is exactly the sweep a sub-agent can do (QA of v10).
+# Residual, stated: a sweep driven through javascript_tool that returns page
+# text is exempt; anything else is counted.
+_CHROME = "mcp__claude-in-chrome__"
+_INTERACTIVE_TOOLS = {_CHROME + t for t in (
+    "navigate", "computer", "form_input", "find", "javascript_tool")}
+_INTERACTIVE_PREFIXES = (_CHROME + "tabs_", _CHROME + "shortcuts_")
+
+
 def _is_fetch(tool: str) -> bool:
     """External read-shaped calls only; mcp write-verbs (sends etc.) never count."""
     if tool in FETCH_TOOLS:
         return True
     if not tool.startswith(FETCH_PREFIX):
+        return False
+    if tool in _INTERACTIVE_TOOLS or tool.startswith(_INTERACTIVE_PREFIXES):
         return False
     action = tool.rsplit("__", 1)[-1]
     return not action.startswith(_WRITE_VERBS)
@@ -150,7 +175,36 @@ def main() -> int:
             "This gate blocks only once per turn."
         ),
     }))
+    _journal_deny(f"{n} bulk fetch call(s) (~{total // 1024} KB) ran in the main loop "
+                  f"with no delegation", data)
     return 0
+
+
+# -- v8 kernel journal (Phase 4, v8-kernel.md) --------------------------------
+_KERNEL_RULE = "FLOW.bulk-fetch-delegation"
+
+
+def _journal_deny(reason, payload=None, tool_use_id=None) -> None:
+    """Mirror this refusal into the refusing process's journal.
+
+    FAIL-OPEN by contract: every error is swallowed and the verdict this gate
+    just reached is unchanged. A journal that cannot be written must never turn
+    a deny into an allow. kernel_proc is loaded by PATH through importlib, not
+    by name, so nothing on sys.path can shadow it.
+    """
+    try:
+        import importlib.util
+        import os as _os
+        _path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "kernel_proc.py")
+        _spec = importlib.util.spec_from_file_location("_kernel_proc_journal", _path)
+        _kp = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_kp)
+        _payload = payload if isinstance(payload, dict) else {}
+        _kp.journal_deny(_KERNEL_RULE, reason,
+                         tool_use_id if tool_use_id is not None else _payload.get("tool_use_id"),
+                         _kp.resolve_pid(_payload))
+    except Exception:
+        pass
 
 
 def _selftest() -> int:

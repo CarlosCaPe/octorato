@@ -2,6 +2,8 @@
 
 > The first version that holds the whole accumulated offering, not just the latest change.
 
+**Status: SHIPPED in v5.0.0 (2026-06-26); the drift table below is the snapshot at v4.3.1.**
+
 ## The problem (verified)
 
 The operator's report: every change seems to become the only thing that survives; prior specs get forgotten. Investigation across the full version history (v3.0.0 → v4.3.1) confirms the symptom but corrects the cause.
@@ -20,7 +22,7 @@ Verified drift at HEAD:
 |---|---|---|
 | README agents | `160+` | 189 |
 | README divisions | `13` | 15 (`strategy/`, `paid-media/` missing from the narrative) |
-| README FinOps budget halt | "shipped" | `grep budget hooks.json` → 0 (not wired) |
+| README FinOps budget halt | "shipped" | `grep budget hooks.json` → 0, not wired at v4.3.1. Wired since: `FLOW.budget-halt`, fail-closed, `scripts/budget-check.py --selftest`. |
 | `/learn`, canon-heal, staged-promotion | live in skills/hooks/README | absent from `CLAUDE.md` |
 | Observability cluster (budget-check, slos, watchdog, brain-trace, skill-cost-profiler, incident-capture, arm-synthetics) | 7 scripts on disk | wired to nothing; last trace JSONL 2026-05-28 |
 

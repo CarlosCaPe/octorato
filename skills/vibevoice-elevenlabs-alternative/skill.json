@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "vibevoice-elevenlabs-alternative",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Microsoft open-source speech synthesis model, local and real-time, a stand-in for ElevenLabs. MIT. For clients that cannot send audio to a third party, or when the per-minute cost eats the margin."
+}

@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-obstacle",
+  "transcript_path": "violation_obstacle_chain_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

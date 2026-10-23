@@ -21,6 +21,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Hook payloads are UTF-8 JSON; the Windows default (cp1252) mangles any
+# non-ASCII character before it is read.
+try:
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 LINT = SCRIPT_DIR / "client-doc-lint.py"
 CLIENT_DOC = re.compile(r"(propuesta|cotiza|contrato|propos)", re.I)

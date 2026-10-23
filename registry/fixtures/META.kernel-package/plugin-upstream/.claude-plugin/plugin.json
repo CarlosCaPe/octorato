@@ -1,0 +1,6 @@
+{
+  "name": "langsmith-tracing",
+  "version": "0.0.0-stub",
+  "description": "STUB standing in for the upstream LangSmith Claude Code plugin, which is not vendored offline. Not the vendor's code: it only has the vendor plugin's name and the shape of a hook list.",
+  "license": "MIT"
+}

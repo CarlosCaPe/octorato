@@ -68,6 +68,7 @@ edges:
     concept: "skill count"
     appears_in:
       - README.md
+      - docs/ANATOMY.md
       - docs/wiki/Home.md
       - docs/wiki/_Sidebar.md
       - docs/wiki/Skills.md
@@ -80,6 +81,7 @@ edges:
     concept: "agent count"
     appears_in:
       - README.md
+      - docs/ANATOMY.md
       - docs/wiki/Home.md
       - docs/wiki/_Sidebar.md
       - docs/wiki/Agents.md
@@ -200,7 +202,8 @@ edges:
       - templates/memory/MEMORY.template.md                  # empty index adopters copy
       - skills/arm-onboarding/SKILL.md                        # a new arm = a new arm-brain (its own .claude/memory)
       - CLAUDE.md                                             # §The Octopus Architecture + Information Flow (memory routing)
-      - README.md                                            # brain/arms labels + counts framing
+      - README.md                                            # brain/arms labels + counts framing (plain words)
+      - docs/ANATOMY.md                                      # the long tour: memory section moved here from the README
       - docs/wiki/Glossary.md                                # define brain memory / arm memory / 1+N brains
       - docs/wiki/Architecture.md                            # the two-tier memory in the architecture map
       - "<each arm>/.claude/memory/ (symlinked to the harness; sealed arm-brain)"  # off-repo, per-arm
@@ -228,7 +231,8 @@ edges:
       - docs/architecture/capability-inventory.md             # generated census (moved here from docs/ root)
       - docs/architecture/hook-orchestration.md               # nervous-system spec (linked from wiki Architecture)
       - docs/architecture/memory-model.md                     # brain memory spec (1+N)
-      - README.md                                             # organism overview (diet: organs carry the depth)
+      - README.md                                             # front door in plain words (no metaphor above the fold)
+      - docs/ANATOMY.md                                       # organism overview, long form (the former README body)
     kind: appears_in
     note: >-
       The documentation IS the organism: docs/wiki/ pages are operator-facing
@@ -277,6 +281,40 @@ edges:
       SessionStart auto-fork. Change the rule, reconcile all five enforcement
       surfaces. Lights the session-isolation seek that fell back to grep
       repeatedly on 2026-06-02/03.
+
+  - id: sdd-flow
+    concept: "sdd / spec-driven development / 4d+s / ears-1 spec / task grammar / analyze / converge / done is a verdict"
+    appears_in:
+      - skills/4d-spec/SKILL.md                               # the orchestrator: classifier + LARGE flow
+      - skills/sdd-feature/SKILL.md                           # ears-1 spec, Glossary, markers
+      - skills/sdd-refine/SKILL.md                            # one question at a time
+      - skills/sdd-plan/SKILL.md                              # task grammar, refuses an unready spec
+      - skills/sdd-analyze/SKILL.md                           # read-only spec vs plan pass
+      - skills/sdd-implement/SKILL.md                         # builds, grades nothing
+      - skills/sdd-converge/SKILL.md                          # decides done, CONVERGE-VERDICT
+      - skills/sdd-review/SKILL.md                            # 7 quality dimensions
+      - skills/sdd-archive/SKILL.md                           # requires CONVERGED
+      - skills/sdd-yolo/SKILL.md                              # the whole flow behind one gate
+      - scripts/spec_lint.py                                  # deterministic reader of ears-1 specs
+      - CLAUDE.md                                             # 4D+S section + Done is a verdict
+      - docs/wiki/The-4D-Paradigm.md                          # section 6, the LARGE pipeline
+      - docs/wiki/Glossary.md                                 # 4D+S and SDD entries
+      - docs/ANATOMY.md                                       # the 4D+S complexity table
+      - docs/architecture/v9-done-is-a-verdict.md             # the contract + measured residuals
+      - scripts/receipt_ledger.py                             # parse_converge, converge_latest_for/pass_for
+      - scripts/r__subagent-stop__qa-receipt.py               # records the converge receipt
+      - .githooks/pre-push                                    # OCTORATO-SPEC-GATE stanza
+      - registry/rules.yaml                                   # FLOW.spec-contract, FLOW.done-is-a-verdict
+      - scripts/brain_doctor.py                               # spec-contract check
+      - scripts/tests/test_sdd_skill_contract.py              # pins the contract sentences of the skills above
+    kind: appears_in
+    note: >-
+      Every ears-1 spec lives in docs/specs/<yyyymmddHHMM>-<name>/ from creation
+      and never moves: that path is the key of the converge verdict and the receipt.
+      One flow described in twenty-two places. Changing a step, a verdict word or
+      the task grammar means reconciling every surface here, and the linter's
+      fixtures when the grammar moves. Lights the `sdd` seek that fell back to
+      grep on 2026-09-30.
 
   - id: arm-lineage-template
     from: templates/arm/connectome/lineage.yaml
@@ -468,6 +506,97 @@ edges:
       own words, a blockquote, or a question all exempt a sentence, because each
       is one of the two prescribed fixes (source it, or ask it).
 
+  - id: receipt-ledger-v7
+    concept: "nothing ships unverified: outward action needs harness-written receipts (seek anchored to transcript, gate receipt at HEAD, QA receipt re-read from the agent transcript)"
+    appears_in:
+      - CLAUDE.md                                        # anchors "Receipt ledger", "Outward-send gate", "QA receipt"
+      - docs/architecture/v7-nothing-ships-unverified.md # the contract
+      - scripts/receipt_ledger.py                        # the shared library (paths, anchoring, verdict parsing)
+      - scripts/r__posttool__receipt-seek.py             # seek receipt writer
+      - scripts/g__pretool-mcp__outward-send.py          # the one send gate (imports the Stop detectors)
+      - scripts/r__subagent-stop__qa-receipt.py          # QA receipt writer
+      - scripts/qa-merge-gate.py                         # consumer: env approval AND QA receipt
+      - scripts/brain_doctor.py                          # gate receipt writer; waiver-age, incident-fixture-coverage, reflex-triage
+      - registry/rules.yaml                              # FLOW.receipt-ledger, COMMS.outward-send-gate, FLOW.qa-receipt, FLOW.panel-before-send, FLOW.sent-message-ledger
+      - registry/fixtures/COMMS.outward-send-gate        # liveness proof of the send gate
+      - scripts/panel_digest.py                          # panel digest shared by the gate and the main loop
+      - scripts/panel_preflight.py                       # runs the reply-text Stop gates on a draft before its panel (SKIP names Stop gates by file name)
+      - scripts/panel_fixture_seed.py                    # seeds PASS panel receipts into send fixtures
+      - scripts/r__posttool__sent-ledger.py              # sent-message ledger writer
+      - registry/fixtures/FLOW.panel-before-send         # liveness proof of the panel check
+      - registry/fixtures/FLOW.sent-message-ledger       # selftest of the sent ledger
+      - registry/reflex-triage.yaml                      # phase 5 decisions
+      - hooks.json                                       # PostToolUse / PreToolUse / SubagentStop wiring
+    kind: appears_in
+    note: >-
+      The receipt line is a pointer; the anchor is what the model cannot forge
+      (transcript tool_use ids, the brain's HEAD, a harness-written agent
+      transcript). Renaming a receipt kind or a ledger path touches every
+      surface here at once; the send gate imports the three Stop detectors by
+      file name, so renaming g__stop__unsourced-absence.py,
+      g__stop__unsourced-attribute.py or g__stop__draft-promise.py breaks it.
+
+
+  - id: reply-panel-v11
+    concept: "reply panel: no reply to the operator ends a turn without a PASS panel receipt for its exact text; quorum by source class (SELF 3, SOURCED 1, INPUT 1), status-line exemption, preflight"
+    appears_in:
+      - CLAUDE.md                                        # anchor "Reply panel"
+      - docs/architecture/v11-reply-panel.md             # contract, cost controls, residuals
+      - scripts/g__stop__reply-panel.py                  # the gate (source_class, input_needed, pending_agents, status_claim)
+      - scripts/panel_preflight.py                       # runs the reply-text Stop gates on the draft
+      - scripts/panel_digest.py                          # --panel-request / --preflight
+      - scripts/g__stop__no-menu-question.py             # loaded by file name for the INPUT class; reads past `input-needed:`
+      - registry/rules.yaml                              # FLOW.panel-before-reply
+      - registry/fixtures/FLOW.panel-before-reply        # liveness proof
+      - scripts/tests/test_reply_panel_source_class.py
+      - scripts/tests/test_reply_panel_status_line.py
+      - scripts/tests/test_panel_preflight.py
+    kind: appears_in
+    note: >-
+      The reply gate imports the no-menu gate's is_choice_question and
+      _irreducible_object by file name, and the preflight names Stop gates
+      by file name in its SKIP list: renaming either gate touches this edge.
+  - id: external-review-v11
+    concept: "external reviewer receipt: a review on another engine counts only through a hook-written receipt around a pinned call; it adds to a reply quorum, never forms one, never clears a send"
+    appears_in:
+      - docs/architecture/v11-reply-panel.md             # "External reviewers" section and R-05
+      - scripts/external_review.py                       # parser, pin checks, hook bodies, pin CLI, selftest
+      - scripts/r__pretool-bash__external-review.py      # pending receipt (PreToolUse Bash)
+      - scripts/r__posttool-bash__external-review.py     # complete receipt (PostToolUse Bash)
+      - scripts/receipt_ledger.py                        # external_panel_view, panel_pass_for drops external PASS, --selftest-external
+      - scripts/g__stop__reply-panel.py                  # quorum needs one harness PASS
+      - scripts/r__subagent-stop__qa-receipt.py          # external_reviewers from REVIEW-EXTERNAL lines
+      - scripts/panel_fixture_seed.py                    # seed_external_receipt, seed_reviewer_pair, seed_arm
+      - scripts/g__pretool__arming-surface.py            # pins, reviewers.yaml, registry/replay, external_review.py
+      - scripts/brain_doctor.py                          # reviewer-registry check
+      - registry/reviewers.yaml                          # Reviewer_Registry
+      - registry/rules.yaml                              # FLOW.external-review-receipt
+      - registry/fixtures/FLOW.external-review-receipt   # AC-21 fixtures
+      - templates/company/config/reviewer-pins.json.template
+      - scripts/tests/test_external_review.py
+      - hooks.json                                       # PreToolUse / PostToolUse Bash wiring
+    kind: appears_in
+    note: >-
+      The ledger re-parses the transcript's Bash command with the same parser
+      the hooks use (external_review.parse_call), so a change to the allowlist
+      or the raw-text deny list changes both what is written and what counts.
+  - id: unsourced-absence-gate
+    concept: "an absence claim (no origin / not recognized / never contracted) never ships outward without a seek receipt in the same turn"
+    appears_in:
+      - CLAUDE.md                                        # anchor "Unsourced-absence"
+      - scripts/g__stop__unsourced-absence.py            # the Stop gate (the mechanism)
+      - registry/rules.yaml                              # COMMS.unsourced-absence
+      - registry/fixtures/COMMS.unsourced-absence        # the liveness proof
+      - hooks.json                                       # the Stop wiring
+    kind: appears_in
+    note: >-
+      Sibling of unsourced-attribute-gate: same delivery detector, same fence
+      split, same quote/question exemptions. The trigger is the ABSENCE PHRASE,
+      because "verify the operator" names no detectable moment and "no
+      reconozco / sin origen" does. The receipt is the act of seeking (a chat,
+      mail or memory lookup in the turn), never its result: the gate cannot
+      judge what was found, only that someone looked.
+
   - id: draft-promise-gate
     concept: "deliverable-complete-before-send / no future-tense promise inside a paste-ready draft"
     appears_in:
@@ -488,6 +617,26 @@ edges:
       the same commit: a fixture that does not mirror the real shape of the
       artifact proves nothing. Edge added 2026-08-18 when the blind spot was
       found and closed.
+
+  - id: no-menu-question-gate
+    concept: "no-menu-question / a reply never closes on a choice question the agent could decide with /choice"
+    appears_in:
+      - CLAUDE.md                                       # anchor "No menu questions"
+      - commands/choice.md                              # the method that replaces the menu
+      - scripts/g__stop__no-menu-question.py            # the Stop gate (the mechanism)
+      - registry/no-menu-question.yaml                  # openers + irreducible operator steps (config-first)
+      - registry/rules.yaml                             # COMMS.no-menu-question
+      - registry/fixtures/COMMS.no-menu-question        # the liveness proof (violation/benign twins)
+      - hooks.json                                      # the Stop wiring
+      - docs/architecture/v7-nothing-ships-unverified.md # full text under "The draft gates in full"
+      - skills/ask-with-recommendation/SKILL.md         # the one remaining question still carries its recommendation
+    kind: appears_in
+    note: >-
+      The gate reads the SHAPE of the closing sentence (a trailing question
+      with alternatives or a go-ahead opener), so it is coupled to the config
+      lists: add an opener or an irreducible step in the YAML and add the
+      fixture twin in the same commit, or the selftest proves nothing about
+      the new entry. Edge added 2026-10-15 with the operator directive.
 
   - id: wa-guardia-gate
     concept: "guardia armada al cerrar un turno esperando respuesta de un tercero"
@@ -531,3 +680,87 @@ edges:
       targets off-repo. They are tracked files. The over-report is conservative
       (it asks for a manual reconcile that is trivially satisfiable), not a
       claim that they are missing.
+
+  - id: enforcement-trio
+    concept: "the three mandatory 2D/4D enforcement scripts"
+    appears_in:
+      - CLAUDE.md
+      - scripts/query_connectome.py
+      - scripts/delegate-check
+      - scripts/gate-check
+      - skills/4d-paradigm-protocol/SKILL.md
+    kind: appears_in
+    single_source: "CLAUDE.md section 'Enforcement Scripts (Mandatory)' — the table naming the three commands"
+    note: >-
+      The table names three commands by path, and the 4D skill repeats them.
+      A rename, a signature change or a script that stops running on one
+      platform breaks the prose while the table still reads true.
+      delegate-check is the case that lit this edge: it had never run on a
+      Windows brain, and the seek for it came back UNLIT, so the surface had
+      to be found by grep. appears_in rather than claim_maps_to on purpose:
+      _matches() in impact-radius.py fires on from / concept / appears_in and
+      never on to, so a script listed only as a target stays unlit when seeked
+      by its own path.
+  - id: skill-license-provenance
+    concept: "skill license field / manifest license / third-party skill terms / where a skill came from / provenance of vendored material"
+    appears_in:
+      - scripts/gen_skill_manifests.py                        # writes the license field; recognizes or REFUSES, never defaults in silence
+      - schemas/skill-manifest.md                             # the contract that field answers to, and its stated residuals
+      - schemas/skill-manifest.schema.json                    # the validator every generated manifest passes
+      - scripts/validate-skill-manifest.py                    # the CLI that enforces the schema on a manifest
+      - schemas/tests/skill-manifest-samples/negative-cases.json  # 47 license mentions, incl. root-required-license-missing
+      - scripts/tests/test_octo_pkg.py                        # the fixtures and the shipped-manifest expectations
+      - registry/fixtures/META.kernel-package/signed/skill.json   # the signed fixture the selftest installs
+      - scripts/octo_pkg.py                                   # installs and verifies the manifest as a WHOLE; reads no license field
+      - CLAUDE.md                                             # Kernel: packages (an installed skill is a signed package)
+    kind: appears_in
+    note: >-
+      The license field is a legal claim about someone else's material, signed
+      with the operator's name in a public repo, and it is generated for 233
+      skills that nobody reads by hand. Two failures already shipped from this
+      surface: a silent fallback stamped MIT over the Figma Developer Terms
+      because the generator did not recognize the text, and a NOASSERTION was
+      stamped over Apache-2.0 material because the check asked today's upstream
+      listing about a skill that entered months before an upstream rename. So
+      two rules travel with any change here. Unreadable is not absent: a file
+      that exists and is not recognized must refuse, never fall to the repo
+      default. And a listing answers "what is there now" while provenance is a
+      question about a DATE: query the tree at the commit the material entered.
+      Change the recognizer and the schema doc's residual list must move with
+      it, because that list is what the next reader trusts instead of the code.
+      Two sentences about `octo_pkg.py` are both true and read as a contradiction
+      in the wrong order, so here is the one story: it hashes, signs, verifies
+      and installs the manifest AS A WHOLE, so the license field travels inside
+      what it protects and a tampered value fails the tree hash. It never reads
+      that field, and `grep -in licen scripts/octo_pkg.py` is empty, which is why
+      the schema doc says nothing consumes it. Integrity, not interpretation:
+      the value is protected and unread, and what makes a wrong one matter is
+      the public claim it makes, not a code path that would break.
+
+  - id: friction-baseline-generated
+    from: scripts/replay_harness.py
+    to:
+      - registry/friction-baseline.json
+    kind: generated_by
+    note: >-
+      The baseline is written by `replay_harness.py baseline` (and refreshed by
+      `label`); never hand-edit it. A harness change that alters what the
+      baseline records (a new gate stat, a fidelity rule) means regenerate.
+
+  - id: friction-baseline-facts
+    from: registry/friction-baseline.json
+    to:
+      - content/canon.facts.yaml
+      - README.md
+      - FAQ.md
+      - docs/ANATOMY.md
+      - ROADMAP.md
+      - scripts/octo.py
+      - docs/architecture/v10-friction.md
+      - docs/specs/202610061605-v10-low-friction-easy-entry/plan.md
+    kind: appears_in
+    note: >-
+      The goal-anchor figures (v10.goal_anchor.* in canon.facts.yaml, rendered
+      into FAQ, ANATOMY and ROADMAP by scripts/canon-render.py) and the table in
+      v10-friction.md are read from this file. A new baseline means refreshing
+      the canon keys, re-rendering, and updating the friction doc's table.

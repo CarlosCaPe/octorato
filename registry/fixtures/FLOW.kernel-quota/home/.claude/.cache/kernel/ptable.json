@@ -1,0 +1,26 @@
+{
+  "processes": {
+    "over": {
+      "pid": "over",
+      "ppid": "sid-parent",
+      "registered_ts": 1700000000.0,
+      "type": "general-purpose"
+    },
+    "qa": {
+      "pid": "qa",
+      "ppid": "sid-parent",
+      "registered_ts": 1700000000.0,
+      "type": "Evidence Collector"
+    },
+    "qamain": {
+      "pid": "qamain",
+      "registered_ts": 1700000000.0,
+      "type": "Reality Checker"
+    },
+    "slowmain": {
+      "pid": "slowmain",
+      "registered_ts": 1700000000.0
+    }
+  },
+  "version": 1
+}

@@ -1,58 +1,58 @@
 #!/usr/bin/env python3
-"""g__stop__paste-ready-raw.py — Stop gate: un mensaje para pegar se entrega CRUDO y AL FINAL.
+"""g__stop__paste-ready-raw.py: Stop gate: a message meant for pasting ships RAW and LAST.
 
-Problema que resuelve (queja diaria del operador, 2026-08-05 y 2026-08-11:
-"todos los dias te repito esto una y otra vez"): pide un mensaje para pegar en
-Teams o WhatsApp y la respuesta se lo envuelve en blockquote, le mete negritas y
-encabezados, o le cuelga el footer de procedencia detras. El operador tiene que
-limpiarlo a mano ANTES de pegarlo, dentro de una ventana con cliente. Cada dia.
-La regla lleva escrita meses en memoria y aun asi se incumple, asi que deja de
-ser disciplina y pasa a ser ganglio: un hook que dispara solo.
+The problem it solves (daily operator complaint, 2026-08-05 and 2026-08-11:
+"todos los dias te repito esto una y otra vez"): he asks for a message to paste
+into Teams or WhatsApp and the response wraps it in a blockquote, adds bold and
+headings, or hangs the provenance footer behind it. The operator has to clean it
+by hand BEFORE pasting, inside a window with a client. Every day. The rule has
+been written in memory for months and is still broken, so it stops being
+discipline and becomes a ganglion: a hook that fires on its own.
 
-El entregable ES el mensaje. Tres formas de romperlo, las tres se detectan aqui:
+The deliverable IS the message. Three ways to break it, all three detected here:
 
-  1. BLOCKQUOTE: el mensaje va con `>` al inicio de cada linea. El operador
-     borra los `>` uno por uno antes de pegar.
-  2. MARKDOWN DENTRO: negritas, encabezados, vinetas de asterisco, enlaces
-     `[x](y)`. Se pegan literales en el chat del cliente.
-  3. TEXTO DESPUES: cualquier linea detras del bloque contamina la seleccion.
-     El footer de procedencia va ANTES del bloque, nunca despues.
+  1. BLOCKQUOTE: the message ships with `>` at the start of every line. The
+     operator deletes the `>` one by one before pasting.
+  2. MARKDOWN INSIDE: bold, headings, asterisk bullets, `[x](y)` links. They
+     paste literally into the client chat.
+  3. TEXT AFTER: any line behind the block contaminates the selection. The
+     provenance footer goes BEFORE the block, never after.
 
-Dispara solo con la CONJUNCION de dos condiciones:
-  A. el ultimo prompt del operador pedia un mensaje para pegar
-     ("pasame el mensaje", "sin formato", "para pegar", "paste-ready", ...), y
-  B. la respuesta incumple alguno de los tres puntos.
+Fires only on the CONJUNCTION of two conditions:
+  A. the last operator prompt asked for a message to paste
+     ("pasame el mensaje", "sin formato", "para pegar", "paste-ready", ...), and
+  B. the response breaks one of the three points.
 
-Sin la condicion A no hay entregable que proteger, asi que no se mira siquiera.
+Without condition A there is no deliverable to protect, so it does not even look.
 
-Falsos positivos evitados a proposito (un gate que grita de mas se ignora, y
-ese es justo el fallo que este cerebro persigue):
-  - Citar el mensaje ENTRANTE de un tercero con `>` es legitimo. Si la
-    respuesta ya trae un bloque cercado, ese bloque es el entregable y todo `>`
-    de afuera es contexto: no dispara.
-  - Un lead-in de cita ("el te escribio:", "su mensaje dice:") marca el
-    blockquote como entrante: no dispara.
-  - Un `>` dentro de un bloque de codigo no cuenta (las cercas se recortan
-    antes de mirar).
-  - Una respuesta de analisis que habla de un mensaje sin entregarlo no tiene
-    ni bloque ni blockquote largo: no dispara.
-  - Un bloque cercado CON etiqueta de lenguaje (```bash) es codigo, no el
-    mensaje: las reglas 2 y 3 no lo tocan.
-  - Vinetas con guion (`- item`) NO se marcan: en texto plano son legibles y
-    marcarlas seria gritar de mas. Solo `*` y `+`, que son markdown puro.
+False positives avoided on purpose (a gate that shouts too much gets ignored,
+and that is exactly the failure this brain chases):
+  - Quoting the INCOMING message of a third party with `>` is legitimate. If the
+    response already carries a fenced block, that block is the deliverable and
+    every `>` outside it is context: no fire.
+  - A quote lead-in ("el te escribio:", "su mensaje dice:") marks the
+    blockquote as incoming: no fire.
+  - A `>` inside a code block does not count (fences are stripped before
+    looking).
+  - An analysis response that talks about a message without delivering it has
+    neither a block nor a long blockquote: no fire.
+  - A fenced block WITH a language tag (```bash) is code, not the message:
+    rules 2 and 3 leave it alone.
+  - Dash bullets (`- item`) are NOT flagged: in plain text they read fine and
+    flagging them would be shouting. Only `*` and `+`, which are pure markdown.
 
-Ante la duda, PASA. Un falso negativo cuesta un turno; un falso positivo
-ensena a ignorar el gate y mata todos los demas.
+When in doubt, PASS. A false negative costs a turn; a false positive teaches
+people to ignore the gate and kills all the others.
 
-Escape deliberado: cualquier linea de la respuesta con `paste-raw-ok` exime el
-turno, al estilo de `draft-promise-ok` y `goal-anchor-ok`.
+Deliberate escape: any line of the response carrying `paste-raw-ok` exempts the
+turn, in the style of `draft-promise-ok` and `goal-anchor-ok`.
 
-Loop safety: stop_hook_active=true significa que ya bloqueamos este turno, se
-pasa. Fail-open en todo error: un linter roto jamas secuestra la conversacion.
+Loop safety: stop_hook_active=true means we already blocked this turn, pass.
+Fail-open on every error: a broken linter never hijacks the conversation.
 
 Stdin:  {"transcript_path": str, "stop_hook_active": bool, ...}
-Stdout: {"decision": "block", "reason": "..."} al disparar, si no nada.
-Exit:   siempre 0.
+Stdout: {"decision": "block", "reason": "..."} on a hit, else nothing.
+Exit:   always 0.
 """
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ import sys
 # Fuerza UTF-8 en stdout/stderr para que los glifos y acentos sobrevivan en
 # shells de Windows que arrancan en cp1252. Sin esto el script hace bien su
 # trabajo y aun asi truena con UnicodeEncodeError al imprimir.
-for _stream in (sys.stdout, sys.stderr):
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
@@ -395,6 +395,7 @@ def main() -> int:
         reason = run_turn(data)
         if reason:
             print(json.dumps({"decision": "block", "reason": reason}))
+            _journal_deny(reason, data)
     except Exception:
         pass  # fail-open: un gate roto jamas secuestra la conversacion
     finally:
@@ -404,6 +405,33 @@ def main() -> int:
             except Exception:
                 pass
     return 0
+
+
+# -- v8 kernel journal (Phase 4, v8-kernel.md) --------------------------------
+_KERNEL_RULE = "COMMS.paste-ready-raw-message"
+
+
+def _journal_deny(reason, payload=None, tool_use_id=None) -> None:
+    """Mirror this refusal into the refusing process's journal.
+
+    FAIL-OPEN by contract: every error is swallowed and the verdict this gate
+    just reached is unchanged. A journal that cannot be written must never turn
+    a deny into an allow. kernel_proc is loaded by PATH through importlib, not
+    by name, so nothing on sys.path can shadow it.
+    """
+    try:
+        import importlib.util
+        import os as _os
+        _path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "kernel_proc.py")
+        _spec = importlib.util.spec_from_file_location("_kernel_proc_journal", _path)
+        _kp = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_kp)
+        _payload = payload if isinstance(payload, dict) else {}
+        _kp.journal_deny(_KERNEL_RULE, reason,
+                         tool_use_id if tool_use_id is not None else _payload.get("tool_use_id"),
+                         _kp.resolve_pid(_payload))
+    except Exception:
+        pass
 
 
 def _selftest() -> int:

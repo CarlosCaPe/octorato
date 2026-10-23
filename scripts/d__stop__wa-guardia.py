@@ -1,36 +1,42 @@
 #!/usr/bin/env python3
-"""d__stop__wa-guardia.py — Stop detector: si mande un mensaje y espero respuesta, arma la guardia.
+"""d__stop__wa-guardia.py: Stop detector: if I sent a message and I am waiting on a reply, arm the watch.
 
-Directiva del operador (2026-08-04): "el hook que arme la guardia solo". Los
-watchers le sirven, pero "a veces entran y a veces no" porque hasta ahora
-dependian de que el modelo se acordara de armarlos, y una regla que depende de
-la memoria del modelo se salta bajo carga (skills/reflexes-over-discipline).
-Su propia acotacion fija el alcance: "al menos cuando esperemos algo, si no pues
-no". Un watcher sin espera es ruido que entrena a ignorar avisos.
+Operator directive (2026-08-04): "el hook que arme la guardia solo" (the hook
+should arm the watch by itself). The watchers are useful to him, but "a veces
+entran y a veces no" (sometimes they fire and sometimes they do not) because so
+far they depended on the model remembering to arm them, and a rule that depends
+on the model memory gets skipped under load (skills/reflexes-over-discipline).
+His own qualifier sets the scope: "al menos cuando esperemos algo, si no pues
+no" (at least when we are waiting on something, otherwise no). A watcher with
+nothing to wait for is noise that trains you to ignore alerts.
 
-La condicion NO es mi intencion, es un hecho verificable en el store del puente:
-mande un mensaje saliente hace poco a un chat y no hay guardia viva para ese
-chat. La evidencia es el mensaje enviado, no lo que yo crea haber hecho.
+The condition is NOT my intent, it is a verifiable fact in the bridge store: I
+sent an outbound message to a chat recently and there is no live watch for that
+chat. The evidence is the sent message, not what I believe I did.
 
-Dispara sobre la CONJUNCION de:
-  1. hay >=1 mensaje saliente en los ultimos VENTANA_MIN minutos, en cualquiera
-     de los dos puentes,
-  2. ese chat no tiene un proceso `wa-guardia.py ... --vigilar` corriendo,
-  3. no se aviso ya por ese chat en esta sesion.
+Fires on the CONJUNCTION of:
+  0. THIS turn made a message send (v10 AC-21): the transcript shows, after the
+     last real operator prompt, a WhatsApp MCP send_* call or a Bash call that
+     sends through the support bridge, whose result is not an error. The API
+     window below is then also bounded below by the start of the turn,
+  1. there is >=1 outbound message in the last VENTANA_MIN minutes, on either
+     of the two bridges,
+  2. that chat has no `wa-guardia.py ... --vigilar` process running,
+  3. no alert was raised for that chat in this session already.
 
-Sobre un acierto BLOQUEA una vez con el comando exacto, para que el modelo arme
-el Monitor antes de cerrar el turno.
+On a hit it BLOCKS once with the exact command, so the model arms the Monitor
+before closing the turn.
 
-Que NO cuenta como espera:
-  - los latidos de salud del puente (contenido "latido-...")
-  - mensajes al propio numero del puente (auto-envios de diagnostico)
+What does NOT count as waiting:
+  - bridge health heartbeats (content "latido-...")
+  - messages to the bridge own number (diagnostic self-sends)
 
-Loop safety: stop_hook_active=true significa que ya bloqueamos este turno, pasa.
-Fail-open en todo error: un detector roto jamas debe secuestrar la conversacion.
+Loop safety: stop_hook_active=true means we already blocked this turn, pass.
+Fail-open on every error: a broken detector must never hijack the conversation.
 
 Stdin:  {"transcript_path": str, "stop_hook_active": bool, "session_id": str, ...}
-Stdout: {"decision": "block", "reason": "..."} sobre un acierto, si no nada.
-Exit:   siempre 0.
+Stdout: {"decision": "block", "reason": "..."} on a hit, else nothing.
+Exit:   always 0.
 """
 from __future__ import annotations
 
@@ -42,7 +48,7 @@ import sqlite3
 import subprocess
 import sys
 
-for _stream in (sys.stdout, sys.stderr):
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8")
     except Exception:
@@ -77,7 +83,10 @@ def chats_vigilados():
         return set()
 
 
-def salientes_recientes(puente, ruta):
+def salientes_recientes(puente, ruta, desde=None, ahora="now"):
+    """Chats con envio por la API del puente dentro de la ventana. `desde`
+    (texto UTC 'YYYY-MM-DD HH:MM:SS') sube la cota inferior al arranque del
+    turno; `ahora` existe para la evaluacion historica, en produccion es 'now'."""
     ruta = os.path.expanduser(ruta)
     if not os.path.exists(ruta):
         return []
@@ -103,9 +112,10 @@ def salientes_recientes(puente, ruta):
             "SELECT DISTINCT a.chat_jid, coalesce(m.content,'') "
             "FROM api_sends a "
             "LEFT JOIN messages m ON m.id = a.id AND m.chat_jid = a.chat_jid "
-            "WHERE datetime(a.timestamp) > datetime('now', ?) "
-            "  AND datetime(a.timestamp) <= datetime('now')",
-            (f"-{VENTANA_MIN} minutes",),
+            "WHERE datetime(a.timestamp) > datetime(?, ?) "
+            "  AND datetime(a.timestamp) <= datetime(?) "
+            "  AND (? IS NULL OR datetime(a.timestamp) >= datetime(?))",
+            (ahora, f"-{VENTANA_MIN} minutes", ahora, desde, desde),
         ).fetchall()
     except sqlite3.OperationalError:
         # puente sin api_sends (version vieja): no puede distinguir agente de
@@ -120,6 +130,170 @@ def salientes_recientes(puente, ruta):
             continue
         chats.add((puente, chat_jid))
     return sorted(chats)
+
+
+# ── el turno mismo tiene que haber mandado (v10 AC-21) ──────────────────────
+# Antes bastaba un envio por la API del puente en los ultimos 20 minutos, y el
+# puente de soporte manda por API todo el dia (el bot, otras sesiones): el
+# census v10 midio 37 bloqueos con ~90% FP, cualquier turno de trabajo en el
+# brain que cerraba cerca de un envio ajeno. El hecho que cuenta ahora es del
+# transcript: entre el ultimo prompt real del operador y este Stop hay una
+# llamada de envio de mensaje (MCP de WhatsApp send_*, o Bash que manda por el
+# puente de soporte) cuyo resultado no fue error. Sin eso no hay nada que
+# esperar de un tercero y el detector calla.
+
+#
+# Dos fuentes, cualquiera basta:
+#   1. el ledger de enviados (r__posttool__sent-ledger.py escribe una linea por
+#      mensaje que salio, con la sesion y la hora): cubre los envios hechos
+#      DENTRO de un subagente, que no aparecen en el transcript principal, y
+#      los acuses sin message_id (el ledger lo documenta como posiblemente "").
+#   2. el transcript del turno: una herramienta de envio, con el MISMO patron de
+#      nombres que usa el gate de envio (se importa, no se copia), o un Bash que
+#      nombra el puente y cuyo resultado trae el acuse {"success": true}.
+# Residual, declarado: un envio hecho fuera de esta sesion (otro proceso, el
+# telefono del operador) no arma la guardia desde aqui.
+
+_SEND_GATE = pathlib.Path(__file__).resolve().parent / "g__pretool-mcp__outward-send.py"
+_SEND_TOOL_CACHE = []
+
+
+def _send_tool_re():
+    """El regex de herramientas de envio del gate de envio. Si no carga, una
+    forma amplia (cualquier herramienta cuyo nombre lleve 'send'): de mas
+    antes que de menos, porque esta es solo una de las dos fuentes."""
+    if not _SEND_TOOL_CACHE:
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("_wa_guardia_send_gate", _SEND_GATE)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _SEND_TOOL_CACHE.append(mod._SEND_TOOL)
+        except Exception:
+            _SEND_TOOL_CACHE.append(re.compile(r"send", re.IGNORECASE))
+    return _SEND_TOOL_CACHE[0]
+
+
+# Un Bash que nombra el puente puede ser solo una lectura del script (sed, grep,
+# un diff): lo que distingue un envio es el ACUSE que el puente devuelve,
+# {"success": true, ...}. Se lee del resultado y no del comando, porque el
+# comando trae prefijos de entorno y expansiones que el parser del panel
+# rechaza aunque el mensaje haya salido.
+_RE_ACUSE_PUENTE = re.compile(r'"success"\s*:\s*true')
+
+
+def envios_en_ledger(sesion, desde_utc, ahora_utc=None):
+    """True si el ledger de enviados tiene un mensaje de esta sesion entre el
+    inicio del turno y ahora, y el canal no lo reporto fallido."""
+    if not sesion or not desde_utc:
+        return False
+    from datetime import datetime, timezone
+    try:
+        desde = datetime.strptime(desde_utc, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        hasta = (datetime.strptime(ahora_utc, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                 if ahora_utc else datetime.now(timezone.utc))
+    except ValueError:
+        return False
+    ruta = pathlib.Path.home() / ".claude" / ".cache" / "receipts" / "sent.jsonl"
+    try:
+        lineas = ruta.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for linea in lineas:
+        try:
+            rec = json.loads(linea)
+        except ValueError:
+            continue
+        if rec.get("kind") != "sent" or rec.get("session_id") != sesion or rec.get("ok") is False:
+            continue
+        try:
+            t = datetime.fromisoformat(str(rec.get("ts", "")).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        if desde <= t <= hasta:
+            return True
+    return False
+
+
+def _texto(contenido):
+    if isinstance(contenido, str):
+        return contenido
+    if isinstance(contenido, list):
+        return "\n".join(str(b.get("text", "")) if isinstance(b, dict) else str(b) for b in contenido)
+    return str(contenido or "")
+
+
+def _es_envio(nombre, entrada, resultado):
+    if nombre != "Bash" and _send_tool_re().search(nombre or ""):
+        return True
+    if nombre == "Bash" and "wa-soporte" in str((entrada or {}).get("command", "")):
+        return bool(_RE_ACUSE_PUENTE.search(_texto(resultado)))
+    return False
+
+
+def _es_prompt_real(entrada):
+    if entrada.get("type") != "user" or entrada.get("isMeta") or entrada.get("isCompactSummary") \
+            or entrada.get("isVisibleInTranscriptOnly"):
+        return False
+    contenido = (entrada.get("message") or {}).get("content")
+    if isinstance(contenido, str):
+        return bool(contenido.strip())
+    return isinstance(contenido, list) and any(
+        isinstance(b, dict) and b.get("type") == "text" and (b.get("text") or "").strip() for b in contenido)
+
+
+def envios_del_turno(transcript_path):
+    """(hubo_envio, inicio_utc). inicio_utc es el instante del ultimo prompt real
+    en 'YYYY-MM-DD HH:MM:SS' UTC, o None si el transcript no lo trae."""
+    try:
+        with open(transcript_path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - 1048576))
+            lineas = fh.read().decode("utf-8", errors="replace").splitlines()
+    except (OSError, TypeError):
+        return False, None
+    entradas = []
+    for linea in lineas:
+        try:
+            entradas.append(json.loads(linea))
+        except ValueError:
+            continue
+    inicio = 0
+    for i in range(len(entradas) - 1, -1, -1):
+        if _es_prompt_real(entradas[i]):
+            inicio = i
+            break
+    else:
+        return False, None
+    usos, resultados = {}, {}
+    for e in entradas[inicio:]:
+        for b in (e.get("message") or {}).get("content") or []:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_use":
+                usos[b.get("id")] = (b.get("name"), b.get("input"))
+            elif b.get("type") == "tool_result":
+                resultados[b.get("tool_use_id")] = b
+    hubo = False
+    for uid, (nombre, entrada) in usos.items():
+        r = resultados.get(uid)
+        if r is None or r.get("is_error"):
+            continue                    # negado por un gate, fallido, o sin resultado
+        if _es_envio(nombre, entrada, r.get("content")):
+            hubo = True
+            break
+    ts = str(entradas[inicio].get("timestamp") or "")
+    inicio_utc = None
+    if ts:
+        try:
+            from datetime import datetime, timezone
+            t = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(timezone.utc)
+            inicio_utc = t.strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            inicio_utc = None
+    return hubo, inicio_utc
 
 
 def guardia_viva(chat_jid):
@@ -209,7 +383,8 @@ def _selftest() -> int:
 
     argv = sys.argv
     i = argv.index("--selftest")
-    fixture = argv[i + 1] if len(argv) > i + 1 else None
+    fixture = argv[i + 1] if len(argv) > i + 1 else str(
+        pathlib.Path(__file__).resolve().parent.parent / "registry" / "fixtures" / "FLOW.wa-guardia-on-pending")
     if fixture:
         _siembra_bases(pathlib.Path(fixture).resolve())
     return gate_selftest.run_gate_selftest(__file__, fixture)
@@ -227,6 +402,12 @@ def main():
         return
     sesion = str(payload.get("session_id", "sin-sesion"))
 
+    hubo_envio, inicio_turno = envios_del_turno(payload.get("transcript_path") or "")
+    if not hubo_envio:
+        hubo_envio = envios_en_ledger(sesion, inicio_turno)
+    if not hubo_envio:
+        return
+
     # costura de prueba y escape para instalaciones con los puentes fuera de la
     # ruta estandar. Un payload real de Claude Code nunca trae este campo, asi
     # que en produccion el mapa de puentes es siempre el de arriba.
@@ -234,7 +415,7 @@ def main():
 
     faltantes = []
     for puente, ruta in puentes.items():
-        for _p, chat_jid in salientes_recientes(puente, ruta):
+        for _p, chat_jid in salientes_recientes(puente, ruta, desde=inicio_turno):
             if guardia_viva(chat_jid):
                 continue
             if ya_avisado(sesion, chat_jid):

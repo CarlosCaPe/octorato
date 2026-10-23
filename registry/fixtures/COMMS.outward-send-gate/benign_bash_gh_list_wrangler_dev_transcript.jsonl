@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "gh release list --repo x/y && wrangler dev --config x.toml"}}]}, "uuid": "4ed0e5df-f0d0-4c8f-a0dd-3e3168d9aa88", "parentUuid": "91554415-9e9d-42a3-9bf7-88add1b32a57", "sessionId": "fx-session", "timestamp": "2026-09-05T10:00:00.000Z"}

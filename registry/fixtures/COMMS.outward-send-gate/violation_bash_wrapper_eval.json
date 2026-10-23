@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-bw-eval",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "eval ~/.claude/scripts/wa-soporte.sh 5210000000000 \"Ese cargo no lo reconozco.\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_bash_wrapper_eval_transcript.jsonl"
+}

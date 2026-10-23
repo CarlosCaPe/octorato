@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "arm-synthetics",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Per-arm health check templates. Each arm defines a synthetics.yaml with endpoints to probe + expected responses + cron schedule. The skill ships the template + GH Action runner. Failures open issues IN THE ARM REPO (not the brain) to preserve octopus arm isolation. Use when onboarding a new arm or when an arm's health monitoring needs a scheduled probe."
+}

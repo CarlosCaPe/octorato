@@ -1,6 +1,6 @@
 ---
 name: stripe-payments
-description: "Elige e implementa el tier correcto de Stripe (Payment Link, Checkout, Elements, Connect, Billing), con registro del MCP, CLI local e higiene de llaves. Usalo al anadir donate, checkout o suscripcion, o al comparar contra PayPal."
+description: "Pick and implement the right Stripe tier (Payment Link, Checkout, Elements, Connect, Billing), with MCP registration, local CLI and key hygiene. Use it when adding donate, checkout or subscription, or when comparing against PayPal."
 ---
 
 # Stripe Payments — Pick the Right Tier First

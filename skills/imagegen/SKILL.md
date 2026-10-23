@@ -1,6 +1,6 @@
 ---
 name: "imagegen"
-description: "Genera o edita imagenes raster con IA: fotos, ilustraciones, texturas, sprites, mockups, recortes con fondo transparente. No la uses si el activo debe ser SVG, vector o HTML/CSS."
+description: "Generates or edits raster images with AI: photos, illustrations, textures, sprites, mockups, cutouts with a transparent background. Do not use it when the asset must be SVG, vector or HTML/CSS."
 ---
 
 # Image Generation Skill

@@ -1,0 +1,10 @@
+{
+  "session_id": "fx-nd_ask",
+  "tool_name": "mcp__whatsapp__send_message",
+  "tool_input": {
+    "recipient": "5210000000000",
+    "message": "Listo, ya quedó instalado y probado."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_no_send_ask_transcript.jsonl"
+}

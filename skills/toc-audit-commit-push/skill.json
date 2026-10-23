@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "toc-audit-commit-push",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "TOC Audit, Commit & Push Workflow"
+}

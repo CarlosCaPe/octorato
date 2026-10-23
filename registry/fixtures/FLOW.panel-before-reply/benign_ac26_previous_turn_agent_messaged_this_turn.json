@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-rp-benign-ac26-previous-turn-agent-messaged-this-turn",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Waiting on the builder.",
+  "transcript_path": "benign_ac26_previous_turn_agent_messaged_this_turn_transcript.jsonl",
+  "_fixture": {}
+}

@@ -1,0 +1,6 @@
+{
+  "hook_event_name": "SessionStart",
+  "session_id": "kernel-selftest-session",
+  "cwd": "/home/agent/workspace",
+  "source": "startup"
+}

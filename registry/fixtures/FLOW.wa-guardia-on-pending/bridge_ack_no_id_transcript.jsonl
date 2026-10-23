@@ -1,0 +1,4 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"mandale el avance y que confirme"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_q0","name":"Bash","input":{"command":"~/.claude/scripts/wa-soporte.sh 5215550001111 \"Te mando el avance, me confirmas?\""}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_q0","content":"{\"success\":true,\"message\":\"Message sent\"}"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Enviado."}]}}

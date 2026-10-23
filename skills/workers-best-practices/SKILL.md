@@ -1,6 +1,9 @@
 ---
 name: workers-best-practices
 description: Reviews and authors Cloudflare Workers code against production best practices. Load when writing new Workers, reviewing Worker code, configuring wrangler.jsonc, or checking for common Workers anti-patterns (streaming, floating promises, global state, secrets, bindings, observability). Biases towards retrieval from Cloudflare docs over pre-trained knowledge.
+license: Apache-2.0
+metadata:
+  origin: "https://github.com/cloudflare/skills (Apache-2.0). Installed by wrangler on first run and committed here as 6c78520 on 2026-05-23; upstream ships no NOTICE file, and its LICENSE appendix carries the unfilled \"[name of copyright owner]\" placeholder, so no copyright holder string is asserted here that was not read from a file."
 ---
 
 Your knowledge of Cloudflare Workers APIs, types, and configuration may be outdated. **Prefer retrieval over pre-training** for any Workers code task — writing or reviewing.

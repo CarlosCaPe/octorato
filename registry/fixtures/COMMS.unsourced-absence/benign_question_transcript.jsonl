@@ -1,0 +1,3 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Lo mando."}, {"type": "tool_use", "id": "t1", "name": "mcp__gmail__send_email", "input": {"to": "x@ejemplo.com", "subject": "Queja", "body": "Estimada Ana:\n\n¿A qué reservación y concepto corresponde el cargo del 20 de julio por $27,180.00? No tengo el desglose y lo necesito para conciliar.\n\nAtentamente,\nC."}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Enviado."}]}}

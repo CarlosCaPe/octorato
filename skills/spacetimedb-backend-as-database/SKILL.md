@@ -1,6 +1,6 @@
 ---
 name: spacetimedb-backend-as-database
-description: "Base de datos que REEMPLAZA al backend: la logica corre como modulos dentro de la DB y los clientes se suscriben al estado vivo, sin capa API. Para multijugador en tiempo real. Paradigma nuevo, no default."
+description: "A database that REPLACES the backend: logic runs as modules inside the DB and clients subscribe to live state, with no API layer. For real-time multiplayer. A new paradigm, not a default."
 ---
 
 # SpacetimeDB — Database-as-Backend

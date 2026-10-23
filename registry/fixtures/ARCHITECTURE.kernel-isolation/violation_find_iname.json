@@ -1,0 +1,13 @@
+{
+  "session_id": "sess-parent",
+  "agent_id": "agent-b",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "command": "find . -iname 'A.PY' -delete"
+  },
+  "cwd": "{{SANDBOX}}/work/tree/pkg",
+  "_setup": {
+    "expect_names": "agent-a"
+  }
+}

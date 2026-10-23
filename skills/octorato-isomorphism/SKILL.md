@@ -1,6 +1,6 @@
 ---
 name: octorato-isomorphism
-description: "Los tres anclajes de Octorato (pulpo, Linux, teseracto) son una misma estructura mostrada tres veces, no tres marcas pegadas. Nombra el metodo de abstraccion. Invoca al explicar por que cohesionan o al anadir un anclaje nuevo."
+description: "Octorato's three anchors (octopus, Linux, tesseract) are one structure shown three times, not three brands glued together. Names the abstraction method. Invoke when explaining why they cohere or when adding a new anchor."
 metadata:
   type: identity
   short-description: "octopus ∧ linux ∧ tesseract share one structure; the shared words ARE the brain's required primitives. The fractal/self-similar primitive is owned by octorato-symbolism; this skill is the method that measures the invariant."

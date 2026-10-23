@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "security-roles-least-privilege",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Security Roles & Least-Privilege Grants"
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "serial-to-identity-conversion",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Serial to Identity Column Conversion"
+}

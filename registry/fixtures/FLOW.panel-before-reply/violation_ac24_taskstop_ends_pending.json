@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-rp-violation-ac24-taskstop-ends-pending",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Waiting on the reviewer.",
+  "transcript_path": "violation_ac24_taskstop_ends_pending_transcript.jsonl",
+  "_fixture": {
+    "stderr_lacks": [
+      "cannot decide"
+    ]
+  }
+}

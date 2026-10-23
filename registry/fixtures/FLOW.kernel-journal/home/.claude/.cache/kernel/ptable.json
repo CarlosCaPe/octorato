@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "processes": {
+    "kernel-selftest-session": {
+      "pid": "kernel-selftest-session",
+      "kind": "main",
+      "type": "main",
+      "worktree": "/home/agent/workspace",
+      "cwd": "/home/agent/workspace",
+      "registered_ts": 0
+    },
+    "kernel-selftest-agent": {
+      "pid": "kernel-selftest-agent",
+      "ppid": "kernel-selftest-session",
+      "kind": "subagent",
+      "type": "Reality Checker",
+      "worktree": "/home/agent/workspace",
+      "cwd": "/home/agent/workspace",
+      "registered_ts": 0
+    }
+  }
+}

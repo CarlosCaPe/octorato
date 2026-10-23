@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-hbr",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "x@ejemplo.com"
+    ],
+    "subject": "Queja",
+    "body": "No reconozco ese cargo."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_hatch_bracketed_in_prompt_transcript.jsonl"
+}

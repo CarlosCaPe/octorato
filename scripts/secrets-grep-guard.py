@@ -16,13 +16,14 @@ Exit:   always 0.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 # Force UTF-8 on stdout/stderr so the ✓ / ✗ / em-dash glyphs in reports
 # survive on Windows shells defaulting to cp1252. Without this, a script
 # can do its work correctly and still crash with UnicodeEncodeError when
 # printing success. Applied repo-wide by _apply-utf8-reconfigure.py.
-for _stream in (sys.stdout, sys.stderr):
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
@@ -32,7 +33,7 @@ for _stream in (sys.stdout, sys.stderr):
 # ── reader commands ──────────────────────────────────────────────────────────
 
 _READER_RE = re.compile(
-    r"\b(grep|cat|head|tail|less|rg|awk|sed\s+-n|xxd|strings)\b",
+    r"\b(grep|cat|head|tail|less|rg|awk|sed\s+-n|xxd|strings|cut)\b",
     re.IGNORECASE,
 )
 
@@ -82,6 +83,40 @@ _DENY_REASON = (
 )
 
 
+# ── v10: this gate only TIGHTENS ─────────────────────────────────────────────
+# A name-only exemption was tried and removed: QA showed it was not scoped to
+# .env-shaped files (`awk -F= '{print $1}' ~/.ssh/id_rsa` prints the whole key,
+# since a line with no '=' is all field 1), and the replay showed it removed no
+# measured friction (none of its shapes occurs in the corpus). What stays are
+# three closures of holes that were already on master: segments split on
+# ; && || and newline only outside quotes, `cut` counted as a reader, and a
+# later pipe stage that re-reads the secret file not counted as a redactor.
+
+
+def _segments(command: str) -> list:
+    """Split on ; && || and newline OUTSIDE quotes. A plain re.split cut
+    `awk -F= '{print $1; print}' .env` inside its program, so neither half
+    carried both the reader and the path and the value printed (QA of v10)."""
+    out, cur, quote, i = [], [], None, 0
+    while i < len(command):
+        ch = command[i]
+        if quote:
+            if ch == quote:
+                quote = None
+            elif ch == "\\" and quote == '"' and i + 1 < len(command):
+                cur.append(ch); i += 1; ch = command[i]
+            cur.append(ch); i += 1; continue
+        if ch in "'\"":
+            quote = ch
+        elif ch == "\n" or ch == ";":
+            out.append("".join(cur)); cur = []; i += 1; continue
+        elif command.startswith(("&&", "||"), i):
+            out.append("".join(cur)); cur = []; i += 2; continue
+        cur.append(ch); i += 1
+    out.append("".join(cur))
+    return out
+
+
 def _has_reader(command: str) -> bool:
     return bool(_READER_RE.search(command))
 
@@ -91,7 +126,40 @@ def _has_secret_path(command: str) -> bool:
 
 
 def _has_redactor(command: str) -> bool:
+    # A later pipeline stage that itself reads the secret file is not a
+    # redactor of the stage before it: `grep -c '' .env | grep -o '.*' .env`
+    # prints the file whole (QA of v10).
+    stages = re.split(r"(?<!\|)\|(?!\|)", command)
+    if any(_has_reader(st) and _has_secret_path(st) for st in stages[1:]):
+        return False
     return bool(_REDACTOR_RE.search(command))
+
+
+# -- v8 kernel journal (Phase 4, v8-kernel.md) --------------------------------
+_KERNEL_RULE = "SECURITY.never-read-secrets-raw"
+
+
+def _journal_deny(reason, payload=None, tool_use_id=None) -> None:
+    """Mirror this refusal into the refusing process's journal.
+
+    FAIL-OPEN by contract: every error is swallowed and the verdict this gate
+    just reached is unchanged. A journal that cannot be written must never turn
+    a deny into an allow. kernel_proc is loaded by PATH through importlib, not
+    by name, so nothing on sys.path can shadow it.
+    """
+    try:
+        import importlib.util
+        import os as _os
+        _path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "kernel_proc.py")
+        _spec = importlib.util.spec_from_file_location("_kernel_proc_journal", _path)
+        _kp = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_kp)
+        _payload = payload if isinstance(payload, dict) else {}
+        _kp.journal_deny(_KERNEL_RULE, reason,
+                         tool_use_id if tool_use_id is not None else _payload.get("tool_use_id"),
+                         _kp.resolve_pid(_payload))
+    except Exception:
+        pass
 
 
 def main() -> int:
@@ -109,7 +177,7 @@ def main() -> int:
 
         # Evaluate per shell segment (split on ; && || newline), NOT on the whole
         # string: `cat .env; cat ok | jq .` must not pass on the unrelated jq.
-        for seg in re.split(r"(?:&&|\|\||;|\n)", command):
+        for seg in _segments(command):
             if _has_reader(seg) and _has_secret_path(seg) and not _has_redactor(seg):
                 print(json.dumps({
                     "hookSpecificOutput": {
@@ -118,6 +186,7 @@ def main() -> int:
                         "permissionDecisionReason": _DENY_REASON,
                     }
                 }))
+                _journal_deny(_DENY_REASON, data)
                 return 0
     except Exception:
         pass  # fail-open: never break the user's command

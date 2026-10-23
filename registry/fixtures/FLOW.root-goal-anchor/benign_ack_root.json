@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-ackroot",
+  "transcript_path": "benign_ack_root_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

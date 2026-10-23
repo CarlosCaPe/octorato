@@ -1,0 +1,14 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Write",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "file_path": "{{SANDBOX}}/.claude/.cache/kernel/ptable.json",
+    "content": "x"
+  },
+  "cwd": "{{SANDBOX}}/work/tree",
+  "agent_id": "agent-b",
+  "_setup": {
+    "expect_names": "kernel"
+  }
+}

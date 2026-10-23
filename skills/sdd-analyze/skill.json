@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "sdd-analyze",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "SDD step 3b (LARGE tasks). Read-only consistency pass over feature.md, plan.md and the governing rules file BEFORE any implementation file is written. Reports gaps, contradictions and uncovered criteria with stable finding ids. Run it as an independent verifier subagent on the judgment tier, never in the context that wrote the plan."
+}

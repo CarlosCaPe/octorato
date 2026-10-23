@@ -1,0 +1,8 @@
+{
+  "session_id": "sess-flip",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_flip",
+  "tool_input": {
+    "command": "sed -i 's/\"deny\"/\"allow\"/' arms/closed/arm.json"
+  }
+}

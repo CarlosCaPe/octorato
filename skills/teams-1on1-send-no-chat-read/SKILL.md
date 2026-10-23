@@ -1,6 +1,6 @@
 ---
 name: teams-1on1-send-no-chat-read
-description: "Manda un mensaje 1:1 de Teams por Graph API aunque el token NO traiga scopes Chat.Read: deriva el chat ID de los OIDs ordenados en la forma canonica 19:{oid1}_{oid2}@unq.gbl.spaces."
+description: "Sends a Teams 1:1 message through the Graph API even when the token does NOT carry Chat.Read scopes: derives the chat ID from the sorted OIDs in the canonical form 19:{oid1}_{oid2}@unq.gbl.spaces."
 metadata:
   short-description: Send 1:1 Teams chat without Chat.Read scope (deterministic chat-id derivation)
   status: stable

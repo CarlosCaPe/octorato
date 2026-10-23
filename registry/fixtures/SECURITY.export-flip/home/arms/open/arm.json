@@ -1,0 +1,9 @@
+{
+  "kind": "arm",
+  "name": "open",
+  "version": "1.0.0",
+  "license": "proprietary",
+  "telemetry": {
+    "export": "allow"
+  }
+}

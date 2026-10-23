@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-subj",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "x@ejemplo.com"
+    ],
+    "subject": "Cargo no reconocido, nunca lo contraté",
+    "body": "Adjunto el estado de cuenta."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_absence_in_subject_transcript.jsonl"
+}

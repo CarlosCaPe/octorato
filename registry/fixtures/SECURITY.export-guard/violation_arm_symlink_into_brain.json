@@ -1,0 +1,34 @@
+{
+  "arms_paths": {
+    "x": "links/x"
+  },
+  "files": {
+    ".claude/arm.json": {
+      "kind": "arm",
+      "name": "x",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    }
+  },
+  "dirs": [
+    ".claude/sub"
+  ],
+  "symlinks": [
+    [
+      "links/x",
+      ".claude"
+    ]
+  ],
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/links/x/sub"
+  },
+  "_comment": "An arm registered at a symlink to the brain never counts as an arm.",
+  "_setup": {
+    "expect_reason": "brain session"
+  }
+}

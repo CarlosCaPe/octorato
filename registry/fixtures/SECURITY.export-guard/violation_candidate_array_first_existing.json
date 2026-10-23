@@ -1,0 +1,38 @@
+{
+  "arms_paths": {
+    "a": [
+      "arms/missing",
+      "arms/closed",
+      "arms/open"
+    ]
+  },
+  "files": {
+    "arms/open/arm.json": {
+      "kind": "arm",
+      "name": "open",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    },
+    "arms/closed/arm.json": {
+      "kind": "arm",
+      "name": "closed",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "deny"
+      }
+    }
+  },
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/closed"
+  },
+  "_comment": "Candidates resolve as load_arms(): the first that exists (closed) wins.",
+  "_setup": {
+    "expect_reason": "Export_Policy of the arm"
+  }
+}

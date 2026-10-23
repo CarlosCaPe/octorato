@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "study-tutor",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Turns an assistant into a personal study tutor: builds a plan back from the exam date, explains from the student's own course material, quizzes with active recall, and tracks what still fails. Use on 'ayúdame a estudiar', 'quiz me', 'tengo examen el viernes', 'study plan'."
+}

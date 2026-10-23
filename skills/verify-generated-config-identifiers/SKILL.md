@@ -1,6 +1,6 @@
 ---
 name: verify-generated-config-identifiers
-description: "Config generada schema-valida no es semanticamente correcta: verifica cada identificador externo (metrica, campo, columna, env key) contra la doc del vendor antes de enviar. Dispara al generar dashboards, monitores, IaC o pipelines."
+description: "Schema-valid generated config is not semantically correct: check every external identifier (metric, field, column, env key) against the vendor docs before sending. Triggers when generating dashboards, monitors, IaC or pipelines."
 metadata:
   type: reference
 ---

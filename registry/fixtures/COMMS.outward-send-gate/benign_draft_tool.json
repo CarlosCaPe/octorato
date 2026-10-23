@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-d",
+  "tool_name": "mcp__gmail__draft_email",
+  "tool_input": {
+    "to": [
+      "x@ejemplo.com"
+    ],
+    "subject": "Queja",
+    "body": "Estimada Ana:\n\nEl cargo del 20 de julio por $27,180.00 no corresponde a ningún servicio que yo haya contratado.\n\nAtentamente,\nC."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_draft_tool_transcript.jsonl"
+}

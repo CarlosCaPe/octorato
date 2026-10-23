@@ -1,0 +1,11 @@
+{
+  "session_id": "sess-arming",
+  "agent_id": "agent-a",
+  "tool_name": "Write",
+  "tool_use_id": "toolu_arm",
+  "tool_input": {
+    "file_path": "{{SANDBOX}}/wt/state-gate/scripts/g__pretool__evil.py",
+    "content": "x\n"
+  },
+  "cwd": "{{SANDBOX}}/wt/state-gate"
+}

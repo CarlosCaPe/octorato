@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "SubagentStart",
+  "session_id": "kernel-selftest-session",
+  "agent_id": "kernel-selftest-agent",
+  "agent_type": "Reality Checker",
+  "cwd": "/home/agent/workspace",
+  "transcript_path": ""
+}

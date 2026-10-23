@@ -1,6 +1,6 @@
 ---
 name: bruno-postman-alternative
-description: "Cliente de API open-source donde las colecciones son archivos de texto en el repo, revisables por PR, sin nube ni licencias por equipo. MIT. Para equipos que viven en git o cuando Postman sale caro."
+description: "Open-source API client where collections are text files in the repo, reviewable by PR, with no cloud and no per-seat licenses. MIT. For teams that live in git or when Postman gets expensive."
 ---
 
 # Bruno — Postman Alternative with Git-Native Collections

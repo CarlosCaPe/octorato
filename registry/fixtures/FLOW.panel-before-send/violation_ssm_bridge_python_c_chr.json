@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-ssm-bridge-python-c-chr",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws --profile ops ssm send-command --instance-ids i-0aaaaaaaaaaaaaaaa --document-name AWS-RunShellScript --parameters \"commands=['python3 -c \\\"print(chr(104))\\\"']\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_ssm_bridge_python_c_chr_transcript.jsonl"
+}

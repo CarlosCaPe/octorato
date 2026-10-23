@@ -1,6 +1,6 @@
 ---
 name: "security-ownership-map"
-description: "Topologia de propiedad de codigo orientada a seguridad desde el historial de git: bus factor, duenos de codigo sensible, huerfanos, exporta CSV/JSON. Solo cuando piden analisis de seguridad, no listas de mantenedores."
+description: "Security-oriented code ownership topology from git history: bus factor, owners of sensitive code, orphans, CSV/JSON export. Only when a security analysis is requested, not for maintainer lists."
 ---
 
 # Security Ownership Map

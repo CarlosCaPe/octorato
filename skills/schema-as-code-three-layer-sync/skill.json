@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "schema-as-code-three-layer-sync",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Keeps the three layers of a schema-as-code project in sync: ER diagram, data dictionary and the declarative SQL. Defines the chain of truth and the diff flow when they drift."
+}

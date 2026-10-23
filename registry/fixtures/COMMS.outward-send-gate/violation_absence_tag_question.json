@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-tag",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "x@ejemplo.com"
+    ],
+    "subject": "Queja",
+    "body": "El cargo no corresponde a ningún servicio que yo haya contratado, ¿verdad?"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_absence_tag_question_transcript.jsonl"
+}

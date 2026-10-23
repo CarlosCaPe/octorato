@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-generate_neural_map.py — Octopus Connectome Generator v2.0
+generate_neural_map.py — Octopus Connectome Generator
 
 Builds a deep neural connectivity map inspired by octopus neurobiology:
 - Octopuses have ~500M neurons, 2/3 distributed in arms (not central brain)
@@ -479,7 +479,7 @@ def load_hebbian_weights(log_path):
 def generate_connectome():
     """Generate the full deep connectome."""
     t0 = datetime.now(timezone.utc)
-    print("  Octopus Connectome Generator v2.0 — Deep Neural Map")
+    print("  Octopus Connectome Generator — Deep Neural Map")
     print("=" * 60)
     print("   Inspired by octopus neurobiology:")
     print("   500M neurons, 2/3 in arms, RNA editing")
@@ -492,12 +492,21 @@ def generate_connectome():
     neurons = []
     agent_docs = {}
 
+    # skills/vendor/ and agents/vendor/ are installed PACKAGES (v8). They stay out of
+    # the tracked map: a package name can be private (an adopter's internal skill), and
+    # neural_map.json is committed to a public repo. Vendor packages are indexed in the
+    # gitignored private layer under company/connectome/ instead, so they are still
+    # reachable by seek without leaking a name into the public graph.
     for agent_dir_name in AGENT_DIVISIONS:
+        if agent_dir_name == "vendor":
+            continue
         dir_path = AGENTS_DIR / agent_dir_name
         if not dir_path.exists():
             continue
         for md_file in sorted(dir_path.rglob("*.md")):
             if md_file.name == "README.md":
+                continue
+            if "vendor" in md_file.relative_to(AGENTS_DIR).parts:
                 continue
             meta = read_agent(md_file)
             neurons.append(meta)
@@ -533,6 +542,8 @@ def generate_connectome():
         rel = skill_dir.relative_to(SKILLS_DIR)
         if any(part.startswith(".") for part in rel.parts):
             continue
+        if rel.parts and rel.parts[0] == "vendor":
+            continue  # installed package: private, indexed only in company/connectome/
         depth = len(rel.parts)
         meta = read_skill(skill_dir)
         prev = seen_ids.get(meta["id"])

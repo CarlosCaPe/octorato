@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "time -p make build"}, "cwd": "/nonexistent/repo"}

@@ -1,0 +1,16 @@
+{
+  "session_id": "fx-rp-benign-ac28-input-short-context-one-reviewer",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "The runbook does not name the host.\n\ninput-needed: What is the name of the standby database host?\n\nProvenance: Engine: main loop",
+  "transcript_path": "benign_ac28_input_short_context_one_reviewer_transcript.jsonl",
+  "_fixture": {
+    "receipts": [
+      {
+        "verdict": "PASS",
+        "ts": "2026-10-14T10:04:00.000Z"
+      }
+    ]
+  }
+}

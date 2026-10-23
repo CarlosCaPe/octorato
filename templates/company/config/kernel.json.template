@@ -1,0 +1,24 @@
+{
+  "_comment": [
+    "Copy to company/config/kernel.json (gitignored) and set your caps.",
+    "This is the OCCUPANT of the slot declared in registry/kernel.yaml; that",
+    "tracked file documents every key and ships defaults of 0 (unlimited).",
+    "Any key omitted here keeps its default, so setting only `subagent` is a",
+    "complete file. Enforced by scripts/g__pretool__kernel.py (rule",
+    "FLOW.kernel-quota); validated by brain_doctor kernel-quota-live.",
+    "max_tool_calls counts journal LINES via `seq` (start and quota lines",
+    "included), so a cap is a ceiling, not an exact tool allowance.",
+    "0 = unlimited. A malformed file never denies: the gate falls back to the",
+    "tracked defaults and the doctor WARNs naming the bad key."
+  ],
+  "subagent": {
+    "max_tool_calls": 0,
+    "max_minutes": 0
+  },
+  "main": {
+    "max_tool_calls": 0,
+    "max_minutes": 0
+  },
+  "qa_multiplier": 3,
+  "qa_agent_types_regex": "(qa|review|reality|evidence|checker|verif|audit)"
+}

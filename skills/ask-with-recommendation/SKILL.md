@@ -1,6 +1,6 @@
 ---
 name: ask-with-recommendation
-description: "Toda pregunta de opcion multiple al operador lleva recomendacion explicita marcada mas su razon (impacto, alcance, tiempo, riesgo de esperar). Aplica a cada AskUserQuestion y a cada 'quieres X o Y?' en prosa."
+description: "Every multiple-choice question to the operator carries an explicit marked recommendation plus its reason (impact, scope, time, risk of waiting). Applies to every AskUserQuestion and to every 'quieres X o Y?' written in prose."
 ---
 
 # Ask With Recommendation

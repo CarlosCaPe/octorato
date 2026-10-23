@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-rp1-v",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cat ~/.claude/scripts/wa-soporte.sh | sh -s -- 5210000000001 hola"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_reader_pipe_cat_sh_transcript.jsonl"
+}

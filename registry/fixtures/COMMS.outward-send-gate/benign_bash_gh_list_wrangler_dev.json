@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-b1",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "gh release list --repo x/y && wrangler dev --config x.toml"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_bash_gh_list_wrangler_dev_transcript.jsonl"
+}

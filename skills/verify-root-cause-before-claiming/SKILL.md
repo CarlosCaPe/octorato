@@ -1,6 +1,6 @@
 ---
 name: verify-root-cause-before-claiming
-description: "Antes de decirle a alguien la CAUSA de una falla, verificala contra el dato, no contra el sintoma. Una causa plausible sin comprobar dana mas la confianza que decir 'la confirmo en un momento'. Dispara al escribir 'fallo porque' o 'se debe a'."
+description: "Before telling anyone the CAUSE of a failure, verify it against the data, not against the symptom. A plausible unverified cause hurts trust more than saying 'I will confirm it shortly'. Triggers when writing 'fallo porque' or 'se debe a'."
 metadata:
   type: feedback
 ---

@@ -1,6 +1,6 @@
 ---
 name: finops-observability
-description: "Mide el costo del cerebro y sus agentes y rutea la pregunta a la herramienta correcta: gasto por arm, KPI de ruteo, costo marginal de cada capacidad. Dispara con 'cuanto gastamos', 'cuanto cuesta', 'que se esta comiendo los tokens'."
+description: "Measures what the brain and its agents cost and routes the question to the right tool: spend per arm, routing KPIs, marginal cost of each capability. Triggers on 'cuanto gastamos', 'cuanto cuesta', 'que se esta comiendo los tokens'."
 ---
 
 # FinOps Observability

@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-s",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "x@ejemplo.com"
+    ],
+    "subject": "Queja",
+    "body": "El cargo del 20 de julio no corresponde a\n\nningún servicio que yo haya contratado."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_absence_split_lines_transcript.jsonl"
+}

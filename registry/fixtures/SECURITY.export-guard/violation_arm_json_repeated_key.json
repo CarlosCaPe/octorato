@@ -1,0 +1,17 @@
+{
+  "arms_paths": {
+    "a": "arms/a"
+  },
+  "files": {
+    "arms/a/arm.json": "{\"kind\": \"arm\", \"telemetry\": {\"export\": \"deny\", \"export\": \"allow\"}}"
+  },
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/a"
+  },
+  "_comment": "A repeated key whose last value is allow: refused, not last-wins.",
+  "_setup": {
+    "expect_reason": "Export_Policy of the arm"
+  }
+}

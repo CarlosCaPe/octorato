@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-pivot",
+  "transcript_path": "benign_pivot_by_operator_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

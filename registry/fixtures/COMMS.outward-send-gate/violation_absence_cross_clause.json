@@ -1,0 +1,10 @@
+{
+  "session_id": "fx-cl",
+  "tool_name": "mcp__whatsapp__send_message",
+  "tool_input": {
+    "recipient": "5210000000000",
+    "message": "No reconozco ese cargo y no sé quién lo hizo."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_absence_cross_clause_transcript.jsonl"
+}

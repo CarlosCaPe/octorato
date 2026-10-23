@@ -1,0 +1,14 @@
+{
+  "roots": [
+    "{{SANDBOX}}/work/tree",
+    "{{SANDBOX}}/work/wt-b",
+    "{{SANDBOX}}/work/solo",
+    "{{SANDBOX}}/arms/alpha",
+    "{{SANDBOX}}/arms/beta"
+  ],
+  "files": [
+    "{{SANDBOX}}/work/tree/pkg/a.py",
+    "{{SANDBOX}}/work/tree/b.py",
+    "{{SANDBOX}}/arms/beta/x.py"
+  ]
+}

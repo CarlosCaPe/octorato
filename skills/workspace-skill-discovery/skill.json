@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "workspace-skill-discovery",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Discover and include ALL skills across the workspace — not just global ones. Use at the start of every session or when the user asks about available skills. Ensures project-level skills (under .claude/skills/ or skills/ in any repo) are never missed."
+}

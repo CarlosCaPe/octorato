@@ -1,0 +1,13 @@
+{
+  "session_id": "sess-arming",
+  "agent_id": "agent-a",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_arm",
+  "tool_input": {
+    "command": "rm -rf {{SANDBOX}}/.claude/local-only-ref/.claude"
+  },
+  "cwd": "{{SANDBOX}}/wt/state-gate",
+  "_setup": {
+    "expect_names": "/local-only-ref/.claude"
+  }
+}

@@ -1,0 +1,2 @@
+{"seq":0,"ts":1788782922.83828,"start_ts":1788782922.83828,"pid":"agent-a","kind":"start","prev":null,"ppid":"sess-parent","type":"Backend Architect"}
+{"seq":1,"ts":1788782922.838505,"start_ts":1788782922.83828,"pid":"agent-a","kind":"tool","prev":"6e6132c069ecd1e92a3911c432f354b5291ff2546f73a71e4c74e1e3a2cfba33","tool_name":"Write","path":"pkg/a.py","input_sha256":"seed"}

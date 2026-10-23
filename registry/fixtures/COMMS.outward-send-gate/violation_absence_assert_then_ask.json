@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-ata",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "x@ejemplo.com"
+    ],
+    "subject": "Queja",
+    "body": "El cargo no corresponde a ningún servicio que yo haya contratado ¿me lo pueden aclarar por favor?"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_absence_assert_then_ask_transcript.jsonl"
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "querymaster-sqlite",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Child skill of querymaster for SQLite: local file databases, Optuna storage, analytical sweeps and embedded use, with WAL and foreign_keys PRAGMA. Activates when the resolved engine is SQLite."
+}

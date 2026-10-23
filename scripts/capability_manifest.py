@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-capability_manifest.py -- v5.0 Capability Manifest Generator for Octorato.
+capability_manifest.py -- Capability Manifest Generator for Octorato.
 
 Scans skills/, agents/, scripts/, registry/rules.yaml, and hooks.json then
 writes docs/CAPABILITIES.md -- the canonical, accumulative offering document.
@@ -75,6 +75,13 @@ def scan_skills() -> list[dict]:
     for skill_dir in sorted(skills_dir.iterdir()):
         if not skill_dir.is_dir():
             continue
+        # A symlinked skill dir is an installed package (v8 PACKAGE: skills/<name> ->
+        # skills/vendor/<name>). Counting it would make docs/CAPABILITIES.md depend on
+        # which packages this machine happens to have installed, and the manifest gate
+        # at pre-push demands a machine-independent file. Packages are listed by
+        # `octo pkg list`, not here.
+        if skill_dir.is_symlink():
+            continue
         skill_file = skill_dir / "SKILL.md"
         if not skill_file.exists():
             continue
@@ -99,15 +106,25 @@ def scan_skills() -> list[dict]:
 # 2. Scan Agents
 # ---------------------------------------------------------------------------
 
+# Agent counting rule. SOURCE OF TRUTH: scripts/brain-stats.py (EXCLUDED_AGENT_DIRS
+# + NON_PERSONA_FILES + the recursive persona glob). Kept as literal constants here
+# because brain-stats.py has a hyphen in its name and is not importable as a module.
+# If brain-stats.py changes its definitions, change them here too or the manifest
+# and the headline counts drift apart again.
+EXCLUDED_AGENT_DIRS = {"examples", "strategy"}
+NON_PERSONA_FILES = {"README.md", "REGISTRY.md", "index.md", "_index.md"}
+
+
 def scan_agents() -> list[dict]:
     agents_dir = BRAIN / "agents"
     results = []
     for division_dir in sorted(agents_dir.iterdir()):
-        if not division_dir.is_dir():
+        if not division_dir.is_dir() or division_dir.name in EXCLUDED_AGENT_DIRS:
             continue
         division = division_dir.name
-        for agent_file in sorted(division_dir.glob("*.md")):
-            if agent_file.name == "REGISTRY.md":
+        # recursive: personas may live in sub-categories (game-development/godot/)
+        for agent_file in sorted(division_dir.rglob("*.md")):
+            if agent_file.name in NON_PERSONA_FILES:
                 continue
             text = agent_file.read_text(encoding="utf-8", errors="replace")
             fm = _yaml_frontmatter(text)
@@ -225,9 +242,13 @@ def scan_hooks() -> dict[str, list[str]]:
     with hooks_file.open(encoding="utf-8") as f:
         data = json.load(f)
 
-    events = ["PostToolUse", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"]
+    # Derived from hooks.json itself, never a hardcoded list: a wired event the
+    # list did not name (SubagentStart, SubagentStop, PermissionDenied) rendered
+    # as if the brain had no hook on it, and the manifest is what the doctor and
+    # the docs read.
+    events = [k for k, v in data.items() if not k.startswith("$") and isinstance(v, list)]
     result: dict[str, list[str]] = {}
-    for event in events:
+    for event in sorted(events):
         entries = data.get(event, [])
         basenames: list[str] = []
         for entry in entries:
@@ -272,14 +293,16 @@ def _build_wiring_index(hooks: dict[str, list[str]]) -> set[str]:
     for m in re.finditer(r"scripts/([\w\-]+)", claude_text):
         wired.add(m.group(1))
 
-    # from README.md
-    readme = BRAIN / "README.md"
-    if readme.exists():
-        readme_text = readme.read_text(encoding="utf-8", errors="replace")
-        for m in re.finditer(r"[\w\-]+\.py", readme_text):
+    # from README.md and the long tour it points at (docs/ANATOMY.md holds the
+    # former README body, so a script named only there stays wired)
+    for prose in (BRAIN / "README.md", BRAIN / "docs" / "ANATOMY.md"):
+        if not prose.exists():
+            continue
+        prose_text = prose.read_text(encoding="utf-8", errors="replace")
+        for m in re.finditer(r"[\w\-]+\.py", prose_text):
             wired.add(m.group())
             wired.add(Path(m.group()).stem)
-        for m in re.finditer(r"scripts/([\w\-]+)", readme_text):
+        for m in re.finditer(r"scripts/([\w\-]+)", prose_text):
             wired.add(m.group(1))
 
     # invocations within scripts/ themselves
@@ -397,12 +420,11 @@ def render(
         lines.append("")
 
     # Hooks
-    events = ["PostToolUse", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"]
     lines.append("## Hooks")
     lines.append("")
     lines.append("| Event | Wired Scripts |")
     lines.append("|---|---|")
-    for event in events:
+    for event in sorted(hooks):
         scripts_list = hooks.get(event, [])
         cell = ", ".join(scripts_list) if scripts_list else "(none)"
         lines.append(f"| {event} | {cell} |")
@@ -422,7 +444,7 @@ def render(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Octorato v5.0 Capability Manifest Generator")
+    parser = argparse.ArgumentParser(description="Octorato Capability Manifest Generator")
     parser.add_argument(
         "--check",
         action="store_true",

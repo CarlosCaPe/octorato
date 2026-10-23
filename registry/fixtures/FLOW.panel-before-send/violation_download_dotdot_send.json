@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-download-dotdot-send",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl -s -X POST http://127.0.0.1:8081/api/download/../send --data-binary @m.json"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_download_dotdot_send_transcript.jsonl"
+}

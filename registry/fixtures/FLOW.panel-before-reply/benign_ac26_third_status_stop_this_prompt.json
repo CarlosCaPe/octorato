@@ -1,0 +1,20 @@
+{
+  "session_id": "fx-rp-benign-ac26-third-status-stop-this-prompt",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Waiting on the reviewer.",
+  "transcript_path": "benign_ac26_third_status_stop_this_prompt_transcript.jsonl",
+  "_fixture": {
+    "spent": [
+      {
+        "tool_use_id": "toolu_x0",
+        "prompt_uuid": "14b11012-4b1c-3047-dc3e-7f5db18481a4"
+      },
+      {
+        "tool_use_id": "toolu_x1",
+        "prompt_uuid": "14b11012-4b1c-3047-dc3e-7f5db18481a4"
+      }
+    ]
+  }
+}

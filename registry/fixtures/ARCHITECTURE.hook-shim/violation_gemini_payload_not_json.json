@@ -1,0 +1,8 @@
+{
+  "harness": "gemini-cli",
+  "gate": "g__pretool__arming-surface.py",
+  "payload_raw": "{\"tool_name\": \"write_file\", ",
+  "_setup": {
+    "expect_reason": "not JSON"
+  }
+}

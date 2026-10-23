@@ -1,0 +1,2 @@
+{"seq":0,"ts":1788782922.839032,"start_ts":1788782922.839032,"pid":"agent-b","kind":"start","prev":null,"ppid":"sess-parent","type":"Code Reviewer"}
+{"seq":1,"ts":1788782922.839265,"start_ts":1788782922.839032,"pid":"agent-b","kind":"tool","prev":"192458b5ce8eb96bb10d15bebbad499df6671a63b3a49df8490f11a03f5d41fc","tool_name":"Write","path":"b.py","input_sha256":"seed"}

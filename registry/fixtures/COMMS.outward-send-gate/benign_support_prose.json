@@ -1,0 +1,10 @@
+{
+  "session_id": "fx-sp",
+  "tool_name": "mcp__whatsapp__send_message",
+  "tool_input": {
+    "recipient": "5210000000000",
+    "message": "No tengo el registro a la mano, ¿a qué hora fue tu llamada? No lo autoricé yo, lo hizo el equipo de licencias."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_support_prose_transcript.jsonl"
+}

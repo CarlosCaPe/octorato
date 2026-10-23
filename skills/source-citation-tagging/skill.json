@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "source-citation-tagging",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Tag taxonomy for mixed-source technical documents — every factual claim must carry a source marker. Defends against hallucinations, makes audits cheap, lets reviewers challenge specific claims by source rather than rejecting whole sections."
+}

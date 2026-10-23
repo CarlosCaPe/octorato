@@ -1,0 +1,30 @@
+process kernel-golden-agent
+  type      Reality Checker
+  worktree  /home/agent/workspace
+  lines     9
+  tools     3 (2 refused)
+  exit      ok after 3.500s
+  chain     ok: 9 line(s) chain
+
+summary
+  tools     Bash 1, Read 1, Write 1
+  refused   ARCHITECTURE.kernel-isolation 1, HARNESS.permission-denied 1
+  other denies  COMMS.paste-ready-raw-message 1
+  receipts  seek 1
+  children  1: kernel-golden-child
+  exit      ok
+
+timeline
+  #0      +0.000s  start    source=subagent_start  worktree=/home/agent/workspace
+  #1      +0.412s  tool     Read  toolu_g1
+  #2      +0.502s  receipt  seek  toolu_g1
+  #3      +1.087s  REFUSED  ARCHITECTURE.kernel-isolation  Bash  toolu_g2  git checkout -- a.py touches a lane held by kernel-golden-sibling (live, 2m)
+  #5      +2.301s  REFUSED  HARNESS.permission-denied  source=harness  Write  toolu_g3  Claude requested permissions to use Write, but you haven't granted it yet.
+  #7      +3.104s  deny     COMMS.paste-ready-raw-message  -  the paste-ready block is not the last thing in the reply
+  #8      +3.500s  exit     ok  tools=3  transcript=agent-kernel-golden-agent.jsonl
+
+children
+  kernel-golden-child  Evidence Collector  ok
+
+receipts
+  seek  toolu_g1  2025-06-15T14:26:40+00:00

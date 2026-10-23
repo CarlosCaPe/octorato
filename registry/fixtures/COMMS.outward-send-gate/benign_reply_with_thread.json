@@ -1,0 +1,15 @@
+{
+  "session_id": "fx-rwt2",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "x@ejemplo.com"
+    ],
+    "subject": "Re: Cotización de septiembre",
+    "body": "Adjunto la versión corregida, gracias.",
+    "threadId": "abc123",
+    "inReplyTo": "msg1"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_reply_with_thread_transcript.jsonl"
+}

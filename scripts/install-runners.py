@@ -37,7 +37,17 @@ for _stream in (sys.stdout, sys.stderr):
 
 HOME = Path.home()
 AI_SYNC = HOME / ".claude" / "scripts" / "ai_sync.py"
-VERBS = {"ai-pull": "pull", "ai-push": "push", "ai-sync": "cycle", "sync-ai-docs": "sync"}
+# name -> (tracked script, verb). A verb of None means the runner takes the
+# subcommand from the caller: `octo` is a CLI of its own (v8 kernel), not a
+# verb of ai_sync.py, so it thunks into scripts/octo.py and forwards "$@"
+# untouched. Everything else stays a verb into the one sync runner.
+VERBS = {
+    "ai-pull": ("ai_sync.py", "pull"),
+    "ai-push": ("ai_sync.py", "push"),
+    "ai-sync": ("ai_sync.py", "cycle"),
+    "sync-ai-docs": ("ai_sync.py", "sync"),
+    "octo": ("octo.py", None),
+}
 MARKER = "# octorato-thunk"  # lets us recognize our own thunks (idempotent re-runs)
 
 
@@ -50,14 +60,16 @@ def bin_dir() -> Path:
     return d
 
 
-def posix_thunk(verb: str) -> str:
+def posix_thunk(script: str, verb: str = None) -> str:
+    arg = f"{verb} " if verb else ""
     return (f"#!/usr/bin/env bash\n{MARKER}\n"
-            f'exec python3 "$HOME/.claude/scripts/ai_sync.py" {verb} "$@"\n')
+            f'exec python3 "$HOME/.claude/scripts/{script}" {arg}"$@"\n')
 
 
-def windows_thunk(verb: str) -> str:
+def windows_thunk(script: str, verb: str = None) -> str:
+    arg = f"{verb} " if verb else ""
     return ("@echo off\nrem octorato-thunk\n"
-            f'python3 "%USERPROFILE%\\.claude\\scripts\\ai_sync.py" {verb} %*\n')
+            f'python3 "%USERPROFILE%\\.claude\\scripts\\{script}" {arg}%*\n')
 
 
 PYTHON3_SHIM_CONTENT = (
@@ -99,7 +111,7 @@ def install_python3_shim(d: Path) -> None:
         print(f"  ✓ {target.name} (Windows python3→py -3 shim created)")
 
 
-def install_bash_twin(d: Path, name: str, verb: str) -> None:
+def install_bash_twin(d: Path, name: str, script: str, verb: str = None) -> None:
     """Windows-only: write the extensionless POSIX twin next to the .cmd thunk.
 
     A Windows box runs two shells at once. PowerShell and cmd resolve `ai-sync`
@@ -113,7 +125,7 @@ def install_bash_twin(d: Path, name: str, verb: str) -> None:
     if os.name != "nt":
         return
     target = d / name
-    payload = posix_thunk(verb).encode("utf-8")
+    payload = posix_thunk(script, verb).encode("utf-8")
     if target.exists():
         existing = target.read_text(encoding="utf-8", errors="ignore")
         if MARKER in existing or "octorato-thunk" in existing:
@@ -135,9 +147,13 @@ def install() -> int:
         return 1
     d = bin_dir()
     install_python3_shim(d)
-    for name, verb in VERBS.items():
+    for name, (script, verb) in VERBS.items():
+        if not (AI_SYNC.parent / script).exists():
+            print(f"  ! {name}: {script} not in the brain yet, skipped")
+            continue
         target = d / (name + (".cmd" if os.name == "nt" else ""))
-        content = windows_thunk(verb) if os.name == "nt" else posix_thunk(verb)
+        content = (windows_thunk(script, verb) if os.name == "nt"
+                   else posix_thunk(script, verb))
         if target.exists():
             existing = target.read_text(encoding="utf-8", errors="ignore")
             if MARKER in existing or "octorato-thunk" in existing:
@@ -154,8 +170,8 @@ def install() -> int:
         if os.name != "nt":
             target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         else:
-            install_bash_twin(d, name, verb)
-    print(f"\nRunners now thunk into {AI_SYNC}")
+            install_bash_twin(d, name, script, verb)
+    print(f"\nRunners now thunk into {AI_SYNC.parent}/")
     return 0
 
 

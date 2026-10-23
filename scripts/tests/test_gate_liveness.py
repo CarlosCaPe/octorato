@@ -94,7 +94,12 @@ class GateLivenessHarnessTest(unittest.TestCase):
                 "    mechanism:\n"
                 "      - { kind: Gate, canonical_name: broken_gate.py, firing_event: PreToolUse, firing_matcher: \"Bash\" }\n"
                 "    proof:\n"
-                f"      - {{ method: EXIT_CODE, locator: \"{script} --selftest {d/'fixtures'}\", expect: 0 }}\n"
+                # Single-quoted YAML scalar: inside DOUBLE quotes a backslash
+                # opens an escape sequence, so a Windows locator makes the whole
+                # registry unparseable and the doctor reports "cannot load
+                # registry" (WARN) instead of failing the broken gate this test
+                # is about. Single quotes take the path literally.
+                f"      - {{ method: EXIT_CODE, locator: '{script} --selftest {d/'fixtures'}', expect: 0 }}\n"
                 "    liveness_required: FIRES\n",
                 encoding="utf-8",
             )

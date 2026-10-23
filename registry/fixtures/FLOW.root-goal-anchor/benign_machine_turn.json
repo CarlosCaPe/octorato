@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-machine",
+  "transcript_path": "benign_machine_turn_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

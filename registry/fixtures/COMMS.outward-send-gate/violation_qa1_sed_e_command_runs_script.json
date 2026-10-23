@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-qa1-b6-v",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "sed -n 'e ~/.claude/scripts/wa-soporte.sh 5210000000001 hola' /dev/null"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_qa1_sed_e_command_runs_script_transcript.jsonl"
+}

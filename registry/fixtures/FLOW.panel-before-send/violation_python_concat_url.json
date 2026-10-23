@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-python-concat-url",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "python3 -c \"import urllib.request as u; u.urlopen('http://local'+'host:80'+'81/api/se'+'nd', data=b'{}')\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_python_concat_url_transcript.jsonl"
+}

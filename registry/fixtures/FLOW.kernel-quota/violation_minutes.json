@@ -1,0 +1,8 @@
+{
+  "_why": "main loop `slowmain` started at a fixed past epoch, so its elapsed wall time is over the 1-minute cap and stays over it forever.",
+  "session_id": "slowmain",
+  "tool_name": "Read",
+  "tool_use_id": "toolu_quota_minutes",
+  "tool_input": {"file_path": "/tmp/x"},
+  "cwd": "/tmp"
+}

@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-noseek",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "x@ejemplo.com"
+    ],
+    "subject": "Queja",
+    "body": "Estimada Ana:\n\nEl cargo del 20 de julio por $27,180.00 no corresponde a ningún servicio que yo haya contratado.\n\nAtentamente,\nC."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_absence_noseek_transcript.jsonl"
+}

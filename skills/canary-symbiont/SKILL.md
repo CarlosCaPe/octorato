@@ -1,6 +1,6 @@
 ---
 name: canary-symbiont
-description: "Centinela cross-plane: un watcher en el plano B detecta la muerte SILENCIOSA del scheduler del plano A (bloqueo de billing, cron load-shedding) y avisa por correo. Fail-open. Incluye el test en vivo obligatorio."
+description: "Cross-plane sentinel: a watcher on plane B detects the SILENT death of plane A's scheduler (billing block, cron load-shedding) and alerts by email. Fail-open. Includes the mandatory live test."
 metadata:
   short-description: "A sentinel on a different plane senses what the host can't, alerts once, dies harmlessly"
   type: pattern

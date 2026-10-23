@@ -1,0 +1,9 @@
+{
+  "_why": "`qa` carries the SAME 401 tool lines as `over` and differs only in its ptable type, Evidence Collector: 400 x 3 leaves it headroom, so the identical call that refuses `over` runs here. The pair is the multiplier.",
+  "session_id": "sid-parent",
+  "agent_id": "qa",
+  "tool_name": "Read",
+  "tool_use_id": "toolu_quota_qa_under",
+  "tool_input": {"file_path": "/tmp/x"},
+  "cwd": "/tmp"
+}

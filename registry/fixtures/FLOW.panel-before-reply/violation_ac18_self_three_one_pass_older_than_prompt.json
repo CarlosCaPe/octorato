@@ -1,0 +1,31 @@
+{
+  "session_id": "fx-rp-violation-ac18-self-three-one-pass-older-than-prompt",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "The migration ran on the staging copy and the row counts match the source table. Two warnings remain, both about deprecated flags, and neither blocks the release. The rollback script is untested.\n\nProvenance: Basis: own reasoning \u00b7 Engine: main loop",
+  "transcript_path": "violation_ac18_self_three_one_pass_older_than_prompt_transcript.jsonl",
+  "_fixture": {
+    "receipts": [
+      {
+        "verdict": "PASS",
+        "ts": "2026-10-14T09:45:00.000Z"
+      },
+      {
+        "verdict": "PASS",
+        "ts": "2026-10-14T10:03:00.000Z"
+      },
+      {
+        "verdict": "PASS",
+        "ts": "2026-10-14T10:04:00.000Z"
+      }
+    ],
+    "stderr_has": [
+      "it has 2 of 3"
+    ],
+    "stderr_lacks": [
+      "panel-skip",
+      "cannot decide"
+    ]
+  }
+}

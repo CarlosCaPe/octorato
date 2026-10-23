@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-bw-chained",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cd /tmp && ~/.claude/scripts/wa-soporte.sh 5210000000000 \"Ese cargo no lo reconozco.\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_bash_wrapper_chained_transcript.jsonl"
+}

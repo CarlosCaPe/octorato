@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "sdd-converge",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "SDD step 4b. Decides whether a feature is done by judging every acceptance criterion against the code and tests in the working tree, never against summaries or checkboxes. Appends the missing work to plan.md as a Convergence section, or leaves plan.md byte-identical and returns CONVERGED. Run as an independent verifier subagent after /sdd-implement, and repeat implement and converge until CONVERGED."
+}

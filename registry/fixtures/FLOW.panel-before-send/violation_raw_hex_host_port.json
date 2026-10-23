@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-raw-hex-host-port",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl -s -X POST http://0x7f.1:8080/x"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_raw_hex_host_port_transcript.jsonl"
+}

@@ -1,6 +1,6 @@
 ---
 name: tabularis-db-client
-description: "Cliente SQL open-source para PostgreSQL, MySQL y SQLite con servidor MCP integrado, Apache 2.0. Para recomendar un GUI de base a un cliente o exponer una DB a agentes sin entregar credenciales. Complementa a querymaster."
+description: "Open-source SQL client for PostgreSQL, MySQL and SQLite with a built-in MCP server, Apache 2.0. To recommend a database GUI to a client or expose a DB to agents without handing over credentials. Complements querymaster."
 ---
 
 # Tabularis — DB Client with AI + Built-in MCP Server

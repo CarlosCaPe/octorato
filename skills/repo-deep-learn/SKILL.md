@@ -1,6 +1,6 @@
 ---
 name: repo-deep-learn
-description: "Analisis profundo de UN repo de GitHub: inventaria el codigo, extrae patrones que podrian volverse skill y escribe reporte en ~/.claude/knowledge/repo-deep-learn/. Usalo cuando el operador te entrega un repo y pregunta que se puede aprender de el."
+description: "Deep analysis of ONE GitHub repo: inventories the code, extracts patterns that could become a skill and writes a report to ~/.claude/knowledge/repo-deep-learn/. Use it when the operator hands you a repo and asks what can be learned from it."
 metadata:
   type: brain-routine
   trigger: manual (operator-initiated)

@@ -1,0 +1,8 @@
+{
+  "stop_hook_active": false,
+  "session_id": "selftest-benign_send_other_session",
+  "wa_guardia_dbs": {
+    "prueba": "~/.wa-fixture/con-espera.db"
+  },
+  "transcript_path": "subagent_turn_transcript.jsonl"
+}

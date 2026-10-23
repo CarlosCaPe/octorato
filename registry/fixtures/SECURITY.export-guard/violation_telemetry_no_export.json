@@ -1,0 +1,23 @@
+{
+  "arms_paths": {
+    "plain": "arms/plain"
+  },
+  "files": {
+    "arms/plain/arm.json": {
+      "kind": "arm",
+      "name": "plain",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {}
+    }
+  },
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/plain"
+  },
+  "_comment": "AC-09: a telemetry object with no export key reads as deny.",
+  "_setup": {
+    "expect_reason": "Export_Policy of the arm"
+  }
+}

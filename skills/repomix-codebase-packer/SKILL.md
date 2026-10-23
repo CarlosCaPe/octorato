@@ -1,6 +1,6 @@
 ---
 name: repomix-codebase-packer
-description: "Empaqueta un repo completo, local o remoto, en un solo archivo optimizado para LLM, con compresion Tree-sitter (~70% menos tokens) y escaneo de secretos. Para auditar un repo entero o preparar contexto de un subagente."
+description: "Packs a whole repo, local or remote, into a single LLM-optimized file, with Tree-sitter compression (~70% fewer tokens) and secret scanning. For auditing an entire repo or preparing subagent context."
 ---
 
 # Repomix — Codebase to Single AI-Friendly File

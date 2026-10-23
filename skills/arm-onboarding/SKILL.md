@@ -1,6 +1,6 @@
 ---
 name: arm-onboarding
-description: "Protocolo paso a paso para crear un arm nuevo de cliente: archivos requeridos, sync-ai-docs, el grafo de linaje sellado del arm, alta en QueryMaster y la higiene de gitignore. Dispara con 'crear un arm' u 'onboard a un cliente'."
+description: "Step-by-step protocol to create a new client arm: required files, sync-ai-docs, the arm's sealed lineage graph, QueryMaster registration and gitignore hygiene. Triggers on 'crear un arm' or 'onboard a un cliente'."
 metadata:
   type: workflow
   short-description: "How to onboard a new client arm: required files, sync-ai-docs, sealed lineage graph, QueryMaster connections, one-file rule"
@@ -19,6 +19,7 @@ Every arm MUST have:
 | `.claude/CLAUDE.md` | Single source of truth for the arm — project stack, connections, conventions | Edit this one only; sync propagates the rest |
 | `.github/copilot-instructions.md` | Auto-synced copy of `.claude/CLAUDE.md` | NEVER edit directly. `sync-ai-docs` overwrites it |
 | `.cursorrules` | Auto-synced copy for Cursor editor | NEVER edit directly. `sync-ai-docs` overwrites it |
+| `AGENTS.md`, `GEMINI.md` | Auto-synced copy for Codex CLI and Gemini CLI, written only while that harness is `supported` in `registry/runtimes.yaml` | NEVER edit directly. `sync-ai-docs` overwrites it; a hand-written file of the same name is replaced. When the harness goes back to `gap`, the file stays in the arm and stops tracking `.claude/CLAUDE.md` (sync and `brain_doctor` sync-targets warn: stale mirror); delete it by hand if unwanted |
 | `README.md` | Human-readable repo intro | Project overview + quick-start |
 | `.gitignore` | Must include `.env`, `.env.*`, `.dev.vars` | Belt-and-suspenders against secret leaks |
 | `.env` | Local secrets, never committed | Gitignored — only on operator's machine |
@@ -99,6 +100,8 @@ The arm's CLAUDE.md should declare:
 ```
 
 ## The One-File Rule
+
+**Mirrors are regular files, never symlinks.** `sync-ai-docs` refuses to write a mirror that is a symlink or sits under a symlinked directory (such as `.github`), even one pointing inside the arm, and warns instead.
 
 **Edit ONLY `.claude/CLAUDE.md`.** Never hand-edit `.github/copilot-instructions.md` or `.cursorrules` — `sync-ai-docs` overwrites them on the next sync. After every change to `.claude/CLAUDE.md`, run:
 

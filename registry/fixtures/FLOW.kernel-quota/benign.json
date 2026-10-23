@@ -1,0 +1,9 @@
+{
+  "_why": "a subagent with no journal yet: one line written, zero minutes elapsed, nothing near a cap. The ordinary call, and it must journal and run.",
+  "session_id": "sid-parent",
+  "agent_id": "fresh",
+  "tool_name": "Read",
+  "tool_use_id": "toolu_quota_fresh",
+  "tool_input": {"file_path": "/tmp/x"},
+  "cwd": "/tmp"
+}

@@ -1,0 +1,10 @@
+{
+  "session_id": "fx-l1",
+  "tool_name": "mcp__whatsapp__send_message",
+  "tool_input": {
+    "recipient": "5210000000000",
+    "message": "No reconozco ese cargo, no sé quién lo hizo, pero necesito el desglose."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_absence_laundered_by_nobody_transcript.jsonl"
+}

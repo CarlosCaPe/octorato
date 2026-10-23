@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-q",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "x@ejemplo.com"
+    ],
+    "subject": "Queja",
+    "body": "¿A qué reservación corresponde el cargo del 20 de julio por $27,180.00? Necesito el desglose."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_question_transcript.jsonl"
+}

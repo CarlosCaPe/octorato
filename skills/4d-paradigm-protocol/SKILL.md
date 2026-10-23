@@ -1,6 +1,6 @@
 ---
 name: 4d-paradigm-protocol
-description: "Protocolo completo del paradigma 4D (Describe, Delegate, Diligent, Disclose): el gate de 3 preguntas del 2D, el formato del Change Manifest, la matriz de validacion 3D y el Impact Radius. CLAUDE.md solo trae el resumen. Carga antes de escribir archivos o armar un manifiesto."
+description: "Full 4D paradigm protocol (Describe, Delegate, Diligent, Disclose): the 2D 3-question gate, the Change Manifest format, the 3D validation matrix and the Impact Radius. CLAUDE.md only carries the summary. Load before writing files or assembling a manifest."
 metadata:
   type: paradigm-protocol
   short-description: "Operational templates: 4D gate format, 3Q delegate protocol, diligent matrix, impact radius scan, anti-patterns"

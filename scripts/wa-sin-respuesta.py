@@ -1,131 +1,134 @@
 #!/usr/bin/env python3
-"""Vigia de silencio: avisa cuando un cliente escribio y nadie contesto.
+"""Silence sentry: alerts when a client wrote and nobody answered.
 
-Por que existe
---------------
-El 2026-08-02 una clienta mando el dato que se le habia pedido, se le contesto
-con silencio, y se fue a dormir creyendo que habia fallado. El arreglo ya estaba
-aplicado y nadie se lo dijo. La causa no fue el puente, que estaba vivo: fue que
-la unica vigilancia del canal corria DENTRO de una sesion de agente, y una
-sesion no es infraestructura.
+Why it exists
+-------------
+On 2026-08-02 a client sent the data she had been asked for, got silence back,
+and went to bed believing she had failed. The fix was already applied and nobody
+told her. The cause was not the bridge, which was alive: it was that the only
+watch over the channel ran INSIDE an agent session, and a session is not
+infrastructure.
 
-Este script no contesta por nadie. Solo rompe el silencio: si un mensaje de
-cliente lleva mas del umbral sin respuesta, avisa por el canal que le toque
-(ver "UN SOLO ARCHIVO, DOS CASAS"). El operador decide que hacer.
+This script answers for nobody. It only breaks the silence: if a client message
+goes past the threshold with no reply, it alerts through whichever channel
+applies (see "ONE FILE, TWO HOMES"). The operator decides what to do.
 
-DOS SENSORES, UN VIGIA (6-ago). Nacio mirando solo WhatsApp y el correo no tenia
-NINGUNA vigilancia durable: la unica forma de enterarse era que alguien
-preguntara. El 5-ago eso costo dos correos del cliente sin leer durante dos
-dias, porque el unico vigilante del buzon vivia dentro de una sesion y murio
-con ella. El correo entra aqui, no en un script aparte, porque la pregunta del
-operador nunca fue "¿contesto por WhatsApp?" sino "¿contesto el cliente?": la
-unidad es el CLIENTE, no el canal.
+TWO SENSORS, ONE SENTRY (Aug 6). It was born watching only WhatsApp and email
+had NO durable watch at all: the only way to find out was for someone to ask. On
+Aug 5 that cost two client emails unread for two days, because the only watcher
+of the mailbox lived inside a session and died with it. Email belongs here, not
+in a separate script, because the operator question was never "did they answer
+on WhatsApp?" but "did the client answer?": the unit is the CLIENT, not the
+channel.
 
-El nombre `wa-` se quedo corto con ese cambio. Renombrarlo toca dos unidades de
-systemd vivas y varios importadores, asi que va como cambio propio y separado.
+The `wa-` name fell short with that change. Renaming it touches two live systemd
+units and several importers, so it goes as its own separate change.
 
-UN SOLO ARCHIVO, DOS CASAS (11-ago). El puente de soporte se mudo a una
-instancia de AWS y el vigia se quedo en la laptop midiendo una base que ya no
-estaba ahi, asi que se apago y nadie vigilo ningun canal. La respuesta NO fue
-copiar el script al servidor: dos copias se separan al primer ajuste y entonces
-los dos mecanismos se contradicen, que es peor que uno solo. Lo que cambia entre
-las dos casas es el ENTORNO, no la logica:
+ONE FILE, TWO HOMES (Aug 11). The support bridge moved to an AWS instance and
+the sentry stayed on the laptop measuring a database that was no longer there,
+so it shut down and nobody watched any channel. The answer was NOT to copy the
+script to the server: two copies drift apart on the first tweak and then the two
+mechanisms contradict each other, which is worse than one. What changes between
+the two homes is the ENVIRONMENT, not the logic:
 
-    WA_VIGIA_CONFIG   ruta de la config          (def. ~/.claude/company/...)
-    WA_VIGIA_ESTADO   ruta del anti-repeticion   (def. ~/.cache/...)
+    WA_VIGIA_CONFIG   config path                (def. ~/.claude/company/...)
+    WA_VIGIA_ESTADO   anti-repeat state path     (def. ~/.cache/...)
     WA_VIGIA_CANAL    gmail | canario | whatsapp (def. gmail)
     WA_VIGIA_GMAIL    archivos | secretsmanager  (def. archivos)
-    WA_VIGIA_WA_DEST  numero destino del canal whatsapp (o config)
-    WA_VIGIA_WA_ENDPOINT  REST del puente (def. http://127.0.0.1:8081/api/send)
+    WA_VIGIA_WA_DEST  destination number of the whatsapp channel (or config)
+    WA_VIGIA_WA_ENDPOINT  bridge REST (def. http://127.0.0.1:8081/api/send)
 
-`gmail` no manda el correo desde aqui: sale con error y systemd dispara
-`OnFailure=wa-alerta@%N.service`, que es quien tiene el OAuth. `canario`
-publica el aviso EL MISMO en el tema de SNS que el canario de Cloudflare tiene
-suscrito. `whatsapp` manda el aviso por el puente de soporte (REST local
-127.0.0.1:8081) al numero del operador; ese numero sale de la config privada o
-del entorno, NUNCA de este archivo, que es publico.
+`gmail` does not send the mail from here: it exits with an error and systemd
+fires `OnFailure=wa-alerta@%N.service`, which is what holds the OAuth. `canario`
+publishes the alert ITSELF to the same SNS topic the Cloudflare canary is
+subscribed to. `whatsapp` sends the alert through the support bridge (local REST
+127.0.0.1:8081) to the operator number; that number comes from the private
+config or from the environment, NEVER from this file, which is public.
 
-LA FUENTE DE LA CREDENCIAL TAMBIEN ES ENTORNO (11-ago). El sensor de correo
-buscaba la credencial de Gmail como ARCHIVOS en `~/.gmail-mcp/`, asi que en la
-instancia se saltaba solo y ningun remitente quedaba vigilado: la laptop tenia
-el timer apagado y el servidor no podia mirar el buzon. Eso es un punto ciego
-con cara de vigia sano. `WA_VIGIA_GMAIL=secretsmanager` lee la MISMA credencial
-desde AWS Secrets Manager con el rol de la instancia, EN MEMORIA: se pide,
-se usa y se tira. Nunca toca el disco del servidor, ni siquiera un rato, porque
-un disco de instancia se lo puede llevar alguien y un secreto en disco es un
-secreto perdido. El default sigue siendo `archivos`: la laptop no cambia.
+THE CREDENTIAL SOURCE IS ENVIRONMENT TOO (Aug 11). The mail sensor looked for
+the Gmail credential as FILES in `~/.gmail-mcp/`, so on the instance it skipped
+itself and no sender stayed watched: the laptop had the timer off and the server
+could not look at the mailbox. That is a blind spot wearing the face of a
+healthy sentry. `WA_VIGIA_GMAIL=secretsmanager` reads the SAME credential from
+AWS Secrets Manager with the instance role, IN MEMORY: requested, used and
+dropped. It never touches the server disk, not even briefly, because an instance
+disk can be carried off and a secret on disk is a lost secret. The default stays
+`archivos`: the laptop does not change.
 
-Diseno
+Design
 ------
-- Lee la config PRIVADA (`company/config/wa-puentes.json`). Los JID y los
-  dominios son dato de cliente y este archivo vive en un repo publico, asi que
-  aqui no hay ninguno. El ARN del tema de SNS tambien vive ahi: lleva el numero
-  de cuenta y ese numero no se publica.
-- Base de datos en modo SOLO LECTURA. El vigia nunca escribe en el puente, y
-  contra Gmail solo hace GET.
-- Avisa UNA vez por mensaje. Si el cliente manda otro y tampoco se contesta,
-  ese si vuelve a avisar, porque es un silencio nuevo.
-- Cada sensor trae su filtro de ruido, y los dos existen por la misma razon: un
-  vigia que grita por algo que no pide respuesta entrena al operador a
-  ignorarlo, y ahi se muere el mecanismo. En WhatsApp son los acuses; en correo
-  son los autorespondedores.
-- Un fallo de red del sensor de correo NO tumba el de WhatsApp. Se avisa como
-  ruido y se sigue, porque "no llego nada" y "no pude mirar" no pueden verse
-  igual.
-- Y ese "no pude mirar" VIAJA EN EL AVISO, no solo en el journal. Un vigia que
-  revisa un sensor de dos y avisa igual que si hubiera revisado los dos es un
-  falso verde: el operador lee "un silencio" y entiende "solo uno", cuando la
-  verdad es "uno de los que si pude mirar". Por eso cada aviso lleva su linea
-  de cobertura, tambien cuando la cobertura esta completa.
-- `--selftest` prueba los dos sensores sin tocar nada real ni salir a la red.
-  Los tiempos de las pruebas son RELATIVOS a `ahora` a proposito: con marcas
-  fijas, un error de signo pasa igual y la prueba aprueba un detector muerto.
+- Reads the PRIVATE config (`company/config/wa-puentes.json`). The JIDs and the
+  domains are client data and this file lives in a public repo, so there are
+  none here. The SNS topic ARN lives there too: it carries the account number
+  and that number is not published.
+- Database in READ-ONLY mode. The sentry never writes to the bridge, and against
+  Gmail it only does GET.
+- Alerts ONCE per message. If the client sends another one and that one also
+  goes unanswered, it does alert again, because it is a new silence.
+- Each sensor brings its own noise filter, and both exist for the same reason: a
+  sentry that shouts about something that needs no reply trains the operator to
+  ignore it, and there the mechanism dies. On WhatsApp it is the
+  acknowledgements; on email it is the autoresponders.
+- A network failure of the mail sensor does NOT take down the WhatsApp one. It
+  is reported as noise and the run continues, because "nothing arrived" and "I
+  could not look" must not look the same.
+- And that "I could not look" TRAVELS IN THE ALERT, not only in the journal. A
+  sentry that checks one sensor out of two and alerts as if it had checked both
+  is a false green: the operator reads "one silence" and understands "only one",
+  when the truth is "one of the ones I could look at". So every alert carries
+  its coverage line, including when coverage is complete.
+- `--selftest` exercises both sensors without touching anything real and without
+  going to the network. The test times are RELATIVE to `ahora` on purpose: with
+  fixed stamps, a sign error passes anyway and the test approves a dead detector.
 
-EL VERDE HAY QUE AFIRMARLO (11-ago). El vigia solo hablaba cuando habia
-silencio NUEVO, asi que del lado del tablero la ausencia de aviso significaba
-dos cosas OPUESTAS: "ya contestaron" o "el vigia se murio". Un tablero que no
-sabe distinguirlas no puede pintar un verde honesto, y un verde que nadie
-afirma es adivinanza. Por eso cada publicacion cierra con un bloque
-estructurado que lleva el estado de TODOS los vigilados, tambien los sanos:
+GREEN HAS TO BE ASSERTED (Aug 11). The sentry only spoke when there was NEW
+silence, so from the dashboard side the absence of an alert meant two OPPOSITE
+things: "they already answered" or "the sentry died". A dashboard that cannot
+tell them apart cannot paint an honest green, and a green nobody asserts is
+guesswork. So every publication closes with a structured block carrying the
+state of ALL the watched entries, the healthy ones included:
 
     --- canario:v1 ---
     {"emisor":..,"ts":..,"cobertura":{..},"chats":[{..}]}
 
-Reglas del bloque, que son contrato con el receptor y no se cambian de un lado
-solo:
-- `chats` trae todos los chats y remitentes que SI se pudieron medir en esa
-  vuelta. Un sano va con `silencio_min: null` y `desde: null`; sin los sanos no
-  hay verdes. Lo que NO se pudo mirar se queda FUERA de la lista a proposito:
-  mandarlo con null seria decir "esta bien" sin haberlo visto, que es el mismo
-  falso verde con otro disfraz. Quien no pudo mirarse sale en `cobertura`.
-- `cliente` es la identidad (un cliente puede tener varios canales) y `canal`
-  es `whatsapp` o `correo`. Los dos salen de la config, no se adivinan aqui.
-- `id` es un slug estable y unico: nombre del cliente, canal y una firma del
-  JID o del dominio. Estable entre corridas y sin publicar el identificador.
-- `prueba` marca lo que viene de un fixture o de una corrida de prueba, para
-  que el receptor lo excluya del tablero. Se prende con WA_VIGIA_PRUEBA=1 o
-  por entrada de config.
-- `cobertura` dice que sensores alcanzaron a mirar, con su motivo.
+Rules of the block, which are a contract with the receiver and are not changed
+from one side alone:
+- `chats` carries every chat and sender that COULD be measured on that pass. A
+  healthy one goes with `silencio_min: null` and `desde: null`; without the
+  healthy ones there are no greens. What could NOT be looked at stays OUT of the
+  list on purpose: sending it with null would be saying "this is fine" without
+  having seen it, the same false green in another disguise. Whoever could not be
+  looked at shows up in `cobertura`.
+- `cliente` is the identity (a client can have several channels) and `canal` is
+  `whatsapp` or `correo`. Both come from the config, they are not guessed here.
+- `id` is a stable, unique slug: client name, channel and a signature of the JID
+  or the domain. Stable across runs and without publishing the identifier.
+- `prueba` marks what comes from a fixture or a test run, so the receiver
+  excludes it from the dashboard. Turned on with WA_VIGIA_PRUEBA=1 or by a
+  config entry.
+- `cobertura` says which sensors managed to look, with their reason.
 
-EL PULSO (11-ago). El bloque no sirve de nada si el vigia solo publica cuando
-algo falla: un tablero sin datos frescos no puede pintar verde, solo gris. Asi
-que en el canal `canario` el estado completo se republica cada
-WA_VIGIA_PULSO_MIN minutos (def. 30) aunque no haya ni un silencio. No cada 5,
-que es cada cuanto corre el timer, porque un aviso cada 5 minutos se vuelve
-ruido y el ruido se ignora. En el canal `gmail` NO hay pulso: ahi "avisar" es
-salir con error y eso mandaria un correo cada media hora.
+THE PULSE (Aug 11). The block is useless if the sentry only publishes when
+something fails: a dashboard without fresh data cannot paint green, only grey.
+So on the `canario` channel the full state is republished every
+WA_VIGIA_PULSO_MIN minutes (def. 30) even with not a single silence. Not every
+5, which is how often the timer runs, because an alert every 5 minutes turns
+into noise and noise gets ignored. On the `gmail` channel there is NO pulse:
+there "alerting" means exiting with an error and that would send an email every
+half hour.
 
-Uso
----
-    wa-sin-respuesta.py              # revisa y avisa por el canal elegido
-    wa-sin-respuesta.py --seco       # calcula e imprime, sin publicar nada
-    wa-sin-respuesta.py --selftest   # prueba la logica sin tocar nada real
+Usage
+-----
+    wa-sin-respuesta.py              # check and alert on the chosen channel
+    wa-sin-respuesta.py --seco       # compute and print, publishing nothing
+    wa-sin-respuesta.py --selftest   # test the logic without touching anything real
 """
 import argparse
 import hashlib
 import io
 import json
 import os
+import re
 import shlex
 import sqlite3
 import subprocess
@@ -135,6 +138,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -416,7 +420,51 @@ def revisa(cfg, ahora=None, estados=None, cobertura=None):
     umbral = timedelta(minutes=int(vig.get("umbral_minutos", 20)))
     silencios = []
 
-    for chat in vig["chats"]:
+    # TODOS LOS CHATS (2026-10-03). Una lista escrita a mano se queda corta el dia
+    # que llega un chat nuevo, y ese chat es invisible hasta que alguien se acuerda
+    # de agregarlo: se encontraron cuatro chats con mensajes de clientes que nunca
+    # entraron a la lista, uno con 54 dias de silencio. Con `vigilancia.todos: true`
+    # el vigia cubre, ademas de la lista, todo chat que haya recibido al menos un
+    # mensaje entrante (sin entrantes no hay nadie esperando), grupos incluidos.
+    #   - `todos_puentes`: puentes que se recorren (por omision, solo el de
+    #     `vigilancia.puente`). Ojo con el personal: cientos de chats viejos.
+    #   - Fuera siempre: difusiones (`@broadcast`, estados) y canales
+    #     (`@newsletter`), que no se contestan; el numero `propio` del puente
+    #     (se comparan solo sus digitos, venga como numero o como JID); y
+    #     `vigilancia.excluir`. Sin ventana de tiempo a proposito: comparar
+    #     timestamps del puente como texto esconde chats vivos.
+    # La lista explicita sigue mandando en etiqueta, cliente y puente; lo
+    # descubierto sale como "chat sin etiqueta" para que alguien lo nombre. La
+    # deduplicacion va por (jid, puente): el mismo JID en otro puente es otra
+    # conversacion.
+    # Sin `todos`, una config sin `chats` sigue reventando a la vista (KeyError),
+    # en vez de dejar un vigia que corre sin mirar nada.
+    chats = list(vig.get("chats") or []) if vig.get("todos") else list(vig["chats"])
+    if vig.get("todos"):
+        conocidos = {(c["jid"], c.get("puente", nombre_puente)) for c in chats}
+        excluir = set(vig.get("excluir") or [])
+        for nombre in vig.get("todos_puentes") or [nombre_puente]:
+            con = abrir(nombre)
+            if con is None:
+                continue
+            propio = re.sub(r"\D", "", str(((cfg.get("puentes") or {}).get(nombre)
+                                             or {}).get("propio") or "").split("@", 1)[0])
+            filas = con.execute(
+                "SELECT DISTINCT chat_jid FROM messages WHERE is_from_me = 0 "
+                "AND chat_jid IS NOT NULL ORDER BY chat_jid").fetchall()
+            for (jid,) in filas:
+                if (jid, nombre) in conocidos or jid in excluir:
+                    continue
+                if jid.endswith(("@broadcast", "@newsletter")):
+                    continue
+                if propio and re.sub(r"\D", "", jid.split("@", 1)[0]) == propio:
+                    continue
+                conocidos.add((jid, nombre))
+                chats.append({"jid": jid, "quien": f"chat sin etiqueta ({jid})",
+                              "cliente": "Sin etiquetar", "canal": "whatsapp",
+                              "puente": nombre})
+
+    for chat in chats:
         jid, quien = chat["jid"], chat.get("quien", "chat")
         # Ciego no es sano: si su puente no abre, el chat NO se anota como
         # vigilado, para que el tablero lo pinte como hueco de cobertura.
@@ -541,8 +589,8 @@ def credenciales_gmail(secretos=None, lector=None):
     publico.
     """
     if not secretos:
-        return (json.loads(GMAIL_CRED.read_text()),
-                json.loads(GMAIL_KEYS.read_text()))
+        return (json.loads(GMAIL_CRED.read_text(encoding="utf-8")),
+                json.loads(GMAIL_KEYS.read_text(encoding="utf-8")))
     lector = lector or secreto_aws
     region = secretos["region"]
     return (lector(secretos["credenciales"], region),
@@ -587,7 +635,7 @@ def token_gmail(secretos=None, lector=None):
 def gmail_get(ruta, at, **params):
     url = f"{GMAIL_API}/{ruta}"
     if params:
-        url += "?" + urllib.parse.urlencode(params)
+        url += "?" + urllib.parse.urlencode(params, doseq=True)
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {at}"})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read().decode())
@@ -622,6 +670,43 @@ def es_autorespuesta(cabeceras, extracto):
     return any(f in t for f in FRASES_AUTO)
 
 
+DESCARTADOS = {"TRASH", "SPAM"}
+
+
+SERIE_CALENDARIO = "x-ms-exchange-calendar-series-instance-id"
+ASUNTOS_INVITACION = ("invitation:", "updated invitation:", "invitación:",
+                      "invitación actualizada:")
+
+
+def es_invitacion(msg):
+    """True when the headers say this is a meeting request, not just a mail
+    with an .ics attached. A question that carries a calendar file must still
+    count as waiting: that false green is the worst failure of this sentry.
+    Exchange stamps meeting requests with a calendar series id (measured Oct 9:
+    present on both invites, absent on normal mails with attachments); Google
+    Calendar invites start their subject with "Invitation:"."""
+    cab = {h["name"].lower(): h["value"]
+           for h in (msg.get("payload") or {}).get("headers", [])}
+    if cab.get(SERIE_CALENDARIO):
+        return True
+    return cab.get("subject", "").strip().lower().startswith(ASUNTOS_INVITACION)
+
+
+def sin_descartados(msgs, invitaciones=frozenset()):
+    """The thread without the client mails nobody waits on: those sent to Trash
+    or Spam, and calendar invitations (their ids in `invitaciones`). A reply of
+    mine stays even when trashed: it was delivered, so it still proves the
+    thread was answered."""
+    salida = []
+    for m in msgs or []:
+        etiquetas = set(m.get("labelIds") or [])
+        if "SENT" in etiquetas:
+            salida.append(m)
+        elif not DESCARTADOS & etiquetas and m.get("id") not in invitaciones:
+            salida.append(m)
+    return salida
+
+
 def arranca_hilo(msgs):
     """(mensaje donde arranco la espera, cuantos pendientes) de un hilo.
 
@@ -651,16 +736,35 @@ def hilos_gmail(remitente, dias, secretos=None):
     respuesta posterior no es silencio.
     """
     at = token_gmail(secretos)
-    q = f"in:all newer_than:{dias}d from:{remitente}"
+    # `in:all` does NOT leave out Trash and Spam on the API (measured Oct 9:
+    # 23 of the 25 results for one sender were in Trash). A trashed mail is a
+    # handled mail, and it also ate the 25 slots a real mail needed.
+    q = f"in:all -in:trash -in:spam newer_than:{dias}d from:{remitente}"
     d = gmail_get("messages", at, q=q, maxResults=25)
     hilos = {}
     for m in d.get("messages") or []:
         hilos[m["threadId"]] = None
+    # A calendar invitation asks for an RSVP, not an email reply. The metadata
+    # view does not show MIME parts, but search does: `filename:ics` gives the
+    # candidates, and `es_invitacion` keeps only real meeting requests. This
+    # search is an enrichment: if it fails, nothing is dropped (an extra alert
+    # is better than a blind sender).
+    try:
+        inv = gmail_get("messages", at, q=f"{q} filename:ics", maxResults=25)
+        candidatas = {m["id"] for m in inv.get("messages") or []}
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        print(f"AVISO: sin filtro de invitaciones para {remitente}: {e}",
+              file=sys.stderr)
+        candidatas = set()
     salida = []
     for tid in hilos:
         th = gmail_get(f"threads/{tid}", at, format="metadata",
-                       metadataHeaders="Auto-Submitted")
-        msgs = th.get("messages") or []
+                       metadataHeaders=["Auto-Submitted", "Subject",
+                                        "X-MS-Exchange-Calendar-Series-Instance-Id"])
+        crudos = th.get("messages") or []
+        invitaciones = {m["id"] for m in crudos
+                        if m.get("id") in candidatas and es_invitacion(m)}
+        msgs = sin_descartados(crudos, invitaciones)
         if not msgs:
             continue
         ultimo_msg = msgs[-1]
@@ -784,7 +888,7 @@ def lee_estado():
     borre la memoria y vuelva a gritar todo lo ya avisado.
     """
     try:
-        d = json.loads(ESTADO.read_text())
+        d = json.loads(ESTADO.read_text(encoding="utf-8"))
     except Exception:
         return {"avisados": [], "pulso": None}
     if isinstance(d, list):
@@ -1136,6 +1240,34 @@ def selftest():
                 fallos.append(
                     f"chat {chat}: {'debia avisar y callo' if debia else 'no debia avisar y grito'}")
 
+        # ---- todos los chats, sin lista a mano -----------------------------
+        # Con `todos` el vigia descubre los chats con entrantes. A va en la lista
+        # explicita y SI avisa: debe salir una sola vez y con su etiqueta, nunca
+        # repetido como "sin etiqueta". E esta excluido. El numero propio (escrito
+        # como JID completo, como lo documenta la plantilla), una difusion y un
+        # canal tienen entrantes pero no cuentan. F y G salen como "sin etiqueta".
+        con = sqlite3.connect(db)
+        t = (ahora - timedelta(minutes=45)).astimezone().isoformat(sep=" ")
+        for mid, jid in (("p1", "5210000@s.whatsapp.net"), ("s1", "status@broadcast"),
+                         ("n1", "999@newsletter")):
+            con.execute("INSERT INTO messages VALUES (?,?,?,?,?,?)",
+                        (mid, jid, 0, t, None, "aviso"))
+        con.commit(); con.close()
+        cfg_todos = {"puentes": {"p": {"db": str(db),
+                                       "propio": "+52 10-000@s.whatsapp.net"}},
+                     "vigilancia": {"puente": "p", "umbral_minutos": 20,
+                                    "todos": True, "excluir": ["E"],
+                                    "chats": [{"jid": "A", "quien": "A",
+                                               "cliente": "A",
+                                               "canal": "whatsapp"}]}}
+        r_todos = Counter(s["quien"] for s in revisa(cfg_todos, ahora, [], []))
+        esperado = Counter({"A": 1, "chat sin etiqueta (F)": 1,
+                            "chat sin etiqueta (G)": 1})
+        casos += 1
+        if r_todos != esperado:
+            fallos.append(f"todos: esperaba {dict(esperado)} y salio "
+                          f"{dict(r_todos)}")
+
         # ---- un chat puede vivir en OTRO puente -----------------------------
         # El fallo que esto vigila es silencioso: con un solo puente global, un
         # chat del puente personal se buscaba en la base de soporte, no aparecia
@@ -1351,6 +1483,57 @@ def selftest():
     arranca, cuantos = arranca_hilo([m for m in hilo_insiste if "INBOX" in m["labelIds"]])
     if arranca["id"] != "m2" or cuantos != 3:
         fallos.append("un hilo sin respuesta mia deberia arrancar en el primero")
+    casos += 1
+    # a thread whose mails all went to Trash is handled: nothing left to wait on
+    if sin_descartados([{"id": "t1", "labelIds": ["UNREAD", "TRASH"]},
+                        {"id": "t2", "labelIds": ["SPAM"]}]):
+        fallos.append("a trashed or spam mail still counts as waiting")
+    casos += 1
+    # trash in the middle of a live thread is dropped, the inbox mails stay
+    vivos = sin_descartados(hilo_insiste + [{"id": "t3", "labelIds": ["TRASH"]}])
+    if [m["id"] for m in vivos] != ["m1", "m2", "m3", "m4"]:
+        fallos.append("dropping trash also dropped live mails")
+    casos += 1
+    # my reply was trashed afterwards: the thread is still answered
+    arranca, cuantos = arranca_hilo(sin_descartados(hilo_insiste + [
+        {"id": "m5", "internalDate": "500", "labelIds": ["SENT", "TRASH"]}]))
+    if cuantos != 0:
+        fallos.append("a trashed reply of mine reopened the thread")
+    casos += 1
+    # the client's last mail is trashed: the wait still starts at the first live one
+    arranca, cuantos = arranca_hilo(sin_descartados(hilo_insiste + [
+        {"id": "t4", "internalDate": "500", "labelIds": ["INBOX", "TRASH"]}]))
+    if arranca["id"] != "m2" or cuantos != 3:
+        fallos.append("a trashed client mail changed where the wait starts")
+    casos += 1
+    # a thread that is only a calendar invitation is not waiting on a reply
+    if sin_descartados([{"id": "i1", "labelIds": ["INBOX", "UNREAD"]}], {"i1"}):
+        fallos.append("a calendar invitation still counts as waiting")
+    casos += 1
+    # an invitation after a real question does not hide the question
+    arranca, cuantos = arranca_hilo(sin_descartados(hilo_insiste + [
+        {"id": "i2", "internalDate": "500", "labelIds": ["INBOX"]}], {"i2"}))
+    if arranca["id"] != "m2" or cuantos != 3:
+        fallos.append("an invitation changed where the wait starts")
+    casos += 1
+    # a reply of mine is kept even if its id were among the invitations
+    if not sin_descartados([{"id": "s1", "labelIds": ["SENT"]}], {"s1"}):
+        fallos.append("a reply of mine was dropped as an invitation")
+    casos += 1
+    # an Exchange meeting request is an invitation
+    if not es_invitacion({"payload": {"headers": [
+            {"name": "X-MS-Exchange-Calendar-Series-Instance-Id", "value": "BAAA"}]}}):
+        fallos.append("an Exchange meeting request was not seen as an invitation")
+    casos += 1
+    # a Google Calendar invite is an invitation
+    if not es_invitacion({"payload": {"headers": [
+            {"name": "Subject", "value": "Invitation: UAT @ Tue 13 Oct"}]}}):
+        fallos.append("a Google Calendar invite was not seen as an invitation")
+    casos += 1
+    # a real question with an .ics attached is NOT an invitation
+    if es_invitacion({"payload": {"headers": [
+            {"name": "Subject", "value": "RE: can you make this slot?"}]}}):
+        fallos.append("a question with an .ics was silenced as an invitation")
 
     # un remitente sin ningun hilo callado va SANO, en null. Sin esto no hay
     # verdes de correo.
@@ -2009,7 +2192,7 @@ def main():
         sys.exit(selftest())
 
     canal = canal_activo()
-    cfg = json.loads(CONFIG.read_text())
+    cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
     ahora = datetime.now(timezone.utc)
     cobertura, estados = [], []
     silencios = (revisa(cfg, ahora, estados, cobertura)

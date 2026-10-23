@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "pages-function-checkpoint-debug",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "When a Cloudflare Pages Function (or any Worker-style serverless handler) returns a generic 502/500 hiding the actual error, instrument the handler with a `?debug=1` query param + an in-memory checkpoint array that accumulates step markers and gets returned in the response body. Lets you bisect \"which step crashed\" in 1-2 deploy/retest cycles instead of guessing for hours."
+}

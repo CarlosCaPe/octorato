@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-benign-ssm-plain-sqlite-read",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws --profile ops ssm send-command --instance-ids i-0aaaaaaaaaaaaaaaa --document-name AWS-RunShellScript --parameters 'commands=[\"sqlite3 /srv/store/messages.db \\\"select count(*) from messages\\\"\"]'"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_ssm_plain_sqlite_read_transcript.jsonl"
+}

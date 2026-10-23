@@ -1,0 +1,28 @@
+{
+  "arms_paths": {
+    "a": "arms/a"
+  },
+  "files": {
+    "arms/a/arm.json": {
+      "kind": "arm",
+      "name": "a",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    }
+  },
+  "unreadable": [
+    "arms/a/arm.json"
+  ],
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/a"
+  },
+  "_comment": "An arm.json the guard cannot read reads as deny (skipped as root).",
+  "_setup": {
+    "expect_reason": "Export_Policy of the arm"
+  }
+}

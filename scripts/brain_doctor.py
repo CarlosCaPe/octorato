@@ -42,6 +42,24 @@ def detect_python() -> str | None:
 PYTHON = detect_python()
 
 
+# Env vars git exports to its hooks (pre-push, commit-msg, pre-commit): a child
+# `git` inheriting GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE operates on the
+# LIVE repo, not on the throwaway one a selftest built. On 2026-09-05 that put a
+# selftest's `commit -m base` and `branch -M main` onto a live worktree, with
+# the operator's staged files inside. Every subprocess spawned from a doctor or
+# a selftest strips them.
+GIT_HOOK_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
+                "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE",
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH")
+
+
+def scrubbed_env(base=None) -> dict:
+    env = dict(os.environ if base is None else base)
+    for k in GIT_HOOK_ENV:
+        env.pop(k, None)
+    return env
+
+
 def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
     """Run a subprocess with explicit args; never raises on non-zero.
 
@@ -61,6 +79,7 @@ def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=scrubbed_env(),
     )
 
 
@@ -169,27 +188,202 @@ def check_interpreter(fix: bool) -> Result:
                   "install Python 3.8+ and ensure it is on PATH")
 
 
+# The distribution name at the start of a requirement line; what follows it (extras,
+# a version specifier, an environment marker) is not part of the name.
+_REQ_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+# A line that is a bare URL or VCS reference names no distribution of its own, and
+# neither does a local path or an archive file.
+_REQ_URL = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*://|git\+|hg\+|svn\+|bzr\+)")
+_REQ_PATH = re.compile(r"^[./~]|[/\\]|\.(?:whl|zip|tar\.gz|tgz|tar\.bz2)$|^[A-Za-z]:")
+_REQ_INCLUDE = re.compile(r"^(?:-r|--requirement)(?:\s+|=)?(\S+)$")
+
+
+def _read_requirements(path: Path, seen: set | None = None, broken: list | None = None) -> list:
+    """(name, marker) for every requirement, following `-r` / `--requirement`
+    includes relative to the including file. Option lines (`-c` constraints
+    included), bare URLs, local paths and archives carry no distribution name and
+    are skipped; a cycle of includes is read once. An include that does not exist
+    is appended to `broken`: pip refuses such a file, and dropping it silently took
+    every requirement it held out of the check."""
+    seen = seen if seen is not None else set()
+    real = path.resolve()
+    if real in seen:
+        return []
+    if not path.is_file():
+        if broken is not None:
+            broken.append(str(path))
+        return []
+    seen.add(real)
+    out = []
+    # Join continuation lines first, as pip does: `pip-compile --generate-hashes`
+    # writes `name==1.0 \` and the hashes below it, and an unjoined trailing
+    # backslash read the requirement as a path and dropped it from the check. Like
+    # pip, a comment line is never joined to the next one.
+    lines, buf = [], ""
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if not buf and raw.lstrip().startswith("#"):
+            lines.append(raw)
+            continue
+        if raw.endswith("\\"):
+            buf += raw[:-1] + " "
+            continue
+        lines.append(buf + raw)
+        buf = ""
+    if buf:
+        lines.append(buf)
+    for raw in lines:
+        line = raw.split(" #", 1)[0].split("\t#", 1)[0].strip()
+        if not line or line.startswith("#"):
+            continue
+        inc = _REQ_INCLUDE.match(line)
+        if inc:
+            out += _read_requirements(path.parent / inc.group(1), seen, broken)
+            continue
+        if line.startswith("-") or _REQ_URL.match(line):
+            continue
+        spec, _, marker = line.partition(";")
+        spec = spec.split(" --", 1)[0].strip()  # per-requirement options (--hash=...)
+        marker = marker.split(" --", 1)[0].strip()
+        name = spec.split("@", 1)[0].strip() if "@" in spec else spec
+        if _REQ_PATH.search(name):
+            continue
+        m = _REQ_NAME.match(name)
+        if m:
+            out.append((m.group(0), marker.strip()))
+    return out
+
+
+# requirements.txt names DISTRIBUTIONS, and a distribution's import name can differ
+# from it: `pyyaml` is imported as `yaml`. Probing `import <name>` reported PyYAML
+# missing where it was installed. Probing only the metadata was weaker still: a
+# distribution whose own dependency is gone keeps its metadata, so it read as
+# present while `import` failed. The probe does both: the distribution must be
+# installed, and each top-level module it provides must import.
+#
+# Which modules a distribution provides comes from packages_distributions(), then
+# top_level.txt. A listed module that is not on the path is skipped (some packages
+# list one they never ship), unless NONE of the listed modules is there, which is a
+# broken install. A listed module that resolves only as a namespace package while
+# the distribution's own RECORD lists an `__init__.py` for it is a leftover
+# directory, and counts as absent.
+#
+# With no list from those two, the modules its entry points run are used. With no
+# list at all the import name is unknown. Debian strips RECORD and a
+# hatchling build writes no top_level.txt, so Ubuntu's own python3-jsonschema is in
+# this case, and so is any requirement on Python < 3.10 without top_level.txt. The
+# name is tried as a module; when no such module exists the metadata is all there
+# is, and that is reported as UNVERIFIED (a WARN), never as importable, because
+# reading it as a PASS hid a deleted jsonschema module and reading it as missing
+# called PyGObject (module `gi`) absent.
+#
+# An environment marker is evaluated in the TARGET interpreter, the one it
+# describes. Without `packaging` (or pip's vendored copy) the requirement is checked
+# as written.
+#
+# Runs in the target interpreter: argv[1] is the distribution, argv[2] the marker.
+# Exit codes: 0 verified, 3 metadata only, 4 unreadable marker, 5 excluded by its
+# marker, anything else missing or broken.
+_DEP_PROBE = """
+import importlib, importlib.metadata as md, importlib.util, re, sys
+name, marker = sys.argv[1], sys.argv[2]
+if marker:
+    try:
+        from packaging.markers import Marker, InvalidMarker
+    except ImportError:
+        try:
+            from pip._vendor.packaging.markers import Marker, InvalidMarker
+        except ImportError:
+            Marker = None
+    if Marker is not None:
+        try:
+            applies = Marker(marker).evaluate()
+        except Exception:  # InvalidMarker, and evaluation errors such as InvalidVersion
+            sys.exit(4)
+        if not applies:
+            sys.exit(5)
+dist = md.distribution(name)
+norm = lambda n: re.sub(r"[-_.]+", "_", n).lower()
+listed = set()
+try:
+    for mod, owners in md.packages_distributions().items():
+        if any(norm(o) == norm(dist.metadata["Name"]) for o in owners):
+            listed.add(mod)
+except AttributeError:
+    pass
+if not listed:
+    listed = set((dist.read_text("top_level.txt") or "").split())
+if not listed:
+    # Entry points name the modules they run: Ubuntu's python3-jsonschema has no
+    # RECORD and no top_level.txt, but its console script points at jsonschema.cli.
+    # Only a module named after the distribution counts: a plugin's entry point
+    # names its HOST, and trusting that blamed the plugin for a missing host, or
+    # passed a plugin whose own module was gone.
+    named = {ep.value.split(":")[0].split(".")[0].strip() for ep in dist.entry_points}
+    listed = {m for m in named if norm(m) == norm(name)}
+listed = {m for m in listed if not m.startswith("_") and m.isidentifier()}
+# RECORD read raw: from 3.12 Distribution.files drops entries that no longer exist
+# on disk, which is exactly the file a leftover directory has lost.
+shipped = {line.split(",", 1)[0].replace("\\\\", "/")
+           for line in (dist.read_text("RECORD") or "").splitlines() if line}
+
+def real(mod):
+    spec = importlib.util.find_spec(mod)
+    if spec is None:
+        return False
+    if spec.origin in (None, "namespace") and mod + "/__init__.py" in shipped:
+        return False
+    return True
+
+if listed:
+    present = [m for m in sorted(listed) if real(m)]
+    if not present:
+        sys.exit("none of the modules " + ", ".join(sorted(listed)) + " is on the path")
+else:
+    guess = norm(name)
+    present = [guess] if guess.isidentifier() and real(guess) else []
+for mod in present:
+    importlib.import_module(mod)
+if not present:
+    sys.exit(3)
+"""
+
+
 def check_python_deps(fix: bool) -> Result:
     key = "python-deps"
     req_file = CLAUDE_DIR / "requirements.txt"
     if not req_file.exists():
         return Result(key, WARN, "no requirements.txt at brain root",
                       "create ~/.claude/requirements.txt listing third-party deps")
-    required = []
-    for line in req_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        name = line.split("==")[0].split(">=")[0].split("<")[0].split("[")[0].strip()
-        if name:
-            required.append(name)
-    missing = []
-    for pkg in required:
-        probe = run([PYTHON or "python3", "-c", f"import {pkg}"])
-        if probe.returncode != 0:
-            missing.append(pkg)
+    broken_includes: list = []
+    reqs = _read_requirements(req_file, broken=broken_includes)
+    if broken_includes:
+        return Result(key, FAIL,
+                      f"requirements include not found: {', '.join(broken_includes)}; "
+                      f"the requirements it lists are not checked",
+                      "fix the -r path in requirements.txt")
+    if not reqs:
+        return Result(key, WARN, "requirements.txt declares no distribution",
+                      "list the brain's third-party imports in ~/.claude/requirements.txt")
+    verified, unverified, excluded, bad_marker, missing = [], [], [], [], []
+    for name, marker in reqs:
+        rc = run([PYTHON or "python3", "-c", _DEP_PROBE, name, marker]).returncode
+        {0: verified, 3: unverified, 4: bad_marker, 5: excluded}.get(rc, missing).append(name)
+    notes = []
+    if excluded:
+        notes.append(f"not for this interpreter by marker: {', '.join(excluded)}")
+    if unverified:
+        notes.append(f"installed, module name unknown so the import is unverified: "
+                     f"{', '.join(unverified)}")
+    tail = (" | " + "; ".join(notes)) if notes else ""
+    if bad_marker:
+        return Result(key, FAIL,
+                      f"unreadable environment marker for: {', '.join(bad_marker)}{tail}",
+                      "fix the marker after ';' in requirements.txt")
     if not missing:
-        return Result(key, PASS, f"all declared deps importable ({', '.join(required)})")
+        status = WARN if unverified else PASS
+        return Result(key, status,
+                      f"declared deps installed and importable ({', '.join(verified) or 'none'}){tail}",
+                      "an import name the probe cannot find: check it by hand" if unverified else "")
     if fix:
         install = run([PYTHON or "python3", "-m", "pip", "install", "--user",
                        "-r", str(req_file)])
@@ -199,7 +393,7 @@ def check_python_deps(fix: bool) -> Result:
                       f"pip install failed (missing: {', '.join(missing)})",
                       f"run manually: pip install --user -r {req_file}")
     return Result(key, FAIL,
-                  f"missing deps: {', '.join(missing)} — heartbeat/connectome will silently degrade",
+                  f"missing deps: {', '.join(missing)}: heartbeat/connectome will silently degrade{tail}",
                   f"pip install --user -r {req_file}  (or rerun with --fix)")
 
 
@@ -483,9 +677,15 @@ def check_arms_config(fix: bool) -> Result:
     return Result(key, PASS, "arms-paths.json present and valid JSON")
 
 
-def check_sync_targets(fix: bool) -> list[Result]:
+def check_sync_targets(fix: bool, arms_file: Path | None = None,
+                       registry: Path | None = None) -> list[Result]:
+    """Every arm's mirrors equal its .claude/CLAUDE.md: the two base mirrors plus
+    the instruction file of every `supported` harness (v11 AC-07). WARN, never
+    FAIL: a mirror that is a symlink (sync refuses to write through it), and an
+    instruction file of a harness that is NOT supported, which sync leaves in
+    place and no longer updates (a stale mirror)."""
     key = "sync-targets"
-    p = CLAUDE_DIR / "company" / "config" / "arms-paths.json"
+    p = arms_file or (CLAUDE_DIR / "company" / "config" / "arms-paths.json")
     if not p.exists():
         return [Result(key, WARN, "arms-paths.json absent — skipping sync-target verification",
                        "create arms-paths.json to enable")]
@@ -494,7 +694,21 @@ def check_sync_targets(fix: bool) -> list[Result]:
     except Exception as e:
         return [Result(key, FAIL, f"arms-paths.json unreadable: {e}", "fix JSON")]
 
+    try:
+        sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
+        import ai_sync
+        mirrors = [*ai_sync.BASE_MIRRORS,
+                   *ai_sync.harness_instruction_files(registry, quiet=True)]
+        stale_names = ai_sync.harness_instruction_files(registry, supported=False, quiet=True)
+        refusal = ai_sync.mirror_refusal
+    except Exception as e:  # keep the base check alive if ai_sync cannot load
+        mirrors, stale_names, refusal = [".github/copilot-instructions.md", ".cursorrules"], [], None
+        results_note = f"ai_sync unavailable ({type(e).__name__}); base mirrors only"
+    else:
+        results_note = None
     results = []
+    if results_note:
+        results.append(Result(key, WARN, results_note, "fix scripts/ai_sync.py"))
     checked = 0
     for arm, value in arms.items():
         repo = resolve_home_relative(value)
@@ -508,8 +722,14 @@ def check_sync_targets(fix: bool) -> list[Result]:
                                   "ensure arm has .claude/CLAUDE.md"))
             continue
         src_bytes = read_bytes(source)
-        for mirror_rel in (".github/copilot-instructions.md", ".cursorrules"):
+        for mirror_rel in mirrors:
             mirror = repo / mirror_rel
+            why = refusal(repo, mirror_rel) if refusal else None
+            if why:
+                results.append(Result(f"{key}:{arm}", WARN,
+                                      f"{arm}: {mirror_rel} not synced, {why}",
+                                      "replace it with a regular file; sync never writes through a link"))
+                continue
             if not mirror.exists():
                 results.append(Result(f"{key}:{arm}", WARN,
                                       f"{arm}: {mirror_rel} missing",
@@ -519,7 +739,13 @@ def check_sync_targets(fix: bool) -> list[Result]:
                 results.append(Result(f"{key}:{arm}", WARN,
                                       f"{arm}: {mirror_rel} differs from .claude/CLAUDE.md",
                                       "run sync-ai-docs to re-sync mirror"))
-        # if both mirrors matched, no per-mirror result emitted; add a PASS marker
+        for stale_rel in stale_names:
+            if os.path.lexists(repo / stale_rel):
+                results.append(Result(f"{key}:{arm}", WARN,
+                                      f"{arm}: {stale_rel} is a stale mirror; its harness is not "
+                                      "`supported` in registry/runtimes.yaml, so sync no longer updates it",
+                                      "delete it in the arm, or keep it knowing it will not track CLAUDE.md"))
+        # if every mirror matched, no per-mirror result emitted; add a PASS marker
         arm_problems = [r for r in results if r.key == f"{key}:{arm}"]
         if not arm_problems:
             results.append(Result(f"{key}:{arm}", PASS, f"{arm}: mirrors in sync"))
@@ -528,6 +754,42 @@ def check_sync_targets(fix: bool) -> list[Result]:
         return [Result(key, WARN, "no arm repos resolve on this machine",
                        "clone arm repos or update arms-paths.json")]
     return results
+
+
+def check_reply_panel_arm_env(fix: bool, arms_file: Path | None = None) -> Result:
+    """v11 (FLOW.panel-before-reply, AC-16, residual R-10): OCTO_REPLY_PANEL in
+    an arm's `.claude/settings*.json` env block switches the reply panel off
+    for every later session launched in that arm, and the arming surface does
+    not see those scopes. Warn, naming the file; never block. Only the arm
+    paths listed in arms-paths.json are scanned."""
+    key = "reply-panel-arm-env"
+    p = arms_file or (CLAUDE_DIR / "company" / "config" / "arms-paths.json")
+    if not p.exists():
+        return Result(key, PASS, "arms-paths.json absent; no arm settings scanned")
+    try:
+        arms = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        return Result(key, WARN, f"arms-paths.json unreadable, arm settings not scanned: {e}",
+                      "fix arms-paths.json")
+    hits, scanned = [], 0
+    for value in (arms.values() if isinstance(arms, dict) else []):
+        repo = resolve_home_relative(value)
+        if repo is None:
+            continue
+        for f in sorted((repo / ".claude").glob("settings*.json")):
+            scanned += 1
+            try:
+                env = json.loads(f.read_text(encoding="utf-8")).get("env")
+            except Exception:
+                continue
+            if isinstance(env, dict) and "OCTO_REPLY_PANEL" in env:
+                hits.append(str(f))
+    if hits:
+        return Result(key, WARN, f"{len(hits)} arm settings file(s) set OCTO_REPLY_PANEL in env: "
+                      + "; ".join(hits[:5]),
+                      "the off switch belongs to the shell that launches Claude Code; "
+                      "remove it from these files unless the operator put it there")
+    return Result(key, PASS, f"no arm settings file sets OCTO_REPLY_PANEL ({scanned} scanned)")
 
 
 def check_blocklist(fix: bool) -> Result:
@@ -550,7 +812,30 @@ def check_finops_enforcement(fix: bool) -> Result:
         return Result(key, WARN,
                       "budgets.yaml absent — per-arm budget caps are NOT enforced (FinOps off)",
                       "cp budgets.yaml.example budgets.yaml, then set monthly_usd_cap per arm")
-    n = cfg.read_text(errors="ignore").count("monthly_usd_cap")
+    # Read it the way budget-check.py reads it: a file in a shape the gate does
+    # not read (an `arms:` map, say) enforced nothing while this line said ON.
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_budget_check_doctor", CLAUDE_DIR / "scripts" / "budget-check.py")
+        bc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bc)
+        try:
+            import yaml  # type: ignore[import-not-found]
+            loaded = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+            problems = bc.config_problems(loaded)
+        except ImportError:
+            problems = ["PyYAML is not installed, so budget-check cannot read budgets.yaml"]
+        except Exception as e:  # noqa: BLE001
+            problems = [f"budgets.yaml does not parse: {e}"]
+        fix = bc.CONFIG_FIX
+    except Exception as e:  # noqa: BLE001
+        problems, fix = [f"budget-check.py could not be loaded to read the config: {e}"], \
+            "convert to the budgets: list documented in budget-check.py"
+    if problems:
+        return Result(key, WARN, "budgets.yaml is present but budget-check cannot read it: "
+                      + "; ".join(problems), fix)
+    n = cfg.read_text(encoding="utf-8", errors="ignore").count("monthly_usd_cap")
     return Result(key, PASS, f"FinOps enforcement ON — budgets.yaml present ({n} cap line(s))")
 
 
@@ -656,7 +941,8 @@ REGISTRY_SCHEMA = CLAUDE_DIR / "registry" / "rules.schema.json"
 NAMING_POLICY = CLAUDE_DIR / "registry" / "naming-policy.yaml"
 HOOKS_JSON = CLAUDE_DIR / "hooks.json"
 CLAUDE_MD = CLAUDE_DIR / "CLAUDE.md"
-CC_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart"}
+CC_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart",
+             "SubagentStart", "SubagentStop", "PermissionDenied"}
 
 
 def _rt(p: Path) -> str:
@@ -902,9 +1188,17 @@ def check_registry(fix: bool) -> list:
                     exp = _date.fromisoformat(str(w.get("expires") or "").strip())
                 except ValueError:
                     exp = None
-                if exp is not None and exp >= _date.today():
-                    continue  # operator-signed, expiry-dated downgrade (live)
-                failopen.append(f"{r.get('id', '?')}({r.get('enforcement', 'n/a')}, waiver expired/invalid)")
+                # v7: a waiver is a migration device, not a steady state. It needs a
+                # `granted` date and is VOID 90 days after it, whatever `expires` says.
+                try:
+                    granted = _date.fromisoformat(str(w.get("granted") or "").strip())
+                except ValueError:
+                    granted = None
+                too_old = granted is None or (_date.today() - granted).days > 90
+                if exp is not None and exp >= _date.today() and not too_old:
+                    continue  # operator-signed, expiry-dated downgrade (live, < 90 days)
+                why = "waiver expired/invalid" if not too_old else "waiver older than 90 days or undated (v7)"
+                failopen.append(f"{r.get('id', '?')}({r.get('enforcement', 'n/a')}, {why})")
                 continue
             failopen.append(f"{r.get('id', '?')}({r.get('enforcement', 'n/a')})")
     if not failopen:
@@ -962,6 +1256,9 @@ def check_corpus_coverage(fix: bool) -> Result:
                       "fix registry/rules.yaml first")
     rules = reg.get("rules", []) if isinstance(reg, dict) else []
     rule_files = {(r.get("source") or {}).get("file", "") for r in rules}
+    # A rule may declare the memory directives its mechanism enforces (covers_memory);
+    # those count as covered by the rule itself, not only by the recall reflex.
+    rule_files |= {m for r in rules for m in (r.get("covers_memory") or [])}
     rule_anchors = [(r.get("source") or {}).get("anchor", "") for r in rules
                     if (r.get("source") or {}).get("anchor")]
 
@@ -1012,8 +1309,7 @@ def check_corpus_coverage(fix: bool) -> Result:
     # El gancho ': hook' es OPCIONAL: el indice compactado escribe entradas sin
     # gancho, y exigirlo dejaba 120/122 ficheros como no-indexados (FAIL falso).
     entry_re = re.compile(r"\[(?P<title>[^\]]+)\]\((?P<file>[^)]+)\)")
-    home_slug = "-" + str(Path.home()).strip("/").replace("/", "-")
-    brain_mem_dir = CLAUDE_DIR / "projects" / home_slug / "memory"
+    brain_mem_dir = _brain_memory_dir()
     class_row = next((r for r in rules if r.get("id") == "MEMORY.feedback-directive-corpus"), None)
     hooks = _hooks_index()
 
@@ -1039,6 +1335,7 @@ def check_corpus_coverage(fix: bool) -> Result:
         mem_note = ""
         brain_uncov, arm_uncov = [], []
         brain_cov = brain_total = arm_cov = arm_total = 0
+        brain_direct = 0
         indexed_by_dir = {}
         for d in {mf.parent for mf in mem_files}:
             idx = set()
@@ -1066,6 +1363,7 @@ def check_corpus_coverage(fix: bool) -> Result:
                     arm_cov += 1
                 else:
                     brain_cov += 1
+                    brain_direct += int(direct)
                 continue
             label = mf.stem
             for ln in _rt(mf).splitlines()[:15]:
@@ -1088,7 +1386,7 @@ def check_corpus_coverage(fix: bool) -> Result:
         + " | "
         + (mem_note if mem_note else
            f"memory directives (brain) {brain_cov}/{brain_total} "
-           f"REFLEX (injected, obedience unproven)"
+           f"({brain_direct} rule-direct + {brain_cov - brain_direct} REFLEX, injected, obedience unproven)"
            + (f" (uncovered: {', '.join(brain_uncov[:10])})" if brain_uncov else "")
            + f"; {arm_total} arm-scoped (separate repo, not brain-gated)"
            + (f" [{len(arm_uncov)} not recall-indexed]" if arm_uncov else ""))
@@ -1281,6 +1579,32 @@ def check_gate_liveness(fix: bool) -> Result:
                       f"{len(failed)}/{len(proofs)} gate selftest(s) do NOT block+allow correctly: "
                       + "; ".join(failed[:6]),
                       "a labeled gate that fails its violation/benign fixtures is dead; fix the gate or the fixture")
+    # v7 gate receipt: the outward-send gate refuses to ship while no doctor has
+    # proven the gates on THIS tree. Written here, in the doctor's process, never
+    # by the model; the consumer compares the recorded HEAD to the live one.
+    try:
+        import receipt_ledger
+        head = receipt_ledger.brain_head(CLAUDE_DIR)
+        gates = receipt_ledger.gate_tree_hash(CLAUDE_DIR)
+        dirty = receipt_ledger.gate_surfaces_dirty(CLAUDE_DIR)
+        if head and gates and not dirty:
+            receipt_ledger.append_global({"kind": "gate-liveness", "ok": True, "head": head,
+                                          "gates": gates, "selftests": len(proofs)})
+        elif dirty:
+            return Result(key, WARN,
+                          f"all {len(proofs)} selftests pass but {len(dirty)} gate surface file(s) differ "
+                          f"from HEAD (uncommitted, or hidden by assume-unchanged/skip-worktree); no gate "
+                          f"receipt written (it would vouch for gates that are not the committed ones)",
+                          "commit or discard the changes under scripts/, registry/, hooks.json, then re-run")
+        else:
+            return Result(key, FAIL,
+                          f"all {len(proofs)} selftests pass but the brain's HEAD or gate tree could not be "
+                          f"resolved (head={head[:8] or '?'}, gates={'ok' if gates else 'missing'}); no gate "
+                          f"receipt written, every send will be denied at this tree",
+                          "run from the brain checkout without GIT_DIR pointing elsewhere; check `git rev-parse HEAD:scripts`")
+    except Exception as e:
+        return Result(key, FAIL, f"gate receipt could not be written: {e}",
+                      "the send gate denies without it; fix and re-run --gate-receipt")
     return Result(key, PASS,
                   f"all {len(proofs)} gate/detector selftest(s) proven live "
                   f"(gate: violation blocks + benign allows; detector: fires on fixture)")
@@ -1345,6 +1669,565 @@ def check_enforcement_floor(fix: bool) -> Result:
     return Result(key, PASS, ledger)
 
 
+def _kernel_policy_problems(data, where: str) -> list:
+    """Validate one kernel policy layer against the inline schema.
+
+    Deliberately not a JSON-Schema file: the policy is four keys, and a schema
+    in another file is one more thing that can drift from the parser in
+    g__pretool__kernel.py. Reported per BAD KEY, because "your quota config is
+    invalid" sends an operator to read the whole file, while
+    "`subagent.max_minutes` is 'none', not a number" is the edit."""
+    problems = []
+    if not isinstance(data, dict):
+        return [f"{where} is not a mapping"]
+    for tier in ("subagent", "main"):
+        if tier not in data:
+            continue
+        sub = data[tier]
+        if not isinstance(sub, dict):
+            problems.append(f"{where}: `{tier}` is not a mapping")
+            continue
+        for cap in ("max_tool_calls", "max_minutes"):
+            if cap not in sub:
+                continue
+            val = sub[cap]
+            if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+                problems.append(f"{where}: `{tier}.{cap}` is {val!r}, want a "
+                                "non-negative integer (0 = unlimited)")
+        for extra in sub:
+            if extra not in ("max_tool_calls", "max_minutes"):
+                problems.append(f"{where}: `{tier}.{extra}` is not a known cap")
+    if "qa_multiplier" in data:
+        val = data["qa_multiplier"]
+        if isinstance(val, bool) or not isinstance(val, int) or val < 1:
+            problems.append(f"{where}: `qa_multiplier` is {val!r}, want an integer >= 1")
+    if "qa_agent_types_regex" in data:
+        val = data["qa_agent_types_regex"]
+        if not isinstance(val, str) or not val:
+            problems.append(f"{where}: `qa_agent_types_regex` is {val!r}, want a regex string")
+        else:
+            try:
+                re.compile(val)
+            except re.error as exc:
+                problems.append(f"{where}: `qa_agent_types_regex` does not compile ({exc})")
+    for key in data:
+        if key in ("subagent", "main", "qa_multiplier", "qa_agent_types_regex"):
+            continue
+        if str(key).startswith("_"):
+            continue          # `_comment` in the template, and any future note key
+        problems.append(f"{where}: `{key}` is not a known policy key")
+    return problems
+
+
+def check_kernel_quota_live(fix: bool) -> Result:
+    """v8 Phase 3: prove the quota gate refuses, and that the policy it reads parses.
+
+    Three assertions, in the order they can fail on a real machine. The gate
+    still blocks its fixtures. The tracked slot `registry/kernel.yaml` parses
+    under a REAL yaml parser and validates, which is what stops the hot path's
+    12-line scalar reader from silently misreading a file nobody checked. And
+    the operator's occupant, `company/config/kernel.json`, validates when it
+    exists.
+
+    The occupant is a WARN, never a FAIL, and it is the same stance the gate
+    takes: a malformed occupant falls back to the tracked defaults and lets
+    calls run, so it degrades enforcement rather than stopping work. That is
+    worth naming loudly, and it is not worth failing a push over. The slot IS a
+    FAIL: it ships in the repo, so a broken one is broken for everybody."""
+    key = "kernel-quota-live"
+    loc = ("scripts/g__pretool__kernel.py --selftest "
+           "registry/fixtures/FLOW.kernel-quota")
+    if not (CLAUDE_DIR / "scripts" / "g__pretool__kernel.py").exists():
+        return Result(key, FAIL, "scripts/g__pretool__kernel.py is missing",
+                      "restore the kernel hot-path gate")
+    cp = _run_selftest_locator(loc)
+    if cp.returncode != 0:
+        detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+        return Result(key, FAIL,
+                      "quota selftest failed: "
+                      + (detail[-1] if detail else f"exit {cp.returncode}"),
+                      "the quota gate no longer refuses a process over its cap; "
+                      "fix the gate or the fixture")
+
+    slot = CLAUDE_DIR / "registry" / "kernel.yaml"
+    if not slot.exists():
+        return Result(key, FAIL, "registry/kernel.yaml is missing",
+                      "restore the tracked quota policy slot; the gate falls back to "
+                      "unlimited without it, so caps stop being enforced silently")
+    try:
+        import yaml
+        policy = yaml.safe_load(slot.read_text(encoding="utf-8"))
+    except ImportError:
+        return Result(key, WARN, "quota selftest PASS; PyYAML absent, slot unvalidated",
+                      "pip install --user pyyaml to validate registry/kernel.yaml")
+    except Exception as exc:
+        return Result(key, FAIL, f"registry/kernel.yaml does not parse: {exc}",
+                      "fix the YAML; the hot path reads this file on every tool call")
+    problems = _kernel_policy_problems(policy, "registry/kernel.yaml")
+    if problems:
+        return Result(key, FAIL, "; ".join(problems[:4]),
+                      "fix the named key in registry/kernel.yaml")
+
+    caps = []
+    for tier in ("subagent", "main"):
+        row = (policy or {}).get(tier) or {}
+        caps.append(f"{tier} {row.get('max_tool_calls', 0)} calls/"
+                    f"{row.get('max_minutes', 0)} min")
+    # A non-zero cap in the TRACKED slot is a cap shipped to every clone, which
+    # is the one thing slot-not-occupant exists to prevent. It also makes the
+    # occupant line a lie: "nothing capped" would be printed while the slot caps
+    # everybody.
+    slot_capped = [f"{tier}.{cap}={row[cap]}"
+                   for tier in ("subagent", "main")
+                   for row in [(policy or {}).get(tier) or {}]
+                   for cap in ("max_tool_calls", "max_minutes")
+                   if isinstance(row.get(cap), int) and not isinstance(row.get(cap), bool)
+                   and row[cap] > 0]
+    occ = CLAUDE_DIR / "company" / "config" / "kernel.json"
+    detail = f"quota gate blocks; slot valid ({', '.join(caps)}, 0 = unlimited)"
+    if slot_capped:
+        detail += ("; the tracked slot carries a real cap (" + ", ".join(slot_capped)
+                   + "), and it ships to every clone")
+    if not occ.exists():
+        if slot_capped:
+            return Result(key, WARN, detail,
+                          "caps belong in the gitignored company/config/kernel.json; "
+                          "set registry/kernel.yaml back to 0 (unlimited)")
+        return Result(key, PASS, detail + "; no occupant, nothing capped on this machine")
+    try:
+        data = json.loads(occ.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return Result(key, WARN,
+                      detail + f"; company/config/kernel.json does not parse ({exc}), "
+                      "the gate is falling back to the unlimited defaults",
+                      "fix the JSON, or delete it if you meant to run uncapped")
+    bad = _kernel_policy_problems(data, "company/config/kernel.json")
+    if bad:
+        return Result(key, WARN, detail + "; " + "; ".join(bad[:3]),
+                      "fix the named key; until then that cap is not enforced")
+    ocaps = []
+    for tier in ("subagent", "main"):
+        row = data.get(tier) or {}
+        if row:
+            ocaps.append(f"{tier} {row.get('max_tool_calls', 0)} calls/"
+                         f"{row.get('max_minutes', 0)} min")
+    detail += "; occupant valid" + (" (" + ", ".join(ocaps) + ")" if ocaps else "")
+    if slot_capped:
+        return Result(key, WARN, detail,
+                      "caps belong in the gitignored company/config/kernel.json; "
+                      "set registry/kernel.yaml back to 0 (unlimited)")
+    return Result(key, PASS, detail)
+
+
+def check_kernel_process_live(fix: bool) -> Result:
+    """v8 Phase 1a-2: prove the kernel's PROCESS record is real on THIS machine.
+
+    A selftest proves the hooks work on fixtures; it says nothing about the
+    table those hooks have actually been writing. So this reads the real one,
+    read-only, and asserts the invariant the later phases lean on: a process the
+    liveness rule calls LIVE has a journal. A live row with no journal is a
+    phantom, and Phase 2 would deny writes on its behalf forever. The newest
+    five chains are verified (tamper evidence is worthless unverified), and the
+    `open` lines of the last week are counted, so calls that ran unjournaled
+    under OCTO_KERNEL_OPEN are a number, never a guess.
+
+    Phase 1b adds the reader's half. The golden replay is compared BYTE FOR
+    BYTE, because `octo replay` is the audit surface: a formatting drift that
+    nobody notices is a fixture that stopped proving anything. And the hot path
+    is timed, reported, and never failed on: timing is not a gate (v8-kernel.md
+    section 3), so a median over the budget is a WARN. It is also never skipped
+    "because the box is busy" - a number measured under load is still the
+    number this machine delivers, and hiding it would be the one way to lose
+    the trend.
+
+    Passes on a fresh install with no ptable at all, and never writes."""
+    key = "kernel-process-live"
+    for loc in ("scripts/r__subagent-start__proc-register.py --selftest "
+                "registry/fixtures/ARCHITECTURE.kernel-process",
+                "scripts/r__subagent-stop__proc-exit.py --selftest "
+                "registry/fixtures/ARCHITECTURE.kernel-process",
+                "scripts/octo.py --selftest "
+                "registry/fixtures/ARCHITECTURE.kernel-process"):
+        script = loc.split()[0]
+        if not (CLAUDE_DIR / script).exists():
+            return Result(key, FAIL, f"{script} is missing", "restore the kernel hook")
+        cp = _run_selftest_locator(loc)
+        if cp.returncode != 0:
+            detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+            return Result(key, FAIL,
+                          f"{Path(script).name} selftest failed: "
+                          + (detail[-1] if detail else f"exit {cp.returncode}"),
+                          "the register/exit reflexes no longer prove themselves; fix the hook or the fixture")
+    sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
+    try:
+        import time
+
+        import kernel_proc
+    except Exception as e:
+        return Result(key, FAIL, f"cannot import kernel_proc: {e}", "restore scripts/kernel_proc.py")
+
+    notes = []
+    if not (CLAUDE_DIR / "hooks.json").exists():
+        notes.append("hooks.json absent")
+    else:
+        try:
+            wired = json.loads((CLAUDE_DIR / "hooks.json").read_text(encoding="utf-8"))
+        except ValueError:
+            wired = {}
+        if not wired.get("SubagentStart"):
+            notes.append("runtime fallback: no SubagentStart hook, a child's start line "
+                         "waits for its first tool call (PreToolUse[Agent] + SubagentStop only)")
+
+    table = kernel_proc.read_ptable()
+    procs = table.get("processes", {})
+    now = time.time()
+    live, phantom = [], []
+    for pid in procs:
+        if kernel_proc.is_live(pid, table, now):
+            live.append(pid)
+            if not os.path.exists(kernel_proc.journal_path(pid)):
+                phantom.append(pid)
+    if phantom:
+        return Result(key, FAIL,
+                      f"{len(phantom)} live process(es) with no journal: " + ", ".join(phantom[:5]),
+                      "a live row with no journal holds lanes nothing can release; "
+                      "delete the row from ~/.claude/.cache/kernel/ptable.json")
+
+    jdir = kernel_proc.journal_dir()
+    journals = []
+    if os.path.isdir(jdir):
+        for name in os.listdir(jdir):
+            if not name.endswith(".jsonl"):
+                continue
+            path = os.path.join(jdir, name)
+            try:
+                journals.append((os.stat(path).st_mtime, name[:-6]))
+            except OSError:
+                continue
+    journals.sort(reverse=True)
+    for _, pid in journals[:5]:
+        code, why = kernel_proc.verify_detail(pid)
+        if code != 0:
+            return Result(key, FAIL, f"journal chain broken for pid {pid}: {why}",
+                          "the journal is append-only and hash-chained; a broken chain is tamper "
+                          "evidence, read it before deleting the file")
+    opened = 0
+    cutoff = now - 7 * 24 * 3600
+    for mtime, pid in journals:
+        if mtime < cutoff:
+            continue
+        for line in kernel_proc.read_journal(pid):
+            if isinstance(line, dict) and line.get("kind") == "open" \
+                    and float(line.get("ts") or 0) >= cutoff:
+                opened += int(line.get("count") or 0)
+    # the golden replay, byte for byte: `octo replay` is the audit surface
+    rdir = CLAUDE_DIR / "registry" / "fixtures" / "ARCHITECTURE.kernel-process" / "replay"
+    expected = rdir / "expected.txt"
+    if not expected.exists():
+        return Result(key, FAIL, "the golden replay fixture is missing",
+                      "restore registry/fixtures/ARCHITECTURE.kernel-process/replay/")
+    cp = run([PYTHON or "python3", str(CLAUDE_DIR / "scripts" / "octo.py"),
+              "replay", "--fixture", str(rdir)], cwd=CLAUDE_DIR)
+    if cp.returncode != 0:
+        return Result(key, FAIL, f"octo replay --fixture exited {cp.returncode}",
+                      "the replay reader is broken; run it by hand to see why")
+    if (cp.stdout or "") != expected.read_text(encoding="utf-8"):
+        return Result(key, FAIL, "the golden replay no longer matches expected.txt",
+                      "octo replay changed its output: re-read the diff before "
+                      "regenerating the golden, the fixture is the contract")
+
+    # the hot path, measured. Reported always, never a FAIL: timing is not a gate.
+    bench_note, status = "", PASS
+    cp = run([PYTHON or "python3", str(CLAUDE_DIR / "scripts" / "octo.py"),
+              "bench", "--json"], cwd=CLAUDE_DIR)
+    try:
+        data = json.loads(cp.stdout or "{}")
+        median, budget = float(data["median_ms"]), float(data.get("budget_ms") or 100.0)
+        bench_note = f"hot path median {median:.1f} ms over {data['runs']} run(s)"
+        if median > budget:
+            status = WARN
+            bench_note += f" (over the {budget:.0f} ms budget)"
+    except (ValueError, KeyError, TypeError):
+        status = WARN
+        bench_note = "hot path could not be measured"
+
+    msg = (f"3 selftests pass; {len(procs)} process row(s), {len(live)} live, all journaled; "
+           f"{min(len(journals), 5)} newest chain(s) verify; {opened} call(s) ran unjournaled "
+           f"in 7 days; golden replay matches; {bench_note}")
+    hint = ("the hot path is slower than the budget; it is a WARN by design, "
+            "compare `octo bench` on an idle box before acting"
+            if status == WARN else "")
+    return Result(key, status, msg + ("; " + "; ".join(notes) if notes else ""), hint)
+
+
+def check_kernel_isolation_gate(fix: bool) -> Result:
+    """v8 Phase 2: prove the two ISOLATION gates block AND are actually wired.
+
+    Two assertions, because either one alone lies. A selftest that passes on a
+    script nobody calls is a gate on paper; a hooks.json entry for a script that
+    no longer denies is a gate in name. So: run both `--selftest` proofs against
+    the shared fixture dir, then confirm each script sits in hooks.json at the
+    PreToolUse matcher it claims.
+
+    ORDER IS NEVER ASSERTED. Hooks on one event run in parallel and a PreToolUse
+    call is denied when ANY hook denies, so "after the dimension gate" would be a
+    claim about the runtime that the runtime does not make."""
+    key = "kernel-isolation-gate"
+    fixtures = "registry/fixtures/ARCHITECTURE.kernel-isolation"
+    # (script, matcher) pairs, not a script->matcher map: the write gate is wired
+    # twice, at its own tools and at Agent, where it releases the delegator's
+    # lanes instead of claiming one.
+    wanted = [
+        ("g__pretool-write__tree-owner.py", "Write|Edit|NotebookEdit|MultiEdit"),
+        ("g__pretool-write__tree-owner.py", "Agent"),
+        ("g__pretool-bash__tree-owner.py", "Bash"),
+    ]
+    if not (CLAUDE_DIR / fixtures).is_dir():
+        return Result(key, FAIL, f"{fixtures} is missing",
+                      "restore the isolation fixtures; without them neither gate proves itself")
+    for script in sorted({sc for sc, _m in wanted}):
+        if not (CLAUDE_DIR / "scripts" / script).exists():
+            return Result(key, FAIL, f"scripts/{script} is missing",
+                          "restore the isolation gate")
+        cp = _run_selftest_locator(f"scripts/{script} --selftest {fixtures}")
+        if cp.returncode != 0:
+            detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+            return Result(key, FAIL,
+                          f"{script} selftest failed: "
+                          + (detail[-1] if detail else f"exit {cp.returncode}"),
+                          "one writer per tree and per lane is not enforced; fix the gate or the fixture")
+    idx = _hooks_index()
+    unwired = [f"{script} at PreToolUse|{matcher}" for script, matcher in wanted
+               if not any(e == "PreToolUse" and b == script and (mm == matcher or mm == "*")
+                          for (e, mm, b) in idx)]
+    if unwired:
+        return Result(key, FAIL, "not wired in hooks.json: " + "; ".join(unwired),
+                      "add the gate to hooks.json at its matcher, then run merge-hooks.py")
+    return Result(key, PASS,
+                  "both isolation gates prove themselves and are wired "
+                  "(Write|Edit|NotebookEdit|MultiEdit, Bash, and Agent for the delegate "
+                  "release); hook order not asserted, same-event hooks run in parallel")
+
+
+_COMMITTED_IDS_CACHE: dict = {}
+
+
+def _committed_rule_ids(worktree: str) -> set:
+    """Rule ids COMMITTED at the HEAD of `worktree`, empty when it cannot vouch.
+
+    The kernel journal and ptable are machine-wide on purpose: `lane_owner` and
+    `process_age` (kernel_proc.py:634, 760) probe processes living in other
+    worktrees, so one-writer-per-tree only holds while every dimension appends
+    to the SAME table and directory. `registry/rules.yaml` is not machine-wide;
+    it travels per branch. A gate running from a feature worktree therefore
+    journals denies under a rule id THIS checkout does not carry, and judging
+    them here alone calls a registered rule an orphan.
+
+    Two guards decide what may vouch, and both were added after a QA pass
+    measured the coarse version laundering ids:
+
+    COMMITTED, not on-disk. `git show HEAD:registry/rules.yaml` means only a row
+    someone committed to a branch counts. Loose bytes under a path are not a
+    declaration, and an uncommitted edit here already voids the gate receipt
+    (`gate_surfaces_dirty`); a sibling must not be held to a lower bar than the
+    checkout being pushed.
+
+    SAME repository. The common git dir must match ours, so a plain directory
+    sitting at a stale worktree path, or an unrelated repo, vouches for nothing.
+    """
+    key = os.path.realpath(worktree or "")
+    if key in _COMMITTED_IDS_CACHE:
+        return _COMMITTED_IDS_CACHE[key]
+    ids: set = set()
+    _COMMITTED_IDS_CACHE[key] = ids
+    if not key or not os.path.isdir(key):
+        return ids
+    mine = run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+               cwd=CLAUDE_DIR)
+    theirs = run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                 cwd=key)
+    if mine.returncode != 0 or theirs.returncode != 0:
+        return ids
+    if os.path.realpath((mine.stdout or "").strip()) != \
+            os.path.realpath((theirs.stdout or "").strip()):
+        return ids
+    cp = run(["git", "show", "HEAD:registry/rules.yaml"], cwd=key)
+    if cp.returncode != 0 or not (cp.stdout or "").strip():
+        return ids
+    import tempfile
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False,
+                                         encoding="utf-8") as fh:
+            fh.write(cp.stdout)
+            tmp = fh.name
+        found = {r.id for r in Registry.load(Path(tmp)).rules}
+    except Exception:
+        return ids                  # a branch mid-rewrite is not this check's business
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    ids |= found
+    _COMMITTED_IDS_CACHE[key] = ids
+    return ids
+
+
+def check_kernel_replay(fix: bool) -> Result:
+    """v8 Phase 4: prove the JOURNAL is closed and replayable on THIS machine.
+
+    Three assertions, in rising cost:
+
+    1. The golden replay matches byte for byte, WITH `--verify`. It is the same
+       fixture `kernel-process-live` compares, run through the exit code that a
+       registry proof depends on, so a chain check that silently stopped
+       failing is caught here rather than at the next incident.
+    2. The 5 newest REAL journals replay and verify. A fixture proves the
+       reader; only a real journal proves the writers, and the writers are now
+       fifteen different scripts.
+    3. Every `deny` line in the last 7 days names a rule id COMMITTED either
+       here or by the checkout that fired it, which the journal's own `start`
+       line records. This is RULE #1 pointed at the journal: a refusal
+       attributed to a rule nobody committed is an orphan mechanism, and it is
+       a FAIL, not a WARN, because the alternative is a gate that refuses work
+       under a name nobody can look up. The journal is machine-wide while
+       rules.yaml travels per branch, so judging every line against this
+       checkout alone called a registered rule an orphan; judging it against
+       the checkout that fired it, at its committed HEAD, keeps the assertion
+       without letting loose bytes in a sibling vouch for anything.
+
+    Never writes. Passes on a fresh install with no journals at all: zero
+    journals is zero orphans, and saying so is honest where inventing a WARN
+    about an absent kernel would not be.
+    """
+    key = "kernel-replay"
+    rdir = CLAUDE_DIR / "registry" / "fixtures" / "ARCHITECTURE.kernel-process" / "replay"
+    expected = rdir / "expected.txt"
+    octo = CLAUDE_DIR / "scripts" / "octo.py"
+    if not octo.exists():
+        return Result(key, FAIL, "scripts/octo.py is missing", "restore the kernel CLI")
+    if not expected.exists():
+        return Result(key, FAIL, "the golden replay fixture is missing",
+                      "restore registry/fixtures/ARCHITECTURE.kernel-process/replay/")
+    py = PYTHON or "python3"
+    cp = run([py, str(octo), "replay", "--fixture", str(rdir), "--verify"], cwd=CLAUDE_DIR)
+    if cp.returncode != 0:
+        return Result(key, FAIL, f"golden replay --verify exited {cp.returncode}",
+                      "the golden chain no longer verifies; run the command by hand")
+    if (cp.stdout or "") != expected.read_text(encoding="utf-8"):
+        return Result(key, FAIL, "the golden replay no longer matches expected.txt",
+                      "octo replay changed its output: read the diff before regenerating "
+                      "the golden, the fixture is the contract")
+
+    cp = run([py, str(CLAUDE_DIR / "scripts" / "r__permission-denied__journal.py"),
+              "--selftest", "registry/fixtures/FLOW.kernel-journal"], cwd=CLAUDE_DIR)
+    if cp.returncode != 0:
+        detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+        return Result(key, FAIL,
+                      "the PermissionDenied reflex selftest failed: "
+                      + (detail[-1] if detail else f"exit {cp.returncode}"),
+                      "a harness denial would go unrecorded; fix the reflex or the fixture")
+
+    sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
+    try:
+        import time
+
+        import kernel_proc
+    except Exception as e:
+        return Result(key, FAIL, f"cannot import kernel_proc: {e}", "restore scripts/kernel_proc.py")
+
+    jdir = kernel_proc.journal_dir()
+    journals = []
+    if os.path.isdir(jdir):
+        for name in os.listdir(jdir):
+            if not name.endswith(".jsonl"):
+                continue
+            path = os.path.join(jdir, name)
+            try:
+                journals.append((os.stat(path).st_mtime, name[:-6]))
+            except OSError:
+                continue
+    journals.sort(reverse=True)
+    for _, pid in journals[:5]:
+        cp = run([py, str(octo), "replay", pid, "--verify"], cwd=CLAUDE_DIR)
+        if cp.returncode != 0:
+            return Result(key, FAIL, f"replay --verify failed for pid {pid}",
+                          "a real journal does not replay or its chain is broken; "
+                          f"run `octo replay {pid} --verify` and read it before deleting")
+
+    try:
+        registered = {r.id for r in Registry.load(REGISTRY_PATH).rules}
+    except Exception as e:
+        return Result(key, FAIL, f"cannot read registry/rules.yaml to check deny rule ids: {e}",
+                      "fix rules.yaml, then re-run")
+    now = time.time()
+    cutoff = now - 7 * 24 * 3600
+    denies, orphans, elsewhere = 0, {}, {}
+    for mtime, pid in journals:
+        if mtime < cutoff:
+            continue
+        # The `start` line is where a process records the checkout it ran in
+        # (schemas/kernel-journal.schema.json), so the journal carries its own
+        # provenance and the doctor never has to guess which registry applied.
+        #
+        # It is not always the first line. A RESUMED session writes its `start`
+        # only when the register hook fires, after the tool calls that beat it:
+        # measured on this machine, 1 journal of 137 carries `start` at seq 14
+        # behind 14 `tool` lines, `source: resume`. Scanning forward only would
+        # read every line before it as provenance-less and call a registered
+        # rule an orphan, which is the exact symptom this check exists to stop.
+        # So the first `start` seeds the origin for the whole journal, and a
+        # later one takes over from where it appears.
+        lines = kernel_proc.read_journal(pid)
+        origin = None
+        for line in lines:
+            if isinstance(line, dict) and line.get("kind") == "start" \
+                    and line.get("worktree"):
+                origin = str(line["worktree"])
+                break
+        for line in lines:
+            if not isinstance(line, dict):
+                continue
+            if line.get("kind") == "start" and line.get("worktree"):
+                origin = str(line["worktree"])
+            if line.get("kind") != "deny":
+                continue
+            if float(line.get("ts") or 0) < cutoff:
+                continue
+            denies += 1
+            rule = str(line.get("rule") or "")
+            if rule in registered:
+                continue
+            # A line that names no checkout gets no benefit of the doubt: it is
+            # judged here, the way it always was.
+            if origin and rule in _committed_rule_ids(origin):
+                elsewhere.setdefault(rule, set()).add(origin)
+                continue
+            orphans.setdefault(rule or "(unnamed)", []).append(pid)
+    scoped = ""
+    if elsewhere:
+        shown = ", ".join(f"{r} (committed in {os.path.basename(sorted(w)[0])})"
+                          for r, w in sorted(elsewhere.items())[:3])
+        scoped = (f"; {len(elsewhere)} id(s) are committed by the checkout that fired "
+                  f"them and not by this one ({shown})")
+
+    if orphans:
+        named = ", ".join(f"{r} ({len(p)} journal(s))" for r, p in sorted(orphans.items())[:4])
+        return Result(key, FAIL,
+                      f"{len(orphans)} deny rule id(s) in 7 days name no committed "
+                      f"registry row, here or in the checkout that fired them: "
+                      f"{named}{scoped}",
+                      "a refusal under a name nobody committed is an orphan mechanism "
+                      "(RULE #1): register the rule, fix the id the gate journals, or "
+                      "remove journals no process produced")
+    return Result(key, PASS,
+                  f"golden replay verifies byte for byte; {min(len(journals), 5)} real "
+                  f"journal(s) replay; {denies} deny(s) in 7 days, all naming a rule "
+                  f"committed here or by the checkout that fired them{scoped}")
+
+
 def check_querymaster_security_detector(fix: bool) -> Result:
     """Actually RUN the querymaster security-canon detector so SECURITY.querymaster-rules
     is genuinely lived, not presence-with-extra-steps.
@@ -1371,12 +2254,1290 @@ def check_querymaster_security_detector(fix: bool) -> Result:
                   "restore the missing Security Rules line in skills/querymaster/SKILL.md")
 
 
+# ---------------------------------------------------------------------------
+# v7 "nothing ships unverified" (docs/architecture/v7-nothing-ships-unverified.md)
+# ---------------------------------------------------------------------------
+
+def _brain_memory_dir() -> Path:
+    """The central brain memory dir, named the way the harness names project
+    dirs: every non-alphanumeric character of the home path becomes '-'.
+    Recomputing it by hand with strip/replace broke on Windows homes and on
+    dotted POSIX homes (QA on #263), which silently reported the memory layer
+    as absent."""
+    slug = re.sub(r"[^A-Za-z0-9]", "-", str(Path.home()))
+    return CLAUDE_DIR / "projects" / slug / "memory"
+
+
+def _memory_files() -> list:
+    """Brain memory only (the central brain-brain), never an arm's memory:
+    an arm-brain is sealed client context and its lessons must not surface in
+    a public registry file. Only lessons count (feedback_*, lesson_*); a
+    project_*, reference_* or user_* memory is state, not a directive."""
+    return sorted(f for f in _brain_memory_dir().glob("*.md")
+                  if f.name.startswith(("feedback_", "lesson_")))
+
+
+_MEM_SCRIPT = re.compile(r"(?:~/\.claude/|\.claude/)scripts/([A-Za-z0-9_.-]+\.py)|scripts/([grdm]__[a-z0-9-]+__[a-z0-9-]+\.py)")
+# Explicit self-marking only: a memory that SAYS it is a repeat. Counting
+# phrases ("dos veces") measured as noise, so they are out.
+_RECURRENT = re.compile(
+    r"REINCIDENTE|reincid|segunda vez|tercera vez|second time|third time"
+    r"|recurrente|recurring|recurrent|repeat offen|clase reincidente",
+    re.IGNORECASE,
+)
+
+
+def check_waiver_age(fix: bool) -> Result:
+    """v7 phase 4: waivers retire. Every remaining waiver must carry a `granted`
+    date and be younger than 90 days; the release criterion is zero waivers."""
+    key = "waiver-age"
+    try:
+        import yaml
+        reg = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8")) or {}
+    except Exception as e:
+        return Result(key, WARN, f"cannot load registry: {e}", "fix registry/rules.yaml")
+    from datetime import date as _date
+    rules = reg.get("rules", []) if isinstance(reg, dict) else []
+    live, void = [], []
+    for r in rules:
+        w = r.get("waiver")
+        if not isinstance(w, dict):
+            continue
+        try:
+            granted = _date.fromisoformat(str(w.get("granted") or "").strip())
+        except ValueError:
+            granted = None
+        if granted is None or (_date.today() - granted).days > 90:
+            void.append(r.get("id", "?"))
+        else:
+            live.append(f"{r.get('id', '?')}({(_date.today() - granted).days}d)")
+    if void:
+        return Result(key, FAIL, f"{len(void)} waiver(s) undated or older than 90 days: " + ", ".join(void),
+                      "promote the rule to fail-closed with a fixture pair, or demote it with a v7_decision; waivers are a migration device")
+    if live:
+        return Result(key, WARN, f"{len(live)} live waiver(s), each under 90 days: " + ", ".join(live),
+                      "v7 release criterion is zero waivers")
+    return Result(key, PASS, "0 waivers: every gate-shaped rule is fail-closed or recorded as detector/reflex by design")
+
+
+def check_incident_fixture_coverage(fix: bool) -> Result:
+    """v7 phase 5: a memory that names a mechanism must point at a script that
+    exists and, when that script is a gate, at a fixture pair. A memory that
+    prescribes a dead or unproven mechanism is the class that leaked before
+    (a gitignored gate datum disabled the gate for 20 days)."""
+    key = "incident-fixture-coverage"
+    files = _memory_files()
+    if not files:
+        return Result(key, WARN, "memory layer absent on this machine, skipped",
+                      "run on a machine with the brain memory checked out")
+    try:
+        import yaml
+        reg = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8")) or {}
+        rules = reg.get("rules", []) if isinstance(reg, dict) else []
+    except Exception:
+        rules = []
+    fixture_of = {}
+    for r in rules:
+        for m in r.get("mechanism", []) or []:
+            cn = m.get("canonical_name")
+            for pr in r.get("proof", []) or []:
+                loc = str(pr.get("locator", ""))
+                if pr.get("method") == "EXIT_CODE" and "--selftest" in loc and cn:
+                    fixture_of[cn] = loc.split("--selftest", 1)[1].strip().split()[0] if loc.split("--selftest", 1)[1].strip() else ""
+    missing, unproven, named = [], [], 0
+    for f in files:
+        try:
+            text = f.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for a, b in set(_MEM_SCRIPT.findall(text)):
+            script = a or b
+            named += 1
+            if not (CLAUDE_DIR / "scripts" / script).exists():
+                missing.append(f"{f.stem} -> scripts/{script}")
+                continue
+            if script.startswith("g__"):
+                fx = fixture_of.get(script)
+                if not fx or not (CLAUDE_DIR / fx).exists():
+                    unproven.append(f"{f.stem} -> scripts/{script}")
+    if missing or unproven:
+        detail = []
+        if missing:
+            detail.append(f"{len(missing)} memory(ies) name a script that does not exist: " + "; ".join(missing[:5]))
+        if unproven:
+            detail.append(f"{len(unproven)} memory(ies) name a gate with no fixture pair: " + "; ".join(unproven[:5]))
+        return Result(key, FAIL, " | ".join(detail),
+                      "a memory that prescribes a mechanism is not done until the mechanism exists and, for a gate, is fixture-proven")
+    return Result(key, PASS, f"{named} mechanism reference(s) across {len(files)} memories all resolve to live scripts; every named gate has its fixture pair")
+
+
+def check_reflex_triage(fix: bool) -> Result:
+    """v7 phase 5: recurrent lessons are gate candidates. A memory that marks
+    itself as a repeat and names no mechanism prints here until it has a
+    decision in registry/reflex-triage.yaml (gate: build it; demote: say why)."""
+    key = "reflex-triage"
+    files = _memory_files()
+    if not files:
+        return Result(key, WARN, "memory layer absent on this machine, skipped", "")
+    decided, dead = set(), []
+    triage = CLAUDE_DIR / "registry" / "reflex-triage.yaml"
+    try:
+        import yaml
+        data = yaml.safe_load(triage.read_text(encoding="utf-8")) or {}
+        for d in data.get("decisions", []) or []:
+            if not (isinstance(d, dict) and d.get("slug") and d.get("decision") in ("gate", "demote")):
+                continue
+            # The registry's own contract: a gate decision names a mechanism
+            # that exists. A dead pointer here is the gitignored-gate class
+            # again, so it fails rather than staying green.
+            if d["decision"] == "gate":
+                mech = str(d.get("mechanism") or "")
+                if not mech or not (CLAUDE_DIR / mech).exists():
+                    dead.append(f"{d['slug']} -> {mech or '(no mechanism)'}")
+                    continue
+            decided.add(str(d["slug"]))
+    except Exception:
+        pass
+    if dead:
+        return Result(key, FAIL, f"{len(dead)} gate decision(s) point at a mechanism that does not exist: " + "; ".join(dead[:5]),
+                      "fix the mechanism path in registry/reflex-triage.yaml or demote the entry")
+    stale = sorted(decided - {f.stem for f in files})
+    pending = []
+    for f in files:
+        try:
+            text = f.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if not _RECURRENT.search(text) or _MEM_SCRIPT.search(text) or f.stem in decided:
+            continue
+        pending.append(f.stem)
+    if pending:
+        return Result(key, WARN, f"{len(pending)} recurrent lesson(s) with no mechanism and no decision: "
+                      + ", ".join(pending[:6]) + (" ..." if len(pending) > 6 else ""),
+                      "for each: build the gate (decision: gate + mechanism) or record why it stays prose (decision: demote) in registry/reflex-triage.yaml")
+    if stale:
+        return Result(key, WARN, f"every recurrent lesson decided ({len(decided)}), but {len(stale)} decision(s) name a memory that no longer exists: "
+                      + ", ".join(stale[:5]), "prune those entries from registry/reflex-triage.yaml")
+    return Result(key, PASS, f"every recurrent lesson has a mechanism or a recorded decision ({len(decided)} decided)")
+
+
+def check_fixture_seeds_tracked(fix: bool) -> Result:
+    """v7: a fixture file that the working copy has but git does not track is
+    a gate that passes here and is dead on every other checkout. Happened
+    2026-09-05: `.claude/` in .gitignore ate two gates' seeds (the send gate
+    and budget-halt) and master failed liveness right after the merge.
+
+    Two kinds of untracked fixture file, told apart by WHICH rule ignores it:
+      - ignored by a rule scoped to registry/fixtures (a deliberate derived
+        artifact, e.g. the .db files a selftest regenerates): fine
+      - ignored by a generic rule (.claude/, .cache/, *.db at root...) or not
+        ignored at all (forgot to add): FAIL, the proof will not ship."""
+    key = "fixture-seeds-tracked"
+    root = CLAUDE_DIR / "registry" / "fixtures"
+    if not root.exists():
+        return Result(key, WARN, "registry/fixtures absent", "")
+    on_disk = sorted(f.relative_to(CLAUDE_DIR).as_posix() for f in root.rglob("*") if f.is_file())
+    cp = git("ls-files", "--", "registry/fixtures")
+    tracked = set(cp.stdout.split("\n")) if cp.returncode == 0 else set()
+    untracked = [f for f in on_disk if f not in tracked]
+    bad = []
+    if untracked:
+        cp = run(["git", "check-ignore", "-v", "--no-index", *untracked], cwd=CLAUDE_DIR)
+        rule_of = {}
+        for ln in (cp.stdout or "").splitlines():
+            # "<source>:<line>:<pattern>\t<path>"
+            try:
+                meta, path = ln.split("\t", 1)
+                pattern = meta.split(":", 2)[2]
+            except (ValueError, IndexError):
+                continue
+            rule_of[path] = pattern
+        for f in untracked:
+            pat = rule_of.get(f)
+            if pat is None:
+                bad.append(f"{f} (untracked, not ignored: forgot git add?)")
+            elif not pat.lstrip("!/").startswith("registry/fixtures"):
+                bad.append(f"{f} (ignored by generic rule '{pat}')")
+    if bad:
+        return Result(key, FAIL, f"{len(bad)} fixture file(s) will not ship: " + "; ".join(bad[:5]),
+                      "git add the seed, or negate the generic rule under registry/fixtures/** in .gitignore; "
+                      "a derived artifact must be ignored by a rule scoped to registry/fixtures")
+    derived = len(untracked)
+    return Result(key, PASS, f"{len(tracked)} fixture file(s) tracked; {derived} derived artifact(s) ignored by fixture-scoped rules")
+
+def check_stale_merged_branches(fix: bool) -> Result:
+    """Housekeeping: a remote branch whose PR is MERGED (or a branch with no
+    PR at all, older than a week) is dead tissue on the public repo. Found
+    2026-09-06: 24 such branches, one of them a stray `main` pushed by a
+    hook-poisoned selftest. Read-only; prints the delete command. WARN, never
+    FAIL: it needs the network and the gh CLI, and a lag of a few days is
+    normal."""
+    key = "stale-merged-branches"
+    from datetime import date as _date
+    def _prs(state: str, limit: str) -> list:
+        cp = run(["gh", "pr", "list", "--state", state, "--limit", limit,
+                  "--json", "headRefName,state,mergedAt"], cwd=CLAUDE_DIR)
+        if cp.returncode != 0:
+            raise RuntimeError("gh unavailable")
+        data = json.loads(cp.stdout or "[]")
+        if not isinstance(data, list):
+            raise RuntimeError("gh returned no list")
+        return [p for p in data if isinstance(p, dict)]
+    try:
+        # OPEN queried on its own: the merged list is capped, and an old open
+        # PR falling off a capped "all" list would be flagged for deletion.
+        open_heads = {p.get("headRefName") for p in _prs("open", "200")}
+        merged = _prs("merged", "1000")
+    except Exception as e:
+        return Result(key, WARN, f"remote branch audit skipped: {e}", "")
+    merged_on, unreadable = {}, []
+    for p in merged:
+        h = p.get("headRefName")
+        d = str(p.get("mergedAt") or "")[:10]
+        try:
+            _date.fromisoformat(d)
+        except ValueError:
+            unreadable.append(h)
+            continue
+        # a head merged more than once keeps its NEWEST merge date
+        if h and d > merged_on.get(h, ""):
+            merged_on[h] = d
+    cp = git("ls-remote", "--heads", "origin")
+    if cp.returncode != 0:
+        return Result(key, WARN, "origin unreachable, remote branch audit skipped", "")
+    heads = [ln.split("refs/heads/", 1)[1] for ln in cp.stdout.splitlines() if "refs/heads/" in ln]
+    stale = []
+    for h in heads:
+        if h == "master":
+            continue
+        if h in open_heads:
+            continue
+        m = merged_on.get(h)
+        if m:
+            if (_date.today() - _date.fromisoformat(m)).days >= 7:
+                stale.append(f"{h} (merged {m})")
+        elif h in unreadable:
+            stale.append(f"{h} (merged, date unreadable)")
+        else:
+            stale.append(f"{h} (no PR)")
+    if stale:
+        refspecs = " ".join(":refs/heads/" + x.split(" ")[0] for x in stale)
+        return Result(key, WARN, f"{len(stale)} remote branch(es) with a merged PR older than 7 days or no PR: "
+                      + ", ".join(stale[:6]) + (" ..." if len(stale) > 6 else ""),
+                      f"git push origin {refspecs}")
+    return Result(key, PASS, f"{len(heads)} remote branch(es): every one is master or has an open PR (or merged under 7 days)")
+
+
+# A command-word invocation of octo_pkg.py in .githooks/pre-push, as opposed to a
+# MENTION of one. The registry carries `grep -qE ... .githooks/pre-push` proofs for
+# exactly this claim, but the proof runner only ever EXECUTES locators containing
+# `--selftest` (see _selftest_proofs); every other EXIT_CODE locator is inert text.
+# So the claim "pre-push invokes it" was written down and checked by nothing. This is
+# where it gets checked.
+#
+# Two conditions, and the second one was NOT obvious. First, the line's COMMAND WORD
+# must be the interpreter, which is what separates an invocation from
+# `echo "hint: octo_pkg.py verify --all"`. Second, the invocation must DECIDE something.
+# The first version had only the command-word test and it was measured false: reverting
+# the whole pre-push stanza to `if false; then` left this check green, because the
+# error-REPORTING invocation inside the failing branch is the same command word and
+# satisfied it. A wiring check that survives the deletion of the thing it checks is not
+# a check. What tells the two apart in shell is the pipe: a gating invocation redirects
+# and is tested (`... >/dev/null 2>&1; then`), a reporting one pipes its output at the
+# reader (`... 2>&1 | sed`). So the tail must reach end of line with no `|`, or reach a
+# `||`, which keeps the `cmd || { ...; exit 1; }` idiom legal and refuses `| sed`.
+# Measured on seven shapes: the `if !` gate matches, the `|| {` idiom matches, and the
+# reporting line, an echo, a printf, a comment and a disabled `if false` all do not.
+_PREPUSH_CMD = (r'^[ \t]*(if[ \t]+!?[ \t]*)?"?\$\{?PYTHON\}?"?[ \t]+'
+                r'[^|]*octo_pkg\.py[^|]*\b%s\b([^|]*$|[^|]*\|\|)')
+
+
+def _pre_push_invokes(verb: str) -> bool:
+    """True when .githooks/pre-push runs `octo_pkg.py ... <verb>` as a GATING command."""
+    text = _rt(CLAUDE_DIR / ".githooks" / "pre-push")
+    if not text:
+        return False
+    rx = re.compile(_PREPUSH_CMD % re.escape(verb))
+    return any(rx.search(ln) for ln in text.splitlines())
+
+
+def check_packages_verified(fix: bool) -> Result:
+    """v8 PACKAGE: every installed package is still what was signed.
+
+    Ladder, mirrored exactly by `octo pkg verify --all` and by the pre-push stanza:
+      PASS  every lock entry present on disk matches its tree hash, its signature and
+            its symlink; an empty lock is PASS 0/0, not a WARN (a brain with no
+            packages is a healthy brain, not an unfinished one)
+      WARN  a lock entry absent on disk. A second machine that pulled the lock while
+            offline must still be able to push an unrelated change, so this never
+            blocks; the unlock is `octo pkg sync`, which --fix runs. A dangling
+            skills/<name> link with no tree and no lock entry lands here too: it
+            resolves to nothing, so it loads nothing.
+      FAIL  a present entry whose tree hash, signature or symlink does not match, a
+            lock entry whose signer is in no allowed-signers file, an entry whose
+            declared kind disagrees with the installed manifest, or a vendored tree
+            with no lock entry at all (verify sweeps skills/vendor on disk, not only
+            the lock, because deleting an entry must not delete the check).
+
+    What this check CANNOT tell apart, measured and stated here rather than left for a
+    reader to infer from the tiers above: "nothing was ever installed" and "the store
+    was emptied". With the lock's `packages` list cleared and the vendor tree and the
+    symlink removed, `verify --all` returns `{"pass": 0, "total": 0}` exit 0 and this
+    check PASSes, byte for byte identical to a brain that never installed anything.
+    Every HALF-emptied state is still caught, which is what makes the design
+    defensible: a vendored tree with no lock entry is FAIL, a lock entry whose signer
+    is in no allowed-signers file is FAIL, and a `skills/<name>` link left pointing at
+    an absent `skills/vendor/<name>` is WARN with the `octo pkg uninstall` unlock. Only
+    the COMPLETE removal is silent, and it is silent because it is genuinely the same
+    state: there is nothing left on disk to check. What sees it is git, not this check.
+    `packages.lock.json` is tracked, so clearing it is a diff on the way out, the same
+    protection `registry/pkg-signers.pub` has and `company/config/pkg-signers` does not
+    (see the trust-root asymmetry in the octo_pkg module docstring).
+
+    Before any of that, a capability probe: `ssh-keygen -Y` is absent on old Windows
+    OpenSSH. A verify that cannot check a signature has not checked it, so the probe
+    failing is FAIL with the unlock, never a silent skip (v8 risk 4).
+    """
+    key = "packages-verified"
+    script = CLAUDE_DIR / "scripts" / "octo_pkg.py"
+    if not script.exists():
+        return Result(key, WARN, "scripts/octo_pkg.py not found",
+                      "restore the package manager")
+    if not _pre_push_invokes("verify --all"):
+        return Result(key, FAIL,
+                      "the ladder below is live only at doctor time: .githooks/pre-push "
+                      "does not INVOKE octo_pkg.py verify --all (a mention is not an "
+                      "invocation)",
+                      "restore the package stanza in .githooks/pre-push")
+    py = PYTHON or "python3"
+
+    if fix:
+        run([py, str(script), "--brain", str(CLAUDE_DIR), "sync"], cwd=CLAUDE_DIR)
+
+    # --brain pins the checkout the doctor is reporting on. octo_pkg would otherwise
+    # honor a CLAUDE_DIR in the environment and verify a different brain's lock while
+    # printing the result under this one's name.
+    cp = run([py, str(script), "--brain", str(CLAUDE_DIR), "verify", "--all", "--json"],
+             cwd=CLAUDE_DIR)
+    try:
+        data = json.loads((cp.stdout or "").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return Result(key, FAIL,
+                      f"octo pkg verify did not return JSON (exit {cp.returncode}): "
+                      + ((cp.stderr or cp.stdout or "").strip().splitlines() or ["no output"])[-1],
+                      "run: python3 scripts/octo_pkg.py verify --all")
+
+    if not data.get("ssh_keygen_y"):
+        return Result(key, FAIL,
+                      "ssh-keygen -Y is unsupported here: package signatures cannot be checked",
+                      "install OpenSSH >= 8.2 (Windows: winget install Microsoft.OpenSSH.Beta), "
+                      "then re-run")
+
+    total = data.get("total", 0)
+    warns, fails = data.get("warn") or [], data.get("fail") or []
+    n_pass = data.get("pass", 0)
+    if fails:
+        return Result(key, FAIL,
+                      f"{len(fails)}/{total} package(s) are NOT what the lock signed for: "
+                      + "; ".join(fails[:4]),
+                      "inspect the package, then reinstall it: "
+                      "python3 scripts/octo_pkg.py uninstall <name> && octo pkg sync")
+    if warns:
+        return Result(key, WARN,
+                      f"{n_pass}/{total} verified; {len(warns)} lock entry(ies) absent on disk: "
+                      + "; ".join(warns[:4]),
+                      "python3 scripts/octo_pkg.py sync")
+    if total == 0:
+        # The v8.0.0 criterion asks for "n/n verified". 0/0 satisfies that STRING and
+        # means nothing: it is a count over an empty set, and an empty set is the state
+        # of a brain that never installed a package, which is the normal state today
+        # (packages.lock.json is `{"packages": []}`). Saying so here, in the line the
+        # reader of the criterion actually meets, is the whole fix: the check still
+        # PASSes, because a brain with no packages is healthy, but it no longer lets a
+        # zero be read as a verification. What proves this mechanism at a zero
+        # denominator is its selftest, not its count, and the criterion now says so.
+        return Result(key, PASS,
+                      "0/0 packages: the lock is empty, so nothing was verified and "
+                      "this count is not a release signal. What proves this check at a "
+                      "zero denominator is its fixture selftest "
+                      "(META.kernel-package), which gate-liveness runs")
+    return Result(key, PASS,
+                  f"{n_pass}/{total} package(s) verified "
+                  f"(tree hash, ssh-keygen -Y signature and symlink; skills signed, "
+                  f"arms validated)")
+
+
+_SPEC_GATE_CMD = (r'^[ \t]*if[ \t]+![ \t]+"?\$\{?PYTHON\}?"?[ \t]+'
+                  r'[^|;]*spec_lint\.py[^|;]*--push-range[^|;]*;[ \t]*then[ \t]*$')
+
+
+def _spec_gate_blocks(text: str) -> bool:
+    """The stanza must be `if ! "$PYTHON" ... spec_lint.py --push-range ...; then`
+    and its body must reach `exit 1` before the matching `fi`. A presence grep
+    alone matched `... || true` and `...; :`, which keep the line and drop the gate."""
+    lines = text.splitlines()
+    for n, ln in enumerate(lines):
+        if re.search(_SPEC_GATE_CMD, ln):
+            for body in lines[n + 1:n + 40]:
+                s = body.strip()
+                if s.startswith("fi"):
+                    break
+                if re.match(r"exit[ \t]+1\b", s):
+                    return True
+    return False
+
+
+def check_spec_contract(fix: bool) -> Result:
+    """v9, done is a verdict: every ears-1 spec in the tree reads clean, and the
+    push gate that keeps it that way is in .githooks/pre-push.
+
+    The two gate rules (FLOW.spec-contract, FLOW.done-is-a-verdict) prove their
+    fixtures through gate-liveness; what that cannot see is the brain's OWN specs.
+    A spec edited on a branch pushed with --no-verify, or merged through the web UI,
+    reaches master without the push stanza ever running, so the doctor re-reads
+    every ears-1 spec on disk. Legacy specs without the header are skipped by the
+    linter, as they are at push time."""
+    key = "spec-contract"
+    script = CLAUDE_DIR / "scripts" / "spec_lint.py"
+    if not script.exists():
+        return Result(key, FAIL, "scripts/spec_lint.py is missing",
+                      "restore the spec linter; the v9 push gate calls it")
+    text = _rt(CLAUDE_DIR / ".githooks" / "pre-push") or ""
+    if not _spec_gate_blocks(text):
+        return Result(key, FAIL,
+                      ".githooks/pre-push does not invoke spec_lint.py --push-range, so a "
+                      "spec can claim converged without a verdict",
+                      "restore the OCTORATO-SPEC-GATE stanza in .githooks/pre-push")
+    dirs = sorted(p.parent for base in ("docs/specs", "docs/specs-archive")
+                  for p in (CLAUDE_DIR / base).glob("*/feature.md"))  # the gate's own scope
+    if not dirs:
+        return Result(key, PASS, "no spec directories yet; the push stanza is present")
+    cp = run([PYTHON or "python3", str(script), *map(str, dirs)], cwd=CLAUDE_DIR)
+    lines = (cp.stdout or "").strip().splitlines()
+    linted = sum(1 for ln in lines if ln.startswith("ok "))
+    skipped = sum(1 for ln in lines if ln.startswith("skip "))
+    if cp.returncode != 0:
+        bad = [ln for ln in lines if not ln.startswith(("ok ", "skip "))]
+        return Result(key, FAIL, f"{len(bad)} finding(s): " + "; ".join(bad[:3]),
+                      "python3 scripts/spec_lint.py <spec-dir> and fix the findings")
+    # The push stanza is skippable (--no-verify from a worktree is not denied, and a
+    # web-UI merge runs no hook), so a converged status can reach the tree without a
+    # verdict. Receipts are per machine, so a missing one is a WARN, never a FAIL: a
+    # second machine that pulled a legitimately converged spec holds no receipt.
+    unverified = []
+    try:
+        sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
+        import receipt_ledger
+        import spec_lint
+        for d in dirs:
+            text = (d / "feature.md").read_text(encoding="utf-8")
+            # The gate's own reader: any header shape the linter accepts or flags.
+            if spec_lint.is_ears(text) and spec_lint.spec_status(text) == "converged":
+                rel = d.relative_to(CLAUDE_DIR).as_posix()
+                if receipt_ledger.converge_pass_for(rel) is None:
+                    unverified.append(rel)
+    except Exception as exc:  # the ledger is advisory here; the push gate is the enforcer
+        unverified.append(f"(receipt ledger unreadable: {exc})")
+    if unverified:
+        return Result(key, WARN,
+                      f"{len(unverified)} spec(s) say converged with no CONVERGED receipt on "
+                      f"this machine: " + ", ".join(unverified[:3]),
+                      "run /sdd-converge on it here, or confirm it converged on the machine "
+                      "that pushed it")
+    return Result(key, PASS,
+                  f"{linted} ears-1 spec(s) clean, {skipped} legacy skipped; push stanza present")
+
+
+def check_skill_manifests(fix: bool) -> Result:
+    """v8 PACKAGE, the in-repo half: does every skill this brain SHIPS carry a
+    `skill.json`?
+
+    v8-kernel.md section 4 promises "`skill.json` on every skill directory". Until this
+    check existed that promise had no live mechanism at all: the generator
+    (scripts/gen_skill_manifests.py) is a one-shot invoked by no hook, no gate, no
+    workflow and no runner, so the criterion was satisfiable as a STATE and nothing kept
+    it true. The 234th skill would carry no manifest, `packages-verified` would still
+    print its own count, pre-push would still exit 0, and coverage would decay silently.
+    RULE #1 calls that rot.
+
+    The ladder, the denominator and the argument for the failure mode live in
+    octo_pkg.scan_skill_manifests, which is what this calls: one implementation, so the
+    doctor and the pre-push stanza cannot drift into disagreeing about the same tree.
+    In short: 0/N is a WARN (today 0/233; FAIL there would wall every push until the
+    mechanical backfill lands), a PARTIAL count is a FAIL naming the directories (the
+    regression state, unreachable until the backfill lands, and self-arming the moment
+    it does), n/n is a PASS, and an EMPTY denominator is a FAIL because a brain with no
+    skills is a root that resolved wrong.
+    """
+    key = "skill-manifests"
+    script = CLAUDE_DIR / "scripts" / "octo_pkg.py"
+    if not script.exists():
+        return Result(key, WARN, "scripts/octo_pkg.py not found",
+                      "restore the package manager")
+    if not _pre_push_invokes("manifests"):
+        return Result(key, FAIL,
+                      "coverage is measured but not ENFORCED: .githooks/pre-push does "
+                      "not invoke octo_pkg.py manifests, so a skill can still ship "
+                      "without its manifest at exit 0",
+                      "restore the manifests stanza in .githooks/pre-push")
+    py = PYTHON or "python3"
+    cp = run([py, str(script), "--brain", str(CLAUDE_DIR), "manifests", "--json"],
+             cwd=CLAUDE_DIR)
+    try:
+        data = json.loads((cp.stdout or "").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return Result(key, FAIL,
+                      f"octo pkg manifests did not return JSON (exit {cp.returncode}): "
+                      + ((cp.stderr or cp.stdout or "").strip().splitlines() or ["no output"])[-1],
+                      "run: python3 scripts/octo_pkg.py manifests")
+    status = data.get("status")
+    if status not in (PASS, WARN, FAIL):
+        return Result(key, FAIL, f"unknown status {status!r} from octo pkg manifests",
+                      "run: python3 scripts/octo_pkg.py manifests")
+    return Result(key, status, data.get("detail", ""), data.get("fix", ""))
+
+
+# --- claude-md-budget (spec v10, AC-17) --------------------------------------
+# The constitution loads into every session, so its size and its language are
+# pinned here and not by memory of the PR that cut it.
+#
+# Estimator: a per-piece bound over the cl100k_base pre-tokenizer, computed on
+# a bare interpreter because tiktoken is not a dependency the doctor can rely
+# on. The text is split the way cl100k splits it before BPE (`_PIECE_RE`, a
+# stdlib approximation of tiktoken's pattern: `\p{L}` becomes `[^\W\d_]`), and
+# each piece costs ceil(ASCII chars / 7) + ceil(2 * non-ASCII UTF-8 bytes / 3).
+# Any character the pattern does not match costs one token per byte.
+#
+# Measured against tiktoken cl100k_base (`uvx --with tiktoken`, 2026-10-07):
+#
+#   mix                               cl100k   bound   ratio  chars/4  ratio
+#   CLAUDE.md master 0641797          11,920  12,617   1.058   11,881  0.997
+#   CLAUDE.md after the headroom cut  10,944  11,518   1.052   10,812  0.988
+#   pre-#392 CLAUDE.md (b2c8b9a)      24,000  25,506   1.063   24,154  1.006
+#   its three Spanish sections         1,267   1,285   1.014    1,130  0.892
+#   scripts/brain_doctor.py           37,376  40,078   1.072   38,271  1.024
+#   docs/CAPABILITIES.md              17,462  18,954   1.085   19,451  1.114
+#   registry/rules.yaml               20,171  20,996   1.041   17,541  0.870
+#   symbol and emoji string            2,421   4,600   1.900      720  0.297
+#
+# So the bound sits at or above cl100k on all seven mixes, and chars/4, the
+# estimator this check used before, reads under on four of them. It is an
+# empirical bound over those mixes and over the whole file, not a proof. What
+# it does not see: a section dense in paths, table rules or ALL-CAPS words
+# reads under on its own (as low as 0.90 on `## Arm Onboarding`), and across
+# the repo's 1,526 text files of 2,000+ characters, 30 read under (worst 0.755,
+# a fixture of repeated upper-case tokens). A CLAUDE.md that grows mostly in
+# that kind of text can pass here and exceed 12,000 cl100k; re-run the table
+# above when the file's mix changes. The ceiling is stated in this bound's units.
+CLAUDE_MD_TOKEN_CEILING = 12000
+
+# Spanish function words that English prose does not use. Ambiguous ones
+# ("a", "no", "me", "he", "e", "o", "son" excluded on purpose) stay out.
+_ES_STOPWORDS = frozenset("""
+de la que el en los del se las por un para con una su al lo como más pero sus le
+ya este porque esta entre cuando muy sin sobre también hasta hay donde quien desde
+todo nos durante todos uno les ni contra otros ese eso ante ellos esto antes
+algunos qué unos yo otro otras otra él tanto esa estos mucho quienes nada muchos
+cual poco ella estar estas algunas algo nosotros mi mis tú te ti tu tus es fue
+era y cada siempre nunca solo sólo puede hacer tiene así
+""".split())
+# Measured on 2026-10-07 with the data spans below removed, heading included:
+# every section of master a741eff reads at most 0.010; the three Spanish
+# sections of b2c8b9a read 0.412, 0.448 and 0.452. QA on PR #395 measured
+# Portuguese prose at 0.19, Catalan at 0.22 and Spanish prose at 0.41 to 0.48,
+# and an English section quoting three Spanish operator phrases WITHOUT quote
+# marks at 0.134, close under a gate that blocks the push.
+#
+# AUTHORS: put every Spanish phrase you quote in backticks, double quotes or
+# parentheses. Those spans are data and are not counted; bare Spanish words in
+# English prose are, and a few of them push a short section toward 0.15.
+_ES_RATIO_MAX = 0.15
+_ES_MIN_WORDS = 30
+# Quoted data is not prose: trigger phrases a gate matches on (`pásame el
+# mensaje`), the Spanish filler blocklists of Human Cadence (in parentheses) and
+# quoted operator words. Code fences, inline code, double quotes and
+# parentheses are removed before counting.
+_ES_DATA_SPANS = (
+    re.compile(r"```.*?```", re.S),
+    re.compile(r"`[^`\n]*`"),
+    re.compile(r'"[^"\n]*"'),
+    re.compile(r"“[^”\n]*”"),
+    re.compile(r"\([^)\n]*\)"),
+)
+_WORD_RE = re.compile(r"[a-záéíóúñü]+")
+
+
+# cl100k_base pre-tokenizer, stdlib form: contractions, an optional non-letter
+# lead plus a letter run, 1-3 digits, a punctuation run, newlines, whitespace.
+_PIECE_RE = re.compile(
+    r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\w]?[^\W\d_]+|\d{1,3}"
+    r"| ?(?:[^\s\w]|_)+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+")
+
+
+def estimate_tokens(text: str) -> int:
+    """Per-piece upper bound on the cl100k_base token count (see the table above)."""
+    total, pos = 0, 0
+    for m in _PIECE_RE.finditer(text):
+        if m.start() > pos:  # unmatched gap: one token per byte
+            total += len(text[pos:m.start()].encode("utf-8"))
+        piece = m.group()
+        ascii_n = sum(1 for ch in piece if ch < "\x80")
+        wide = len(piece.encode("utf-8")) - ascii_n
+        total += -(-ascii_n // 7) + -(-2 * wide // 3)
+        pos = m.end()
+    if pos < len(text):
+        total += len(text[pos:].encode("utf-8"))
+    return total
+
+
+def _md_sections(text: str) -> list:
+    """(heading, body) per `##`/`###` section; text before the first is '(preamble)'."""
+    out, head, buf, fence = [], "(preamble)", [], False
+    for ln in text.splitlines():
+        if ln.lstrip().startswith("```"):
+            fence = not fence
+        if not fence and re.match(r"#{2,3} ", ln):
+            out.append((head, "\n".join(buf)))
+            head, buf = ln.strip(), []
+        else:
+            buf.append(ln)
+    out.append((head, "\n".join(buf)))
+    return out
+
+
+def spanish_sections(text: str) -> list:
+    """[(heading, ratio, words)] for every section whose prose reads as Spanish."""
+    hits = []
+    for head, body in _md_sections(text):
+        prose = head.lstrip("# ") + "\n" + body
+        for rx in _ES_DATA_SPANS:
+            prose = rx.sub(" ", prose)
+        words = _WORD_RE.findall(prose.lower())
+        if len(words) < _ES_MIN_WORDS:
+            continue
+        ratio = sum(1 for w in words if w in _ES_STOPWORDS) / len(words)
+        if ratio > _ES_RATIO_MAX:
+            hits.append((head, round(ratio, 3), len(words)))
+    return hits
+
+
+def check_claude_md_budget(fix: bool, path: Path | None = None) -> Result:
+    """AC-17: CLAUDE.md loads at most 12,000 tokens (per-piece bound) and has no section
+    written in a language other than English (Spanish stopword ratio per section)."""
+    key = "claude-md-budget"
+    p = path or CLAUDE_MD
+    try:
+        text = p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        return Result(key, FAIL, f"{p.name} unreadable: {e}", "restore CLAUDE.md")
+    tokens = estimate_tokens(text)
+    spanish = spanish_sections(text)
+    problems = []
+    if tokens > CLAUDE_MD_TOKEN_CEILING:
+        problems.append(f"{tokens:,} tokens (per-piece bound) over the {CLAUDE_MD_TOKEN_CEILING:,} ceiling")
+    if spanish:
+        problems.append(f"{len(spanish)} non-English section(s): "
+                        + "; ".join(f"'{h[:50]}' ({r:.2f})" for h, r, _ in spanish[:4]))
+    if problems:
+        return Result(key, FAIL, "; ".join(problems),
+                      "move mechanism narrative into docs/architecture/ and translate the "
+                      "section; a Spanish phrase kept as data goes in backticks or quotes "
+                      "(spec v10 AC-17)")
+    return Result(key, PASS,
+                  f"{tokens:,} tokens (per-piece bound, ceiling {CLAUDE_MD_TOKEN_CEILING:,}); "
+                  "every section reads as English")
+
+
+def selftest_claude_md_budget(fixtures: Path) -> int:
+    """Fixture proof for META.constitution-budget, run by gate-liveness: every
+    `violation_*.md` must FAIL the check and every `benign_*.md` must PASS. Two
+    benign files are their violation twin with one edit (one character under the
+    budget, the Spanish section quoted), so a check that fails everything is
+    caught as surely as one that passes everything. The third,
+    `benign_english_with_a_spanish_name.md`, is not a twin: it is an English
+    control that carries Spanish proper nouns, so a stopword ratio ceiling
+    mutated to 0.0 fails it and is caught."""
+    viol = sorted(fixtures.glob("violation_*.md"))
+    ben = sorted(fixtures.glob("benign_*.md"))
+    if not viol or not ben:
+        print(f"selftest: no violation_*/benign_* fixtures in {fixtures}")
+        return 1
+    bad = []
+    for f in viol:
+        r = check_claude_md_budget(False, path=f)
+        if r.status != FAIL:
+            bad.append(f"{f.name} should FAIL, got {r.status}: {r.message}")
+    for f in ben:
+        r = check_claude_md_budget(False, path=f)
+        if r.status != PASS:
+            bad.append(f"{f.name} should PASS, got {r.status}: {r.message}")
+    for b in bad:
+        print(f"selftest: {b}")
+    print(f"selftest claude-md-budget: {len(viol)} violation(s) fail, {len(ben)} benign pass"
+          if not bad else f"selftest claude-md-budget: {len(bad)} wrong verdict(s)")
+    return 1 if bad else 0
+
+
+# ---------------------------------------------------------------------------
+# Runtime_Registry (v11 spec 202610141000, AC-01, AC-03)
+# ---------------------------------------------------------------------------
+
+RUNTIMES_PATH = CLAUDE_DIR / "registry" / "runtimes.yaml"
+RUNTIMES_DOC = CLAUDE_DIR / "docs" / "architecture" / "multi-runtime.md"
+RUNTIME_STATUSES = ("supported", "gap")
+# Harnesses whose `supported` status must come from a census record, and the
+# tool classes that record must show blocked with the benign twin allowed.
+CENSUS_HARNESSES = ("gemini-cli", "codex-cli")
+# Harnesses whose `supported` status rests on a brain_doctor check instead of a
+# census record, pinned to the ONE check that measures that harness: the
+# registry's `evidence` must name exactly this check (self-reference or any other
+# check FAILs). Sources: check_gate_liveness runs every fail-closed gate's
+# --selftest against registry/fixtures, written for Claude Code; check_cursor_hooks_sync
+# compares ~/.cursor/hooks.json with the projection of hooks.json
+# (scripts/merge-hooks-cursor.py). Any registry key outside CENSUS_HARNESSES and
+# these keys fails closed.
+EVIDENCE_HARNESSES = {"claude-code": "gate-liveness", "cursor": "cursor-hooks-sync"}
+# A census harness's evidence is its census record, which runtime-census-evidence
+# itself reads, so its `evidence` must name that check and nothing else.
+CENSUS_EVIDENCE_CHECK = "runtime-census-evidence"
+CENSUS_REQUIRED_CLASSES = ("shell", "file_write", "file_edit")
+_EVIDENCE_CHECK_RE = re.compile(r"\bbrain_doctor\s+([a-z0-9][a-z0-9-]*)")
+_RUNTIME_FIELDS = ("name", "status", "instruction_file", "hook_config",
+                   "block_contract", "tool_map", "tiers", "unprojected")
+# AC-08: a `supported` harness maps exactly these four tiers to its model slugs.
+RUNTIME_TIERS = ("mechanical", "bulk", "build", "judgment")
+
+
+def runtime_tier_problems(rid: str, entry: dict) -> list:
+    """AC-08, for a `supported` entry: `tiers` is a mapping of exactly the four
+    tiers, each a non-empty string. Any other entry is unbound: `tiers: null`."""
+    tiers = entry.get("tiers")
+    if entry.get("status") != "supported":
+        if tiers is not None:
+            return [f"{rid}: `{entry.get('status')}` with tiers {tiers!r}; an unbound "
+                    "harness holds `tiers: null` (AC-08)"]
+        return []
+    if not isinstance(tiers, dict):
+        return [f"{rid}: supported with `tiers` {tiers!r}, not a mapping of "
+                f"{', '.join(RUNTIME_TIERS)} (AC-08)"]
+    missing = [t for t in RUNTIME_TIERS if not isinstance(tiers.get(t), str) or not tiers[t].strip()]
+    extra = sorted(str(k) for k in tiers if k not in RUNTIME_TIERS)
+    out = []
+    if missing:
+        out.append(f"{rid}: supported with no model slug for tier(s) {', '.join(missing)} (AC-08)")
+    if extra:
+        out.append(f"{rid}: unknown tier(s) {', '.join(extra)}; the ladder has four (AC-08)")
+    return out
+
+
+def _yaml_load_unique(text: str):
+    """yaml.safe_load, except a mapping that repeats a key raises instead of the
+    last value silently winning (a second `cursor:` would override the first)."""
+    import yaml  # type: ignore[import-not-found]
+
+    class _UniqueKeyLoader(yaml.SafeLoader):
+        pass
+
+    def _construct(loader, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            k = loader.construct_object(key_node, deep=deep)
+            if k in seen:
+                raise ValueError(f"duplicate key {k!r} at line {key_node.start_mark.line + 1}")
+            seen.add(k)
+        return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
+
+    _UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct)
+    return yaml.load(text, Loader=_UniqueKeyLoader)  # noqa: S506 (SafeLoader subclass)
+
+
+def load_runtime_registry(path: Path | None = None):
+    """Returns (runtimes dict, problem list). A problem means the file is absent,
+    does not parse, or an entry lacks a field or carries an unknown status."""
+    p = path or RUNTIMES_PATH
+    if not p.exists():
+        return None, [f"{p.name} is missing"]
+    try:
+        data = _yaml_load_unique(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        return None, [f"{p.name} does not parse: {e}"]
+    runtimes = data.get("runtimes") if isinstance(data, dict) else None
+    if not isinstance(runtimes, dict) or not runtimes:
+        return None, [f"{p.name} has no `runtimes` mapping"]
+    problems = []
+    for rid, entry in runtimes.items():
+        if not isinstance(entry, dict):
+            problems.append(f"{rid}: entry is not a mapping")
+            continue
+        missing = [f for f in _RUNTIME_FIELDS if f not in entry]
+        if missing:
+            problems.append(f"{rid}: missing {', '.join(missing)}")
+        if entry.get("status") not in RUNTIME_STATUSES:
+            problems.append(f"{rid}: status {entry.get('status')!r} is not one of "
+                            f"{', '.join(RUNTIME_STATUSES)}")
+        if entry.get("status") == "supported" and not entry.get("evidence"):
+            problems.append(f"{rid}: supported with no `evidence` naming a brain_doctor check")
+        problems.extend(runtime_tier_problems(rid, entry))
+    return runtimes, problems
+
+
+def runtime_doc_rows(text: str) -> dict:
+    """{runtime name: status} from the table under the doc's `## Runtimes` heading.
+    The name cell drops bold markers, the status cell drops backticks."""
+    rows, in_section, header = {}, False, None
+    for ln in text.splitlines():
+        if ln.startswith("## "):
+            if in_section:
+                break
+            in_section = ln.strip() == "## Runtimes"
+            continue
+        if not in_section or not ln.lstrip().startswith("|"):
+            continue
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+        if header is None:
+            header = [c.lower() for c in cells]
+            continue
+        if all(set(c) <= set("-: ") for c in cells):
+            continue
+        if "runtime" not in header or "status" not in header:
+            break
+        name = cells[header.index("runtime")].replace("*", "").strip()
+        status = cells[header.index("status")].replace("`", "").strip()
+        rows[name] = status
+    return rows
+
+
+def census_blocking_gaps(record) -> list:
+    """The required classes a census record does NOT show blocked with the benign
+    twin allowed. Only literal `true` counts: null (not measured) is not evidence."""
+    classes = (record or {}).get("tool_classes") or {}
+    gaps = []
+    for cls in CENSUS_REQUIRED_CLASSES:
+        c = classes.get(cls) or {}
+        if c.get("harness_blocked_violation") is not True or c.get("harness_allowed_benign") is not True:
+            gaps.append(cls)
+    return gaps
+
+
+def check_runtime_registry(fix: bool, path: Path | None = None) -> Result:
+    """AC-01: registry/runtimes.yaml is present, parses, and every entry carries
+    the Runtime_Registry fields with a status of `supported` or `gap`. AC-08: every
+    `supported` entry maps the four tiers to model slugs."""
+    key = "runtime-registry"
+    runtimes, problems = load_runtime_registry(path)
+    if problems:
+        return Result(key, FAIL, "; ".join(problems[:4]),
+                      "restore registry/runtimes.yaml (v11 spec 202610141000, T02)")
+    counts = {s: sum(1 for e in runtimes.values() if e.get("status") == s) for s in RUNTIME_STATUSES}
+    return Result(key, PASS, f"{len(runtimes)} runtime(s): {counts['supported']} supported, "
+                  f"{counts['gap']} gap")
+
+
+def check_runtime_doc_agreement(fix: bool, path: Path | None = None,
+                                doc: Path | None = None) -> Result:
+    """AC-01: the registry and the doc's Runtimes table hold the same harnesses
+    with the same status."""
+    key = "runtime-doc-agreement"
+    runtimes, problems = load_runtime_registry(path)
+    if runtimes is None:
+        return Result(key, FAIL, "; ".join(problems), "restore registry/runtimes.yaml")
+    d = doc or RUNTIMES_DOC
+    try:
+        rows = runtime_doc_rows(d.read_text(encoding="utf-8"))
+    except OSError as e:
+        return Result(key, FAIL, f"{d.name} unreadable: {e}", "restore the multi-runtime doc")
+    if not rows:
+        return Result(key, FAIL, f"{d.name} has no `## Runtimes` table with Runtime and Status columns",
+                      "restore the Runtimes table in docs/architecture/multi-runtime.md")
+    reg = {e.get("name"): e.get("status") for e in runtimes.values() if isinstance(e, dict)}
+    diffs = [f"{n} only in registry" for n in sorted(set(reg) - set(rows))]
+    diffs += [f"{n} only in doc" for n in sorted(set(rows) - set(reg))]
+    diffs += [f"{n}: registry {reg[n]}, doc {rows[n]}"
+              for n in sorted(set(reg) & set(rows)) if reg[n] != rows[n]]
+    if diffs:
+        return Result(key, FAIL, "; ".join(diffs[:4]),
+                      "edit registry/runtimes.yaml and the Runtimes table together")
+    return Result(key, PASS, f"{len(rows)} runtime(s) agree between registry and doc")
+
+
+REVIEWERS_PATH = CLAUDE_DIR / "registry" / "reviewers.yaml"
+_MACHINE_PATH = re.compile(r"(?:^|[\s\"'=(])(?:/home/|/Users/|/root/|[A-Za-z]:\\Users\\)|\$HOME\b")
+
+
+def _strings(obj):
+    if isinstance(obj, str):
+        yield obj
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            yield str(k)
+            yield from _strings(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _strings(v)
+
+
+def check_reviewer_registry(fix: bool, path: Path | None = None) -> Result:
+    """v11 phase 4 (FR-06, FR-07, AC-29). registry/reviewers.yaml parses with
+    the reader receipt_ledger uses (scripts/external_review.py), carries no
+    machine path (those live in the gitignored Reviewer_Pins), and holds no
+    `allowed` pair: an `allowed` pair rests on a Replay_Record that the AC-36
+    recompute (task T20) checks, and until that recompute exists this check
+    fails closed on any. It never reads or changes a runtime status: Codex CLI
+    and Gemini CLI stay census-only (runtime-census-evidence)."""
+    key = "reviewer-registry"
+    p = path or REVIEWERS_PATH
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_external_review_doctor", Path(__file__).resolve().parent / "external_review.py")
+        er = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(er)
+    except Exception as e:
+        return Result(key, FAIL, f"external_review.py unloadable: {e}",
+                      "restore scripts/external_review.py")
+    data, problems = er.load_reviewer_registry(p)
+    if data is None or problems:
+        return Result(key, FAIL, "; ".join(problems[:4]),
+                      "restore registry/reviewers.yaml (v11 spec 202610141000, T19)")
+    leaks = sorted({x for x in _strings(data) if _MACHINE_PATH.search(x)})
+    if leaks:
+        return Result(key, FAIL, f"machine path in the tracked registry: {leaks[0][:80]!r}",
+                      "keep machine paths in company/config/reviewer-pins.json only")
+    pairs = data.get("pairs") or []
+    allowed = [f"{x.get('engine')}/{x.get('model')}" for x in pairs if x.get("status") == "allowed"]
+    if allowed:
+        return Result(key, FAIL, f"`allowed` without the AC-36 replay recompute: {', '.join(allowed)}",
+                      "mark the pair `not-allowed` until its Replay_Record is recomputed (T20)")
+    return Result(key, PASS, f"{len(pairs)} engine/model pair(s), none allowed; runtime status "
+                  "stays census-only (FR-07)")
+
+
+# Results of the run in progress, by CHECKS key, so an `evidence` check named by
+# a runtime entry is read, not executed a second time (run_all fills it).
+_CURRENT_RUN: dict = {}
+
+
+def _worst(out) -> "Result":
+    if isinstance(out, list):
+        order = {PASS: 0, WARN: 1, FAIL: 2}
+        return max(out, key=lambda r: order.get(r.status, 2)) if out else Result("?", FAIL, "no result")
+    return out
+
+
+def _evidence_result(name: str):
+    """The current result of the doctor check `name`, or None when it was not run
+    (a SLOW_CHECKS member outside a full run, i.e. --fast or a standalone call)."""
+    if name in _CURRENT_RUN:
+        return _CURRENT_RUN[name]
+    if name in SLOW_CHECKS:
+        return None
+    fn = dict(CHECKS).get(name)
+    try:
+        return _worst(fn(False))
+    except Exception as e:
+        return Result(name, FAIL, f"check crashed: {e}")
+
+
+def check_runtime_census_evidence(fix: bool, path: Path | None = None,
+                                  root: Path | None = None) -> Result:
+    """AC-03, fail closed. Every census harness has an entry; no other harness id
+    than the census and evidence allowlists appears; every status is exactly
+    `supported` or `gap`; every `supported` entry's `evidence` names the check
+    pinned for that harness (EVIDENCE_HARNESSES, or this check for a census
+    harness), and for an evidence harness that check's current result is not
+    FAIL (WARN or not run under --fast degrades this check to WARN, never PASS);
+    a census harness is `supported` only when its record shows shell, file write
+    and file edit blocked with the benign twins allowed; a `gap` entry lists
+    exactly the classes its record does not show."""
+    key = "runtime-census-evidence"
+    runtimes, problems = load_runtime_registry(path)
+    if runtimes is None:
+        return Result(key, FAIL, "; ".join(problems), "restore registry/runtimes.yaml")
+    base = root or CLAUDE_DIR
+    known = set(CENSUS_HARNESSES) | set(EVIDENCE_HARNESSES)
+    check_keys = {k for k, _ in CHECKS}
+    bad, warn, checked = [], [], 0
+    for rid in CENSUS_HARNESSES:
+        if not isinstance(runtimes.get(rid), dict):
+            bad.append(f"{rid} has no registry entry (census harnesses are required)")
+    for rid in sorted(set(runtimes) - known):
+        bad.append(f"{rid} is not a known harness id ({', '.join(sorted(known))})")
+    for rid, entry in runtimes.items():
+        if rid not in known or not isinstance(entry, dict):
+            continue
+        checked += 1
+        status = entry.get("status")
+        if status not in RUNTIME_STATUSES:
+            bad.append(f"{rid}: status {status!r} is not one of {', '.join(RUNTIME_STATUSES)} "
+                       "(exact, lower case)")
+        if status == "supported":
+            ev = entry.get("evidence")
+            m = _EVIDENCE_CHECK_RE.search(ev) if isinstance(ev, str) else None
+            named = m.group(1) if m else None
+            pinned = EVIDENCE_HARNESSES.get(rid, CENSUS_EVIDENCE_CHECK)
+            if named is None:
+                bad.append(f"{rid} is supported with no `evidence` naming a brain_doctor check")
+            elif named != pinned:
+                bad.append(f"{rid} evidence names {named!r}; the only check that evidences "
+                           f"{rid} is {pinned!r}")
+            elif pinned not in check_keys:
+                bad.append(f"{rid} evidence names unknown doctor check {named!r}")
+            elif rid in EVIDENCE_HARNESSES:
+                res = _evidence_result(named)
+                if res is None:
+                    warn.append(f"{rid} evidence {named} not verified (not run in this profile)")
+                elif res.status == FAIL:
+                    bad.append(f"{rid} is supported but its evidence {named} FAILs: {res.message}")
+                elif res.status == WARN:
+                    warn.append(f"{rid} evidence {named} is WARN: {res.message}")
+        if rid not in CENSUS_HARNESSES:
+            continue
+        rel = entry.get("census")
+        record = None
+        if rel:
+            try:
+                record = json.loads((base / rel).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                record = None
+        gaps = census_blocking_gaps(record) if record is not None else list(CENSUS_REQUIRED_CLASSES)
+        if status == "supported":
+            if record is None:
+                bad.append(f"{rid} is supported with no readable census record ({rel or 'none named'})")
+            elif gaps:
+                bad.append(f"{rid} is supported but its census shows no block for {', '.join(gaps)}")
+        elif status == "gap":
+            listed = entry.get("classes_not_blocked") or []
+            if sorted(listed) != sorted(gaps):
+                bad.append(f"{rid} lists classes_not_blocked {sorted(listed)}, census says {sorted(gaps)}")
+    if checked == 0 and not bad:
+        bad.append("no known harness entry was checked")
+    if bad:
+        return Result(key, FAIL, "; ".join(bad + warn),
+                      "keep every census harness in registry/runtimes.yaml, use only known ids, "
+                      "name a passing brain_doctor check in `evidence` for each `supported`, and "
+                      "mark a census harness `gap` until registry/census/<harness>.json shows the blocks")
+    if warn:
+        return Result(key, WARN, "; ".join(warn),
+                      "run the full profile, or fix the named evidence check")
+    return Result(key, PASS, f"{checked} runtime(s) match their evidence or census record")
+
+
+# ---------------------------------------------------------------------------
+# v11 opt-in tracing (spec 202610141000, T16): AC-12 and AC-13
+# ---------------------------------------------------------------------------
+
+# The upstream tracer's documented switch (docs.langchain.com/langsmith/trace-claude-code):
+# an `env` entry in a project's .claude/settings.local.json or the global
+# ~/.claude/settings.json, or a shell export.
+TRACING_SWITCH = "TRACE_TO_LANGSMITH"
+_SWITCH_OFF = ("", "0", "false", "no", "off")
+
+
+def _switch_on(value) -> bool:
+    """A value the upstream could read as on. Fail-closed: anything that is not a
+    recognisable OFF counts as set, so a typo is reported rather than trusted."""
+    if value is None or value is False:
+        return False
+    if value is True:
+        return True
+    return str(value).strip().lower() not in _SWITCH_OFF
+
+
+def _settings_switch(f: Path) -> str | None:
+    """'set', 'unreadable' or None for one settings file. A file that does not parse
+    but names the switch is 'unreadable': it cannot be proven off."""
+    try:
+        raw = f.read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return "unreadable"
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):
+        return "unreadable" if TRACING_SWITCH.encode() in raw else None
+    env = data.get("env") if isinstance(data, dict) else None
+    if isinstance(env, dict) and TRACING_SWITCH in env and _switch_on(env[TRACING_SWITCH]):
+        return "set"
+    return None
+
+
+def _load_by_path(modname: str, path: Path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(modname, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+ARM_SETTINGS_DEPTH = 6
+_ARM_WALK_SKIP = frozenset({"node_modules", ".git"})
+
+
+def _arm_settings_files(root: Path) -> list:
+    """Every `.claude/settings*.json` under an arm, to ARM_SETTINGS_DEPTH directories,
+    skipping node_modules and .git, never following a symlink. Sorted."""
+    out = []
+    for dirpath, dirnames, _files in os.walk(root, followlinks=False):
+        here = Path(dirpath)
+        depth = len(here.relative_to(root).parts)
+        dirnames[:] = [d for d in dirnames if d not in _ARM_WALK_SKIP
+                       and (d == ".claude" or not d.startswith("."))
+                       and depth < ARM_SETTINGS_DEPTH]
+        if here.name == ".claude":
+            out += [f for f in here.glob("settings*.json") if not f.is_symlink()]
+            dirnames[:] = []
+    return sorted(out)
+
+
+def _effective_policy(guard, root: str, d: str) -> str:
+    """The guard's verdict for a session in directory `d` of the arm at `root`: the
+    arm's own policy and every arm.json from `d` up to the root must read allow."""
+    if guard.export_policy(root) != "allow":
+        return "deny"
+    p = os.path.realpath(d)
+    while True:
+        if os.path.lexists(os.path.join(p, "arm.json")) and guard.export_policy(p) != "allow":
+            return "deny"
+        if p == root:
+            return "allow"
+        parent = os.path.dirname(p)
+        if parent == p or not guard._contains(root, parent):
+            return "allow"
+        p = parent
+
+
+def check_tracing_switch(fix: bool, home: Path | None = None,
+                         brain: Path | None = None) -> Result:
+    """AC-12: FAIL when the tracing switch is on in the project settings of an arm
+    whose Export_Policy is `deny` or absent, or in the global settings while any
+    registered arm is `deny` or absent.
+
+    The arms and their policies are read with the Export_Guard's OWN functions
+    (`load_arm_roots`, `export_policy` in scripts/g__wrap__export-guard.py, loaded by
+    path), so this check and the guard cannot disagree on which arm a root is or
+    what its arm.json says. An arms-paths.json the guard cannot read is a FAIL: the
+    global half cannot be decided without the arm list.
+
+    The guard already makes the switch inert in a deny arm (no upstream process is
+    started), so a hit here is a misconfiguration that would export the moment the
+    guard were bypassed, and the Doctor is the detector the plan names for it. A
+    shell export is reported as WARN: AC-12 names settings files, and the doctor's
+    own environment is the only shell it can see.
+
+    Every `.claude/settings*.json` under a registered arm is read, not only the
+    root's: a session started in a subdirectory loads that subdirectory's project
+    settings (QA probe on 5845c59: `arm/sub/.claude/settings.local.json` in a deny
+    arm reported PASS). Its policy is the guard's walk: the arm's own and every
+    `arm.json` between the subdirectory and the arm root must say allow.
+
+    NOT seen, named: the settings of a project directory ARM_SETTINGS_DEPTH or more
+    levels below the arm root (its `.claude/` is past the walk's last level), or a file
+    under `node_modules/`, a hidden directory other than `.claude/`, or a symlinked
+    directory (the walk never follows a
+    link); and a settings file of an arm not on this machine.
+    """
+    key = "tracing-switch"
+    home = Path(home) if home is not None else HOME
+    brain = Path(brain) if brain is not None else CLAUDE_DIR
+    try:
+        guard = _load_by_path("_export_guard_for_doctor",
+                              brain / "scripts" / "g__wrap__export-guard.py")
+    except Exception as e:
+        return Result(key, FAIL, f"the Export_Guard cannot be loaded: {type(e).__name__}: {e}",
+                      "restore scripts/g__wrap__export-guard.py")
+    try:
+        arms = guard.load_arm_roots(str(home), guard.brain_paths(str(home)))
+    except guard.Deny as e:
+        return Result(key, FAIL, f"the arm list cannot be read the way the guard reads it: {e}",
+                      "fix company/config/arms-paths.json")
+    fails, deny_arms = [], []
+    for name, root in arms:
+        policy = guard.export_policy(root)
+        if policy != "allow":
+            deny_arms.append(name)
+        for f in _arm_settings_files(Path(root)):
+            state = _settings_switch(f)
+            if not state:
+                continue
+            here = _effective_policy(guard, root, str(f.parent.parent))
+            if here != "allow":
+                fails.append(f"{f} ({state}; arm {name}, here {here})")
+    global_hits = []
+    for f in (home / ".claude" / "settings.json", home / ".claude" / "settings.local.json"):
+        state = _settings_switch(f)
+        if state:
+            global_hits.append(f"{f} ({state})")
+    if global_hits and deny_arms:
+        fails += [f"{g} while {len(deny_arms)} arm(s) are deny or absent "
+                  f"({', '.join(sorted(deny_arms)[:4])})" for g in global_hits]
+    if fails:
+        return Result(key, FAIL, f"{TRACING_SWITCH} is on where export is not allowed: "
+                      + "; ".join(fails[:5]),
+                      f"remove {TRACING_SWITCH} from those files; it belongs only in the "
+                      f"project settings of an arm whose arm.json says telemetry.export allow")
+    if _switch_on(os.environ.get(TRACING_SWITCH)) and deny_arms:
+        return Result(key, WARN, f"{TRACING_SWITCH} is exported in this shell while "
+                      f"{len(deny_arms)} arm(s) are deny or absent; the guard still keeps "
+                      f"their sessions untraced",
+                      f"unset {TRACING_SWITCH} in the shell profile")
+    return Result(key, PASS, f"{TRACING_SWITCH} is off wherever export is not allowed "
+                  f"({len(arms)} arm(s), {len(deny_arms)} deny or absent"
+                  + (", global switch on with every arm allow" if global_hits else "") + ")")
+
+
+def check_tracing_plugins(fix: bool, brain: Path | None = None) -> Result:
+    """AC-13: FAIL when an installed Tracing_Wrapper tree (or any copy the harness
+    made of it under plugins/) does not hash to its lock entry, or when the upstream
+    `langsmith-tracing` plugin is installed under plugins/ outside the wrapper.
+
+    One implementation: octo_pkg's plugin ladder (`_verify_plugin_entry` and
+    `scan_plugins`), loaded by path, which `verify --all` also runs at push time.
+    This check is that ladder alone, under its own name, so a doctor reader meets
+    the tracing verdict in one line rather than inside the package count.
+    """
+    key = "tracing-plugins"
+    brain = Path(brain) if brain is not None else CLAUDE_DIR
+    try:
+        pkg = _load_by_path("_octo_pkg_for_doctor", brain / "scripts" / "octo_pkg.py")
+        b = pkg.Brain(brain)
+        lock = b.load_lock()
+    except Exception as e:
+        return Result(key, FAIL, f"the package lock cannot be read: {type(e).__name__}: {e}",
+                      "python3 scripts/octo_pkg.py verify --all")
+    rows = [p for p in lock["packages"] if pkg.lock_kind(p) == "plugin"]
+    results = [pkg._verify_plugin_entry(b, p) for p in rows]
+    results += pkg.scan_plugins(b, {str(p.get("name")) for p in rows})
+    fails = [m for s, m in results if s == FAIL]
+    warns = [m for s, m in results if s == WARN]
+    if fails:
+        return Result(key, FAIL, f"{len(fails)} plugin problem(s): " + "; ".join(fails[:3]),
+                      "inspect the tree; reinstall the signed wrapper from a terminal, "
+                      "or remove the upstream with: claude plugin uninstall "
+                      f"{pkg.UPSTREAM_TRACING_PLUGIN}")
+    if warns:
+        return Result(key, WARN, "; ".join(warns[:3]), "see the fix in the message")
+    if not rows:
+        return Result(key, PASS, "no Tracing_Wrapper installed and no upstream tracer "
+                      "under plugins/")
+    return Result(key, PASS, f"{len(rows)} plugin(s) match their lock entry, every harness "
+                  f"copy included; no upstream tracer outside the wrapper")
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
     ("corpus-coverage", check_corpus_coverage),
+    ("fixture-seeds-tracked", check_fixture_seeds_tracked),
     ("gate-liveness", check_gate_liveness),
     ("enforcement-floor", check_enforcement_floor),
+    ("waiver-age", check_waiver_age),
+    ("incident-fixture-coverage", check_incident_fixture_coverage),
+    ("reflex-triage", check_reflex_triage),
+    ("kernel-process-live", check_kernel_process_live),
+    ("kernel-isolation-gate", check_kernel_isolation_gate),
+    ("kernel-replay", check_kernel_replay),
+    ("kernel-quota-live", check_kernel_quota_live),
     ("querymaster-security-detector", check_querymaster_security_detector),
     ("rule-1-naming", check_naming),
     ("rule-1-orphans", check_orphan_hooks),
@@ -1387,28 +3548,65 @@ CHECKS = [
     ("hooks-runtime-sync", check_hooks_runtime_sync),
     ("hooks-merge-fresh", check_hooks_merge_fresh),
     ("cursor-hooks-sync", check_cursor_hooks_sync),
+    ("runtime-registry", check_runtime_registry),
+    ("runtime-doc-agreement", check_runtime_doc_agreement),
+    ("runtime-census-evidence", check_runtime_census_evidence),
+    ("reviewer-registry", check_reviewer_registry),
     ("leak-guard", check_leak_guard),
     ("connectome-fresh", check_connectome_fresh),
     ("arms-config", check_arms_config),
     ("sync-targets", check_sync_targets),
+    ("reply-panel-arm-env", check_reply_panel_arm_env),
     ("blocklist", check_blocklist),
     ("finops-enforcement", check_finops_enforcement),
     ("lineage-sound", check_lineage_sound),
     ("release-drift", check_release_drift),
+    ("stale-merged-branches", check_stale_merged_branches),
     ("capability-manifest-fresh", check_capability_manifest),
+    ("packages-verified", check_packages_verified),
+    ("tracing-switch", check_tracing_switch),
+    ("tracing-plugins", check_tracing_plugins),
+    ("skill-manifests", check_skill_manifests),
+    ("spec-contract", check_spec_contract),
+    ("claude-md-budget", check_claude_md_budget),
 ]
+
+# The --fast profile (v10, AC-15) skips the checks that EXECUTE other programs
+# or call the network, and runs every other check unchanged. It exists for the
+# first run after a clone, where a newcomer waits on the doctor. Measured on a
+# populated machine on 2026-10-06, read-only, wall time per check, one run: every
+# check except gate-liveness took 220 s together, 189 s of it enforcement-floor,
+# and gate-liveness runs the same selftests again; --fast took 16.7, 14.4 and
+# 13.7 s on three consecutive runs there. A fast PASS proves the brain is wired and its static
+# state is sound; it does NOT prove a gate blocks, so it never writes the gate
+# receipt (gate-liveness is skipped). ai-pull follows it with --gate-receipt
+# whenever no receipt covers the current gate tree, so sends keep working, and
+# pre-push keeps calling the checks it always called (--registry, --gate-receipt). Keys only: a check added later
+# runs in --fast until someone measures it slow and lists it here.
+SLOW_CHECKS = {
+    "gate-liveness": "runs every fail-closed gate's --selftest and writes the gate receipt",
+    "enforcement-floor": "re-runs every gate selftest to compute the enforcement floor",
+    "kernel-isolation-gate": "runs the isolation gates' selftests",
+    "kernel-process-live": "verifies hash chains and replays the golden journal",
+    "stale-merged-branches": "calls GitHub through gh (network)",
+}
 
 STATUS_ICON = {PASS: "✓", WARN: "!", FAIL: "✗"}
 
 
-def run_all(fix: bool) -> list[Result]:
+def run_all(fix: bool, fast: bool = False) -> list[Result]:
     results: list[Result] = []
+    _CURRENT_RUN.clear()
     for key, fn in CHECKS:
+        if fast and key in SLOW_CHECKS:
+            continue
         try:
             out = fn(fix)
         except Exception as e:  # one bad check never crashes the run
             results.append(Result(key, FAIL, f"check crashed: {e}", "report this bug"))
+            _CURRENT_RUN[key] = results[-1]
             continue
+        _CURRENT_RUN[key] = _worst(out)
         if isinstance(out, list):
             results.extend(out)
         else:
@@ -1444,18 +3642,39 @@ def main() -> int:
     ap.add_argument("--fix", action="store_true", help="perform idempotent repairs (opt-in)")
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     ap.add_argument("--registry", action="store_true",
-                    help="run ONLY the RULE #1 registry checks (for .githooks/pre-push)")
+                    help="run ONLY the RULE #1 registry checks and claude-md-budget (for .githooks/pre-push)")
+    ap.add_argument("--gate-receipt", action="store_true",
+                    help="run ONLY gate-liveness and write the v7 gate receipt "
+                         "(pre-push, and ai-pull after --fast when no receipt covers the current gate tree)")
+    ap.add_argument("--fast", action="store_true",
+                    help="skip the checks that run gate selftests or call the network "
+                         "(see SLOW_CHECKS); used by quickstart and ai-pull, never by pre-push; "
+                         "ai-pull follows it with --gate-receipt when the gate tree has no receipt")
+    ap.add_argument("--selftest", metavar="DIR",
+                    help="run ONLY the claude-md-budget fixture proof over DIR "
+                         "(violation_*.md must fail, benign_*.md must pass); used by gate-liveness")
     args = ap.parse_args()
+    if args.selftest:
+        return selftest_claude_md_budget(Path(args.selftest))
+    if args.fast and (args.gate_receipt or args.registry):
+        ap.error("--fast is a profile of the full run; it does not combine with --registry or --gate-receipt")
 
-    if args.registry:
+    if args.gate_receipt:
         try:
-            results = check_registry(args.fix) + check_naming(args.fix) + check_orphan_hooks(args.fix)
+            results = [check_gate_liveness(args.fix)]
+        except Exception as e:
+            results = [Result("gate-liveness", FAIL, f"gate-liveness crashed: {e}", "report this bug")]
+    elif args.registry:
+        try:
+            results = (check_registry(args.fix) + check_naming(args.fix) + check_orphan_hooks(args.fix)
+                       + [check_claude_md_budget(args.fix)])
         except Exception as e:
             results = [Result("rule-1-registry", FAIL, f"registry check crashed: {e}",
                               "fix registry/rules.yaml so it loads and validates")]
     else:
-        results = run_all(args.fix)
+        results = run_all(args.fix, fast=args.fast)
     fails = sum(1 for r in results if r.status == FAIL)
+    skipped = sorted(SLOW_CHECKS) if args.fast else []
 
     if args.json:
         warns = sum(1 for r in results if r.status == WARN)
@@ -1463,11 +3682,16 @@ def main() -> int:
         print(json.dumps({
             "claude_dir": str(CLAUDE_DIR),
             "interpreter": PYTHON,
+            "profile": "fast" if args.fast else "full",
+            "skipped": skipped,
             "summary": {"passed": passes, "warn": warns, "fail": fails},
             "checks": [r.to_dict() for r in results],
         }, indent=2))
     else:
         render_human(results)
+        if skipped:
+            print(f"  fast profile: skipped {len(skipped)} slow check(s): {', '.join(skipped)}")
+            print("  run `python3 scripts/brain_doctor.py` for the full profile, which proves every gate blocks")
 
     return 1 if fails else 0
 

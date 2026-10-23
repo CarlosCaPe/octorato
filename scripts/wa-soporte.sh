@@ -1,31 +1,37 @@
 #!/usr/bin/env bash
-# Envia un WhatsApp por el canal de SOPORTE, no por el numero personal del operador.
+# Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number.
 #
-# Por que existe: el MCP `whatsapp` esta cableado al puente personal (puerto 8080).
-# Cualquier mcp__whatsapp__send_message sale desde el numero del operador. Para
-# hablarle a un cliente el canal correcto es el puente de soporte (puerto 8081).
-# Se mando un aviso a una clienta desde el numero personal por no tener esta via.
+# Why it exists: the `whatsapp` MCP is wired to the personal bridge (port 8080).
+# Every mcp__whatsapp__send_message leaves from the operator's number. To talk
+# to a client the right channel is the support bridge (port 8081). A notice
+# once went out to a client from the personal number because this path did not exist.
 #
-# Uso:  wa-soporte.sh <destinatario> <mensaje>
-#       destinatario: telefono con lada sin + ni signos, o JID completo
+# Usage:  wa-soporte.sh <recipient> <message>
+#         recipient: phone with country code, no + or symbols, or a full JID
 #
-# Adjuntos:  wa-soporte.sh <destinatario> <mensaje> --archivo <ruta-local>
-# El puente lee `media_path` en SU disco, y desde el cutover ese disco es el de
-# la EC2, no el de aqui. Asi que el archivo viaja: local -> bucket de paso ->
-# EC2 -> /api/send. Las dos copias intermedias se borran siempre, tambien si el
-# envio falla. Antes esto se hacia a mano en cuatro pasos cada vez.
+# Attachments:  wa-soporte.sh <recipient> <message> --archivo <local-path>
+# The bridge reads `media_path` on ITS disk, and since the cutover that disk is
+# the EC2's, not this machine's. So the file travels: local -> staging bucket ->
+# EC2 -> /api/send. Both intermediate copies are always deleted, also when the
+# send fails. This used to be four manual steps every time.
 #
-# Menciones (grupos): exporta WA_MENCIONES con los telefonos separados por coma.
-# El texto TIENE que traer "@<telefono>" para que WhatsApp lo pinte como etiqueta;
-# el celular de quien lee lo cambia por el nombre que tenga guardado. Sin esto la
-# mencion no notifica a nadie, se ve como texto gris.
+# Mentions (groups): export WA_MENCIONES with comma-separated phone numbers.
+# The text MUST contain "@<telefono>" for WhatsApp to render it as a tag; the
+# reader's phone swaps it for the saved contact name. Without it the mention
+# notifies nobody and shows as grey text.
 #   WA_MENCIONES=5215550001111 wa-soporte.sh 1203...@g.us "@5215550001111 buenos dias"
+# Or as a flag (preferred: the outward-send gate refuses env assignments before the bridge):
+#   wa-soporte.sh 1203...@g.us "@5215550001111 buenos dias" --menciones 5215550001111@lid
+# The mentions are part of what the panel approves: they print in the panel
+# block as PANEL-MENTION lines and a changed mention is a new digest. With
+# WA_MENCIONES inherited from the environment and no flag, the gate denies.
 set -euo pipefail
 
 PUERTO_SOPORTE=8081
 PUERTO_PERSONAL=8080
 
 archivo=""
+menciones_flag=""
 argumentos=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -37,6 +43,30 @@ while [ $# -gt 0 ]; do
       fi
       shift 2
       ;;
+    --menciones)
+      # Same as WA_MENCIONES, as a literal flag so the send stays a plain call
+      # the panel gate can read. The gate reads this line with
+      # panel_digest.parse_bridge_args and denies a repeated flag or a flag
+      # where the value belongs, so this refuses the same two shapes: what the
+      # gate read and what leaves stay one thing.
+      if [ -z "${2:-}" ]; then
+        echo "--menciones necesita una lista separada por comas" >&2
+        exit 64
+      fi
+      if [ -n "$menciones_flag" ]; then
+        echo "--menciones va una sola vez" >&2
+        exit 64
+      fi
+      case "$2" in
+        --*)
+          echo "--menciones necesita una lista, no otra bandera: $2" >&2
+          exit 64
+          ;;
+      esac
+      menciones_flag=1
+      export WA_MENCIONES="$2"
+      shift 2
+      ;;
     *)
       argumentos+=("$1")
       shift
@@ -46,7 +76,7 @@ done
 set -- "${argumentos[@]}"
 
 if [ $# -lt 2 ]; then
-  echo "uso: $(basename "$0") <destinatario> <mensaje> [--archivo <ruta>]" >&2
+  echo "uso: $(basename "$0") <destinatario> <mensaje> [--archivo <ruta>] [--menciones <a,b>]" >&2
   exit 64
 fi
 
@@ -59,31 +89,58 @@ if [ -n "$archivo" ] && [ ! -f "$archivo" ]; then
   exit 66
 fi
 
-# Desde el cutover del 14-ago-2026 el puente vive en la EC2 octorato-ops.
-# Camino rapido: el tunel SSM local (localhost:8081). Si el tunel no esta
-# (laptop recien encendida, otra maquina, sesion en la nube), NO se cae al
-# personal: se envia DIRECTO por SSM ejecutando curl EN el servidor. El canal
-# deja de depender de esta laptop; solo pide credenciales AWS dataqbs-ops.
-INSTANCIA_PUENTE="i-0c0112bf1431dc99e"
-REGION_PUENTE="mx-central-1"
-PERFIL_PUENTE="dataqbs-ops"
+# Since the 2026-08-14 cutover the bridge lives on the octorato-ops EC2.
+# Fast path: the local SSM tunnel (localhost:8081). When the tunnel is down
+# (laptop just booted, another machine, a cloud session) it does NOT fall back
+# to the personal bridge: it sends DIRECTLY over SSM by running curl ON the
+# server. The channel no longer depends on this laptop; it only needs the AWS
+# ops profile credentials.
 VIA="tunel"
 if ! ss -lnt 2>/dev/null | grep -q ":${PUERTO_SOPORTE} "; then
   VIA="ssm"
 fi
 
-# ---- Adjunto: el archivo tiene que existir en el disco DEL PUENTE ----------
-# El identificador de la instancia, la region, el perfil y el bucket de paso
-# salen de la config PRIVADA, no de aqui: este script se publica.
+# The bridge's instance id, region and AWS profile are deployment identity,
+# not framework code: they live in the PRIVATE config (gitignored), the same
+# `puentes.soporte.remoto` block the attachment path already reads. The tunnel
+# path never needs them; the SSM path refuses to run without them (fail-closed,
+# never a fallback to the personal bridge).
+CONFIG_PUENTES="${OCTO_WA_PUENTES:-$HOME/.claude/company/config/wa-puentes.json}"
+INSTANCIA_PUENTE=""; REGION_PUENTE=""; PERFIL_PUENTE=""
+if [ "$VIA" = "ssm" ]; then
+  if ! remoto=$(python3 - "$CONFIG_PUENTES" <<'PY'
+import json, sys
+try:
+    r = json.load(open(sys.argv[1]))["puentes"]["soporte"]["remoto"]
+    vals = [str(r[k]) for k in ("instancia", "region", "perfil")]
+    if any(not v or v.startswith("{{") for v in vals):
+        raise ValueError("placeholder value still in place, fill the template")
+    print(*vals)
+except (OSError, KeyError, ValueError, TypeError) as e:
+    print(f"puentes.soporte.remoto (instancia/region/perfil) missing in {sys.argv[1]}: {e}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+  ); then
+    echo '{"success": false, "message": "no local tunnel and no private bridge config: see templates/company/config/wa-puentes.json.template"}'
+    exit 1
+  fi
+  read -r INSTANCIA_PUENTE REGION_PUENTE PERFIL_PUENTE <<< "$remoto"
+fi
+
+# ---- Attachment: the file must exist on the BRIDGE's disk -----------------
+# The instance id, region, profile and staging bucket come from the same
+# PRIVATE config (`puentes.soporte.remoto`), never from this published file.
 if [ -n "$archivo" ]; then
-  respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" python3 - "$destinatario" "$mensaje" "$archivo" "$PUERTO_SOPORTE" <<'PY'
+  # `if ! x=$(...)` keeps set -e from aborting before the JSON is echoed: every
+  # fail-closed branch inside prints its reason on stdout and exits 1.
+  if ! respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" python3 - "$destinatario" "$mensaje" "$archivo" "$PUERTO_SOPORTE" "$CONFIG_PUENTES" <<'PY'
 import base64, json, os, shlex, subprocess, sys, time, uuid
 from pathlib import Path
 
 destinatario, mensaje, archivo, puerto = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-cfg_path = Path.home() / ".claude" / "company" / "config" / "wa-puentes.json"
+cfg_path = Path(sys.argv[5])
 try:
-    remoto = json.loads(cfg_path.read_text())["puentes"]["soporte"]["remoto"]
+    remoto = json.loads(cfg_path.read_text(encoding="utf-8"))["puentes"]["soporte"]["remoto"]
     instancia, region = remoto["instancia"], remoto["region"]
     perfil, bucket = remoto["perfil"], remoto["bucket_tmp"]
 except (OSError, KeyError, ValueError) as e:
@@ -112,8 +169,8 @@ try:
     if menciones:
         cuerpo["mentions"] = menciones
     b64 = base64.b64encode(json.dumps(cuerpo).encode()).decode()
-    # El borrado del temporal remoto va en trap: si el envio falla, el archivo
-    # de un cliente NO se queda tirado en el servidor.
+    # Remote temp file deletion goes in a trap: if the send fails, a client's
+    # file is NOT left lying on the server.
     q_dir = shlex.quote(destino_remoto)
     q_uri = shlex.quote(s3_uri)
     q_dst = shlex.quote(f"{destino_remoto}/{nombre}")
@@ -154,12 +211,15 @@ finally:
     subprocess.run(aws + ["s3", "rm", s3_uri, "--only-show-errors"],
                    capture_output=True, timeout=60)
 PY
-)
+  ); then
+    echo "$respuesta"
+    exit 1
+  fi
   echo "$respuesta"
   exit 0
 fi
 
-respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" WA_VIA="$VIA" WA_INSTANCIA="$INSTANCIA_PUENTE" WA_REGION="$REGION_PUENTE" WA_PERFIL="$PERFIL_PUENTE" python3 - "$destinatario" "$mensaje" "$PUERTO_SOPORTE" <<'PY'
+if ! respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" WA_VIA="$VIA" WA_INSTANCIA="$INSTANCIA_PUENTE" WA_REGION="$REGION_PUENTE" WA_PERFIL="$PERFIL_PUENTE" python3 - "$destinatario" "$mensaje" "$PUERTO_SOPORTE" <<'PY'
 import json, os, subprocess, sys, time, urllib.request
 destinatario, mensaje, puerto = sys.argv[1], sys.argv[2], sys.argv[3]
 cuerpo = {"recipient": destinatario, "message": mensaje}
@@ -169,8 +229,8 @@ if menciones:
 datos = json.dumps(cuerpo).encode()
 
 if os.environ.get("WA_VIA") == "ssm":
-    # Sin tunel local: curl EN el servidor via SSM. El JSON viaja en base64
-    # para que ninguna comilla se rompa en el camino shell -> SSM -> shell.
+    # No local tunnel: curl ON the server via SSM. The JSON travels as base64
+    # so no quote breaks along the shell -> SSM -> shell path.
     import base64
     b64 = base64.b64encode(datos).decode()
     aws = ["aws", "--profile", os.environ["WA_PERFIL"], "--region", os.environ["WA_REGION"], "ssm"]
@@ -191,15 +251,22 @@ if os.environ.get("WA_VIA") == "ssm":
         except Exception:
             continue
         if estado in ("Success", "Failed", "Cancelled", "TimedOut"):
-            print(salida.strip() if estado == "Success" else json.dumps({"success": False, "message": f"SSM {estado}"}))
+            if estado != "Success":
+                print(json.dumps({"success": False, "message": f"SSM {estado}"}))
+                raise SystemExit(1)
+            print(salida.strip())
             break
     else:
         print(json.dumps({"success": False, "message": "SSM sin respuesta"}))
+        raise SystemExit(1)
 else:
     req = urllib.request.Request(f"http://localhost:{puerto}/api/send", data=datos,
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=30) as r:
         print(r.read().decode())
 PY
-)
+); then
+  echo "$respuesta"
+  exit 1
+fi
 echo "$respuesta"

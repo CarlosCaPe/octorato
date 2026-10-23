@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-qa1-b7-b",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cat ~/.claude/scripts/wa-soporte.sh"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_qa1_cat_process_subst_runs_script_twin_transcript.jsonl"
+}

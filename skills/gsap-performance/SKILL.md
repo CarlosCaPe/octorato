@@ -2,6 +2,8 @@
 name: gsap-performance
 description: Official GSAP skill for performance — prefer transforms, avoid layout thrashing, will-change, batching. Use when optimizing GSAP animations, reducing jank, or when the user asks about animation performance, FPS, or smooth 60fps.
 license: MIT
+metadata:
+  origin: "https://github.com/greensock/gsap-skills (MIT), Copyright (c) 2026 GreenSock. MIT requires the copyright notice to travel with the material, so the upstream LICENSE is retained verbatim in this skill."
 ---
 
 # GSAP Performance

@@ -1,6 +1,6 @@
 ---
 name: winui-app
-description: "Crea, desarrolla y disena apps de escritorio WinUI 3 con C# y Windows App SDK segun guia oficial de Microsoft y CommunityToolkit. Cubre XAML, navegacion, theming, accesibilidad y despliegue."
+description: "Create, build and design WinUI 3 desktop apps with C# and the Windows App SDK following Microsoft's official guidance and CommunityToolkit. Covers XAML, navigation, theming, accessibility and deployment."
 ---
 
 # WinUI App
