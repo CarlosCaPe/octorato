@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "pg-cron-scheduled-maintenance",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "pg_cron Scheduled Maintenance"
+}

@@ -1,6 +1,9 @@
 ---
 name: session-memory-search
 description: Search past work across sessions using native tools (git log, grep, Lessons Learned). Use when user asks "did we already solve this?", "how did we do X last time?", "what happened last week?", or needs to recall work from previous sessions. No external dependencies required.
+license: NOASSERTION
+metadata:
+  origin: "Adapted from https://github.com/thedotmack/claude-mem (mem-search skill). Entered this repo on 2026-05-15 in commit b71318d, when upstream had been Apache-2.0 since 2026-05-08 (commit 36b0929f). It declares no adoption date of its own; the two sibling skills in that same commit declare adopted: 2026-04-13, when upstream was AGPL-3.0-only. The dates name different licenses and neither is established as the one that attaches, so no license is asserted."
 ---
 
 # Session Memory Search

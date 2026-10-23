@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,12 @@ SCRIPTS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS))
 
 import kernel_proc  # noqa: E402
+
+# Every path below enters a COMMAND, so it is quoted as a shell word, the way
+# bash needs it: unquoted, a space splits it and a Windows backslash is an
+# escape bash drops, and the command names no tree at all. Identity for the
+# plain POSIX paths mkdtemp returns, so Linux commands are unchanged.
+_sh = shlex.quote
 
 WRITE_GATE = SCRIPTS / "g__pretool-write__tree-owner.py"
 BASH_GATE = SCRIPTS / "g__pretool-bash__tree-owner.py"
@@ -44,9 +51,11 @@ class IsolationCase(unittest.TestCase):
     """A throwaway HOME with a worktree, a parent and two children. Journals are
     written through the real library, so liveness is the real liveness."""
 
+    HOME_PREFIX = "iso-test-"
+
     def setUp(self):
         self._saved = (os.environ.get("HOME"), os.environ.get("USERPROFILE"))
-        self.home = tempfile.mkdtemp(prefix="iso-test-")
+        self.home = tempfile.mkdtemp(prefix=self.HOME_PREFIX)
         os.environ["HOME"] = self.home
         os.environ["USERPROFILE"] = self.home
         self.tree = os.path.join(self.home, "work", "tree")
@@ -135,7 +144,7 @@ class PrefixMatch(IsolationCase):
     def test_removing_the_directory_of_someone_elses_lane_is_denied(self):
         self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
         rc, out = self.run_gate(
-            BASH_GATE, self.bash_payload("agent-b", f"rm -rf {self.tree}/pkg"))
+            BASH_GATE, self.bash_payload("agent-b", f"rm -rf {_sh(self.tree)}/pkg"))
         self.assertTrue(self.denied(out))
         self.assertIn("agent-a", out)
 
@@ -143,7 +152,7 @@ class PrefixMatch(IsolationCase):
         self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
         os.makedirs(os.path.join(self.tree, "pkg-docs"))
         rc, out = self.run_gate(
-            BASH_GATE, self.bash_payload("agent-b", f"rm -rf {self.tree}/pkg-docs"))
+            BASH_GATE, self.bash_payload("agent-b", f"rm -rf {_sh(self.tree)}/pkg-docs"))
         self.assertFalse(self.denied(out))
 
 
@@ -212,7 +221,7 @@ class RedirectTargets(IsolationCase):
     def test_a_redirect_onto_someone_elses_lane_is_denied(self):
         self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
         for command in ("echo bad > pkg/a.py", "echo bad >> pkg/a.py",
-                        f"echo bad >{self.a_py}"):
+                        f"echo bad >{_sh(self.a_py)}"):
             rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
             self.assertTrue(self.denied(out), command)
 
@@ -226,7 +235,7 @@ class RedirectTargets(IsolationCase):
         self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
         rc, out = self.run_gate(
             BASH_GATE,
-            self.bash_payload("agent-b", f"cd {self.tree}/pkg && rm a.py",
+            self.bash_payload("agent-b", f"cd {_sh(self.tree)}/pkg && rm a.py",
                               cwd=self.home))
         self.assertTrue(self.denied(out))
 
@@ -259,7 +268,7 @@ class BroadStaging(IsolationCase):
     def test_the_repo_flag_moves_the_staged_root(self):
         self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
         rc, out = self.run_gate(
-            BASH_GATE, self.bash_payload("agent-b", f"git -C {self.tree} add -A",
+            BASH_GATE, self.bash_payload("agent-b", f"git -C {_sh(self.tree)} add -A",
                                          cwd=self.home))
         self.assertTrue(self.denied(out))
 
@@ -269,18 +278,31 @@ class ShellCBodies(IsolationCase):
 
     def test_a_shell_c_body_is_rescanned(self):
         self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
-        for command in (f'bash -c "rm -rf {self.tree}/pkg"',
-                        f"sh -c 'git checkout -- {self.a_py}'",
-                        f'env -u HOME bash -c "rm -rf {self.tree}/pkg"',
-                        f'bash -c "bash -c \'rm -rf {self.tree}/pkg\'"'):
+        for command in (f'bash -c "rm -rf {_sh(self.tree)}/pkg"',
+                        f'sh -c "git checkout -- {_sh(self.a_py)}"',
+                        f'env -u HOME bash -c "rm -rf {_sh(self.tree)}/pkg"',
+                        f'bash -c "bash -c \\"rm -rf {_sh(self.tree)}/pkg\\""'):
             rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+            self.assertTrue(self.denied(out), command)
+
+    def test_a_single_quoted_shell_c_body_is_rescanned(self):
+        """The single-quoted spellings, kept as regression cases. They name the
+        tree through paths relative to the payload cwd (the tree itself), so
+        no path needs quoting and the bodies stay single-quoted on every OS,
+        whatever the temp directory holds (a space, a backslash)."""
+        self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+        for command in ("sh -c 'git checkout -- pkg/a.py'",
+                        "bash -c 'rm -rf pkg'",
+                        "bash -c \"bash -c 'rm -rf pkg'\"",
+                        "bash -c 'bash -c \"rm -rf pkg\"'"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command, cwd=self.tree))
             self.assertTrue(self.denied(out), command)
 
     def test_a_python_c_body_gets_a_best_effort_pass(self):
         self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
         rc, out = self.run_gate(
             BASH_GATE,
-            self.bash_payload("agent-b", f'python3 -c "rm -rf {self.tree}/pkg"'))
+            self.bash_payload("agent-b", f'python3 -c "rm -rf {_sh(self.tree)}/pkg"'))
         self.assertTrue(self.denied(out))
 
     def test_a_mention_that_is_not_a_c_body_stays_text(self):
@@ -429,36 +451,36 @@ class QaCycle1(IsolationCase):
     def test_d4_wrapper_options_are_per_wrapper(self):
         self.hold()
         # -i is a FLAG for env and sudo: the command behind it must still be read
-        for command in (f"env -i rm -rf {self.tree}/pkg",
-                        f"sudo -i rm -rf {self.tree}/pkg",
-                        f"env -u HOME -i rm -rf {self.tree}/pkg"):
+        for command in (f"env -i rm -rf {_sh(self.tree)}/pkg",
+                        f"sudo -i rm -rf {_sh(self.tree)}/pkg",
+                        f"env -u HOME -i rm -rf {_sh(self.tree)}/pkg"):
             rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
             self.assertTrue(self.denied(out), command)
 
     def test_d4_env_chdir_moves_the_base(self):
         self.hold()
-        for command in (f"env -C {self.tree}/pkg rm a.py",
-                        f"env --chdir={self.tree}/pkg rm a.py"):
+        for command in (f"env -C {_sh(self.tree)}/pkg rm a.py",
+                        f"env --chdir={_sh(self.tree)}/pkg rm a.py"):
             rc, out = self.run_gate(
                 BASH_GATE, self.bash_payload("agent-b", command, cwd=self.home))
             self.assertTrue(self.denied(out), command)
 
     def test_d5_more_wrappers_and_grouping(self):
         self.hold()
-        for command in (f"exec rm -rf {self.tree}/pkg",
-                        f"timeout 5 rm -rf {self.tree}/pkg",
-                        f"timeout -k 1 5 rm -rf {self.tree}/pkg",
-                        f"nice -n 10 rm -rf {self.tree}/pkg",
-                        f"time rm -rf {self.tree}/pkg",
-                        f"(rm -rf {self.tree}/pkg)",
-                        f"{{ rm -rf {self.tree}/pkg ; }}"):
+        for command in (f"exec rm -rf {_sh(self.tree)}/pkg",
+                        f"timeout 5 rm -rf {_sh(self.tree)}/pkg",
+                        f"timeout -k 1 5 rm -rf {_sh(self.tree)}/pkg",
+                        f"nice -n 10 rm -rf {_sh(self.tree)}/pkg",
+                        f"time rm -rf {_sh(self.tree)}/pkg",
+                        f"(rm -rf {_sh(self.tree)}/pkg)",
+                        f"{{ rm -rf {_sh(self.tree)}/pkg ; }}"):
             rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
             self.assertTrue(self.denied(out), command)
 
     def test_d5_pushd_moves_the_base(self):
         self.hold()
         rc, out = self.run_gate(
-            BASH_GATE, self.bash_payload("agent-b", f"pushd {self.tree}/pkg && rm a.py",
+            BASH_GATE, self.bash_payload("agent-b", f"pushd {_sh(self.tree)}/pkg && rm a.py",
                                          cwd=self.home))
         self.assertTrue(self.denied(out))
 
@@ -538,8 +560,8 @@ class QaCycle1(IsolationCase):
         rc, out = self.run_gate(
             WRITE_GATE, self.write_payload("agent-b", os.path.join(kdir, "ptable.json")))
         self.assertTrue(self.denied(out))
-        for command in (f"rm -rf {kdir}", f"echo x > {kdir}/ptable.json",
-                        f"sed -i s/a/b/ {kdir}/journal/agent-a.jsonl"):
+        for command in (f"rm -rf {_sh(kdir)}", f"echo x > {_sh(kdir)}/ptable.json",
+                        f"sed -i s/a/b/ {_sh(kdir)}/journal/agent-a.jsonl"):
             rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
             self.assertTrue(self.denied(out), command)
 
@@ -547,12 +569,50 @@ class QaCycle1(IsolationCase):
         self.hold()
         for command in ("git rm -f pkg/a.py", "git mv pkg/a.py pkg/c.py",
                         "git add -u", "git add ./",
-                        f"unlink {self.a_py}", f"truncate -s 0 {self.a_py}",
-                        f"find {self.tree}/pkg -name '*.py' -delete",
-                        f"find {self.tree}/pkg -exec rm {{}} ;",
-                        f"xargs rm -f {self.a_py}"):
+                        f"unlink {_sh(self.a_py)}", f"truncate -s 0 {_sh(self.a_py)}",
+                        f"find {_sh(self.tree)}/pkg -name '*.py' -delete",
+                        f"find {_sh(self.tree)}/pkg -exec rm {{}} ;",
+                        f"xargs rm -f {_sh(self.a_py)}",
+                        # a variable THE COMMAND ITSELF assigns is knowable, and
+                        # this one moved OUT of the residual list below when
+                        # `resolve` started expanding what this process can read.
+                        # Quoted as a shell would need it: unquoted, the
+                        # backslashes of a Windows path are escapes that bash
+                        # drops, so the assignment names no tree at all.
+                        f"DIR={shlex.quote(self.tree + '/pkg')} && rm -rf $DIR",
+                        f"export DIR={shlex.quote(self.tree + '/pkg')} && rm -rf ${{DIR}}"):
             rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
             self.assertTrue(self.denied(out), command)
+
+    @unittest.skipUnless(os.name == "nt", "drive-letter and Git Bash path spellings exist only on Windows")
+    def test_windows_spellings_of_an_assigned_dir_are_denied(self):
+        """Every spelling with which Git Bash's `rm` reaches the tree is denied:
+        quoted backslashes, forward slashes and `/c/...`. An UNQUOTED backslash
+        path is not among them: bash drops those backslashes as escapes
+        (`DIR=C:\\Users\\x` holds `C:Usersx`, measured in Git Bash), so the gate
+        allowing it matches what the shell would do."""
+        self.hold()
+        native = os.path.join(self.tree, "pkg")
+        fwd = native.replace("\\", "/")
+        msys = "/" + fwd[0].lower() + fwd[2:]
+        for value in (f"'{native}'", f'"{native}"', _sh(fwd), _sh(msys)):
+            for command in (f"DIR={value} && rm -rf $DIR",
+                            f"export DIR={value} && rm -rf ${{DIR}}"):
+                rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+                self.assertTrue(self.denied(out), command)
+
+    def test_a_prefix_assignment_is_not_a_statement(self):
+        """`DIR=x rm -rf $DIR` is not `DIR=x; rm -rf $DIR`. Bash puts a PREFIX
+        assignment in the environment of the command it prefixes, whose words it
+        has ALREADY expanded, so `$DIR` on that line is still the outer one.
+        Measured in bash, not assumed. Reading the two alike would make one
+        space in front of `rm` a disarm, so the prefix form must still resolve
+        `$DIR` from the environment and, finding nothing, abstain."""
+        self.hold()
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload(
+            "agent-b", f"DIR={_sh(self.tree)}/pkg rm -rf $DIR"))
+        self.assertFalse(self.denied(out),
+                         "a prefix assignment must not shadow the same line")
 
     def test_named_residuals_are_honestly_uncovered(self):
         """These evade by design (a distinct verb table or an evaluator), and
@@ -560,27 +620,29 @@ class QaCycle1(IsolationCase):
         into a silent regression either way."""
         self.hold()
         kdir = kernel_proc.kernel_dir()
-        deep = f"rm -rf {self.tree}/pkg"
+        deep = f"rm -rf {_sh(self.tree)}/pkg"
         for _ in range(4):
             deep = 'bash -c "' + deep.replace('"', '\\"') + '"'
         for command in (
                 # separate verb tables
-                f"rsync -a --delete /tmp/x/ {self.tree}/pkg/",
-                f"shred -u {self.a_py}",
-                f"ln -sf /dev/null {self.a_py}",
-                f"perl -pi -e s/a/b/ {self.a_py}",
+                f"rsync -a --delete /tmp/x/ {_sh(self.tree)}/pkg/",
+                f"shred -u {_sh(self.a_py)}",
+                f"ln -sf /dev/null {_sh(self.a_py)}",
+                f"perl -pi -e s/a/b/ {_sh(self.a_py)}",
                 # an evaluator: the body is Python, not shell
                 f'python3 -c "import shutil; shutil.rmtree(\'{self.tree}/pkg\')"',
                 f'python3 -c "open(\'{kdir}/ptable.json\',\'w\').write(\'{{}}\')"',
                 # git verbs that rewrite the tree through a different door
                 "git apply /tmp/p.diff", "git rebase main", "git merge main",
                 "git pull", "git cherry-pick HEAD~1", "git revert HEAD",
-                # the shell would expand these; this gate does not run the shell
-                f"DIR={self.tree}/pkg && rm -rf $DIR",
+                # a variable NOBODY here can read: not in os.environ and not
+                # assigned by the command from anything evaluable
+                "rm -rf $OCTO_NO_SUCH_DIR/pkg",
+                f"export DIR=$OCTO_NO_SUCH_DIR && rm -rf $DIR",
                 # brace expansion is the shell's job too
-                f"rm -rf {self.tree}/{{pkg,x}}",
+                f"rm -rf {_sh(self.tree)}/{{pkg,x}}",
                 # xargs fed from stdin: the target never appears in the command
-                f"echo {self.tree}/pkg | xargs rm -rf",
+                f"echo {_sh(self.tree)}/pkg | xargs rm -rf",
                 f"xargs rm -f < /tmp/list",
                 f"cat /tmp/list | xargs rm -f",
                 # a -c body nested deeper than the scan limit
@@ -626,7 +688,7 @@ class QaCycle2(IsolationCase):
     def test_f2_a_find_name_filter_is_the_target_not_the_root(self):
         self.hold()
         for command in ("find . -name '*.pyc' -delete",
-                        f"find {self.tree} -name '*.log' -delete",
+                        f"find {_sh(self.tree)} -name '*.log' -delete",
                         "find . -iname '*.tmp' -delete"):
             rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
             self.assertFalse(self.denied(out), command)
@@ -663,8 +725,8 @@ class QaCycle2(IsolationCase):
 
     def test_r2_the_floor_reads_the_state_verbs(self):
         kdir = kernel_proc.kernel_dir()
-        for command in (f"touch {kdir}/ptable.json", f"chmod 777 {kdir}/ptable.json",
-                        f"chattr +i {kdir}/ptable.json", f"dd if=/dev/zero of={kdir}/ptable.json"):
+        for command in (f"touch {_sh(kdir)}/ptable.json", f"chmod 777 {_sh(kdir)}/ptable.json",
+                        f"chattr +i {_sh(kdir)}/ptable.json", f"dd if=/dev/zero of={_sh(kdir)}/ptable.json"):
             rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
             self.assertTrue(self.denied(out), command)
 
@@ -672,14 +734,14 @@ class QaCycle2(IsolationCase):
         """`touch` on a sibling's file is not the collision this rule is about,
         so the state verbs never become lane denies."""
         self.hold()
-        for command in (f"touch {self.a_py}", f"chmod 644 {self.a_py}"):
+        for command in (f"touch {_sh(self.a_py)}", f"chmod 644 {_sh(self.a_py)}"):
             rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
             self.assertFalse(self.denied(out), command)
 
     def test_n2_the_floor_covers_the_ledgers_ancestors(self):
         for path in (os.path.dirname(kernel_proc.kernel_dir()),
                      os.path.join(self.home, ".claude"), self.home):
-            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", f"rm -rf {path}"))
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", f"rm -rf {_sh(path)}"))
             self.assertTrue(self.denied(out), path)
 
     def test_n1_every_deny_names_the_unlock(self):
@@ -704,6 +766,31 @@ class Selftests(unittest.TestCase):
                                 capture_output=True, text=True,
                                 cwd=str(SCRIPTS.parent), timeout=180)
             self.assertEqual(cp.returncode, 0, cp.stderr or cp.stdout)
+
+
+class SpacedHome(IsolationCase):
+    """A home whose path holds a space, as a Windows profile like
+    `C:\\Users\\First Last` does, on every OS. Unquoted, such a path is two
+    shell words and names no tree, so the commands quote it the way a shell
+    needs it, and every shape that moves or names a target must still deny."""
+
+    HOME_PREFIX = "iso test-"
+
+    def test_quoted_spaced_paths_are_denied_through_every_shape(self):
+        self.assertIn(" ", self.tree)
+        self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+        sq, dq = _sh(self.tree), '"' + self.tree + '"'
+        for p in (sq, dq):
+            for command in (f"rm -rf {p}/pkg", f"env -C {p}/pkg rm a.py",
+                            f"env -i rm -rf {p}/pkg", f"timeout 5 rm -rf {p}/pkg",
+                            f"(rm -rf {p}/pkg)", f"pushd {p}/pkg && rm a.py",
+                            f"cd {p}/pkg && rm a.py", f"git -C {p} add -A",
+                            f"echo bad > {p}/pkg/a.py", f"DIR={p}/pkg && rm -rf $DIR"):
+                rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+                self.assertTrue(self.denied(out), command)
+        command = f'bash -c "rm -rf {sq}/pkg"'
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+        self.assertTrue(self.denied(out), command)
 
 
 if __name__ == "__main__":

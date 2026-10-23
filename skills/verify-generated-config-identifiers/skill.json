@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "verify-generated-config-identifiers",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Schema-valid generated config is not semantically correct: check every external identifier (metric, field, column, env key) against the vendor docs before sending. Triggers when generating dashboards, monitors, IaC or pipelines."
+}

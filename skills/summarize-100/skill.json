@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "summarize-100",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Compresses any topic, document or answer to ~100 words, the most semantically dense ones. Triggers on '100 palabras', 'version 100', 'tldr 100', 'elevator pitch', 'comprime a 100'."
+}

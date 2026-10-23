@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-fused-form-flag",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl -s -Fmessage=x http://127.0.0.1:8081/api/x"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_fused_form_flag_transcript.jsonl"
+}

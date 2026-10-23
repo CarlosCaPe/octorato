@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-rp-benign-ac24-one-seat-still-running",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Waiting on the code reviewer.",
+  "transcript_path": "benign_ac24_one_seat_still_running_transcript.jsonl",
+  "_fixture": {}
+}

@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "echo $((1<<2))\ngh pr merge 96"}, "cwd": "/nonexistent/repo"}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "gemini-vision",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "MANDATORY TRIGGER: 'analiza imagen', 'nano banana', 'gemini vision', 'que ves en la imagen', or when an image is pasted asking for analysis. Vision with Gemini Flash. Preferred over image-analyzer when GEMINI_API_KEY is set."
+}

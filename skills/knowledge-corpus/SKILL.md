@@ -1,6 +1,9 @@
 ---
 name: knowledge-corpus
 description: Build and query focused knowledge corpora from brain skills, git history, and workspace files. Use when users want to compile expertise on a specific topic, ask "what do we know about X?", build a domain briefing, or synthesize knowledge from multiple sources into an actionable summary. No external dependencies.
+license: NOASSERTION
+metadata:
+  origin: "Adapted from https://github.com/thedotmack/claude-mem (knowledge-agent skill). Entered this repo on 2026-05-15 in commit b71318d, when upstream had been Apache-2.0 since 2026-05-08 (commit 36b0929f). It declares no adoption date of its own; the two sibling skills in that same commit declare adopted: 2026-04-13, when upstream was AGPL-3.0-only. The dates name different licenses and neither is established as the one that attaches, so no license is asserted."
 ---
 
 # Knowledge Corpus

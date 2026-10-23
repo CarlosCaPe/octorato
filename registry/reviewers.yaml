@@ -1,0 +1,35 @@
+# Reviewer_Registry (v11 spec 202610141000, phase 4: FR-05 to FR-07).
+#
+# `reviewers`: the External_Reviewer_CLI entries, WITHOUT machine paths. The
+# pinned paths and hashes live per machine in the gitignored, operator-written
+# company/config/reviewer-pins.json (print the command with
+# `python3 scripts/external_review.py pin-command`).
+#
+# `pairs`: one entry per engine and model with a quorum status. Only an
+# `allowed` pair makes an External_Review_Receipt count toward a panel quorum
+# (receipt_ledger.panel_receipts_for, AC-24), and even then it never forms a
+# quorum alone and never clears a send (AC-25, AC-26). A pair becomes
+# `allowed` only from a Replay_Record measured against the baseline (AC-35,
+# task T20); until those records exist the list is empty and brain_doctor's
+# `reviewer-registry` check fails any `allowed` entry.
+#
+# This file says nothing about runtime support: Codex CLI and Gemini CLI stay
+# `gap` in registry/runtimes.yaml until their census records show the blocks
+# (FR-07, AC-29).
+schema: 1
+reviewers:
+  codex:
+    name: Codex CLI
+    interpreter: node (the absolute path `#!/usr/bin/env node` resolves to)
+    script: "@openai/codex/bin/codex.js, a launcher"
+    engine: "the native binary codex.js spawns, under @openai/codex-<platform>/vendor/<triple>/bin/codex"
+    config_file: ~/.codex/config.toml
+    arguments: exec, --skip-git-repo-check, -m|--model NAME, exactly one prompt argument
+  gemini:
+    name: Gemini CLI
+    interpreter: node (the absolute path `#!/usr/bin/env node` resolves to)
+    script: "@google/gemini-cli/bundle/gemini.js"
+    engine: "the bundle/ directory gemini.js imports at run time, hashed as a tree"
+    config_file: ~/.gemini/settings.json
+    arguments: -m|--model NAME, exactly one -p|--prompt TEXT
+pairs: []

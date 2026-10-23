@@ -1,0 +1,28 @@
+{
+  "harness": "codex-cli",
+  "gate": "g__pretool-mcp__outward-send.py",
+  "payload": {
+    "session_id": "fx-ata",
+    "transcript_path": "../COMMS.outward-send-gate/violation_absence_assert_then_ask_transcript.jsonl",
+    "cwd": "/home/user",
+    "hook_event_name": "PreToolUse",
+    "model": "fixture",
+    "permission_mode": "default",
+    "turn_id": "fixture",
+    "tool_use_id": "toolu_shim",
+    "tool_name": "mcp__gmail__send_email",
+    "tool_input": {
+      "to": [
+        "x@ejemplo.com"
+      ],
+      "subject": "Queja",
+      "body": "El cargo no corresponde a ningún servicio que yo haya contratado ¿me lo pueden aclarar por favor?"
+    }
+  },
+  "home_from": "COMMS.outward-send-gate",
+  "_setup": {
+    "expect_reason": [
+      ": denied"
+    ]
+  }
+}

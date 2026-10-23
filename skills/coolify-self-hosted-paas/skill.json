@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "coolify-self-hosted-paas",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Self-hosted alternative to Vercel, Heroku and Render: deploy apps, databases and services on your own server with git-push, automatic SSL and no per-seat cost. Apache 2.0."
+}

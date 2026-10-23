@@ -1,0 +1,169 @@
+{
+  "measures": "AC-14: wall time each hook event's list gains from the Tracing_Wrapper",
+  "upstream": {
+    "name": "langsmith-tracing",
+    "version": "0.0.0-stub"
+  },
+  "endpoint": {
+    "closed_local_port": "measured: LANGSMITH_ENDPOINT on a closed 127.0.0.1 port, TRACE_TO_LANGSMITH on",
+    "nonroutable_address": "not measured: it sends packets off this machine, and this mode reaches nothing beyond localhost"
+  },
+  "method": "per event, N interleaved runs of three variants; wall time of the whole list through /bin/sh -c; nearest-rank p95",
+  "bound_ms": {
+    "median": 50.0,
+    "p95": 200.0
+  },
+  "events": {
+    "PostToolUse": {
+      "commands": 1,
+      "runs": 100,
+      "without": {
+        "median_ms": 95.38,
+        "p95_ms": 106.15
+      },
+      "with_allow": {
+        "median_ms": 127.62,
+        "p95_ms": 153.01
+      },
+      "with_deny": {
+        "median_ms": 30.76,
+        "p95_ms": 38.34
+      },
+      "added_median_ms": 32.24,
+      "added_p95_ms": 46.86,
+      "within_bound": true
+    },
+    "PreCompact": {
+      "commands": 1,
+      "runs": 100,
+      "without": {
+        "median_ms": 98.5,
+        "p95_ms": 105.31
+      },
+      "with_allow": {
+        "median_ms": 130.08,
+        "p95_ms": 136.97
+      },
+      "with_deny": {
+        "median_ms": 31.57,
+        "p95_ms": 36.97
+      },
+      "added_median_ms": 31.58,
+      "added_p95_ms": 31.66,
+      "within_bound": true
+    },
+    "Stop": {
+      "commands": 1,
+      "runs": 100,
+      "without": {
+        "median_ms": 100.1,
+        "p95_ms": 111.72
+      },
+      "with_allow": {
+        "median_ms": 133.14,
+        "p95_ms": 144.46
+      },
+      "with_deny": {
+        "median_ms": 31.72,
+        "p95_ms": 37.69
+      },
+      "added_median_ms": 33.04,
+      "added_p95_ms": 32.74,
+      "within_bound": true
+    },
+    "SubagentStop": {
+      "commands": 1,
+      "runs": 100,
+      "without": {
+        "median_ms": 99.31,
+        "p95_ms": 105.74
+      },
+      "with_allow": {
+        "median_ms": 133.84,
+        "p95_ms": 141.33
+      },
+      "with_deny": {
+        "median_ms": 32.39,
+        "p95_ms": 36.78
+      },
+      "added_median_ms": 34.53,
+      "added_p95_ms": 35.59,
+      "within_bound": true
+    },
+    "UserPromptSubmit": {
+      "commands": 1,
+      "runs": 100,
+      "without": {
+        "median_ms": 100.46,
+        "p95_ms": 107.85
+      },
+      "with_allow": {
+        "median_ms": 133.44,
+        "p95_ms": 142.25
+      },
+      "with_deny": {
+        "median_ms": 32.25,
+        "p95_ms": 35.96
+      },
+      "added_median_ms": 32.98,
+      "added_p95_ms": 34.4,
+      "within_bound": true
+    }
+  },
+  "wrapped_runs_not_finished": 0,
+  "within_bound": true,
+  "python": "3.12.3",
+  "platform": "linux",
+  "cpus": 4,
+  "load_average_1m": {
+    "start": 2.38,
+    "end": 1.33
+  },
+  "earlier_runs": [
+    {
+      "when": "fb2ff03, posix_spawn without setsigdef, 2026-10-16",
+      "load_average_1m": {
+        "start": 1.43,
+        "end": 1.36
+      },
+      "added_median_ms": {
+        "PostToolUse": 32.01,
+        "PreCompact": 29.23,
+        "Stop": 33.51,
+        "SubagentStop": 31.77,
+        "UserPromptSubmit": 31.7
+      },
+      "added_p95_ms": {
+        "PostToolUse": 37.99,
+        "PreCompact": 31.19,
+        "Stop": 22.16,
+        "SubagentStop": 37.72,
+        "UserPromptSubmit": 42.23
+      },
+      "within_bound": true
+    },
+    {
+      "when": "T17, spawn via subprocess, 2026-10-16",
+      "load_average_1m": {
+        "start": 1.85,
+        "end": 5.08
+      },
+      "added_median_ms": {
+        "PostToolUse": 60.66,
+        "PreCompact": 77.62,
+        "Stop": 66.24,
+        "SubagentStop": 67.34,
+        "UserPromptSubmit": 62.93
+      },
+      "added_p95_ms": {
+        "PostToolUse": 82.33,
+        "PreCompact": 84.16,
+        "Stop": 94.87,
+        "SubagentStop": 98.02,
+        "UserPromptSubmit": 127.68
+      },
+      "within_bound": false,
+      "note": "same stub and method; kept so the load sensitivity of the median stays visible"
+    }
+  ]
+}

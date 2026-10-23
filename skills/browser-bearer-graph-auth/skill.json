@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "browser-bearer-graph-auth",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Conditional-Access-resilient OAuth alternative for Microsoft Graph: drive a Playwright + Edge persistent context to capture the bearer token during normal sign-in. Works when Device Code Flow / headless OAuth is blocked by AADSTS53003 (Device state: Unregistered). Outlook Web grants a broader scope set than Teams Web. Hard-won workaround that should NOT be the production answer."
+}

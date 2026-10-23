@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "mcp-stack-setup",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Installs and configures an arm's MCP stack while respecting Arm Isolation: cloud MCPs go to user scope, database MCPs to .mcp.json inside the client repo. Triggers on 'setup MCP para X', 'agregar MCP al arm', or when onboarding a new arm."
+}

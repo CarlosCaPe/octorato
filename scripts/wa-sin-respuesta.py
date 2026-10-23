@@ -128,6 +128,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shlex
 import sqlite3
 import subprocess
@@ -137,6 +138,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -418,7 +420,51 @@ def revisa(cfg, ahora=None, estados=None, cobertura=None):
     umbral = timedelta(minutes=int(vig.get("umbral_minutos", 20)))
     silencios = []
 
-    for chat in vig["chats"]:
+    # TODOS LOS CHATS (2026-10-03). Una lista escrita a mano se queda corta el dia
+    # que llega un chat nuevo, y ese chat es invisible hasta que alguien se acuerda
+    # de agregarlo: se encontraron cuatro chats con mensajes de clientes que nunca
+    # entraron a la lista, uno con 54 dias de silencio. Con `vigilancia.todos: true`
+    # el vigia cubre, ademas de la lista, todo chat que haya recibido al menos un
+    # mensaje entrante (sin entrantes no hay nadie esperando), grupos incluidos.
+    #   - `todos_puentes`: puentes que se recorren (por omision, solo el de
+    #     `vigilancia.puente`). Ojo con el personal: cientos de chats viejos.
+    #   - Fuera siempre: difusiones (`@broadcast`, estados) y canales
+    #     (`@newsletter`), que no se contestan; el numero `propio` del puente
+    #     (se comparan solo sus digitos, venga como numero o como JID); y
+    #     `vigilancia.excluir`. Sin ventana de tiempo a proposito: comparar
+    #     timestamps del puente como texto esconde chats vivos.
+    # La lista explicita sigue mandando en etiqueta, cliente y puente; lo
+    # descubierto sale como "chat sin etiqueta" para que alguien lo nombre. La
+    # deduplicacion va por (jid, puente): el mismo JID en otro puente es otra
+    # conversacion.
+    # Sin `todos`, una config sin `chats` sigue reventando a la vista (KeyError),
+    # en vez de dejar un vigia que corre sin mirar nada.
+    chats = list(vig.get("chats") or []) if vig.get("todos") else list(vig["chats"])
+    if vig.get("todos"):
+        conocidos = {(c["jid"], c.get("puente", nombre_puente)) for c in chats}
+        excluir = set(vig.get("excluir") or [])
+        for nombre in vig.get("todos_puentes") or [nombre_puente]:
+            con = abrir(nombre)
+            if con is None:
+                continue
+            propio = re.sub(r"\D", "", str(((cfg.get("puentes") or {}).get(nombre)
+                                             or {}).get("propio") or "").split("@", 1)[0])
+            filas = con.execute(
+                "SELECT DISTINCT chat_jid FROM messages WHERE is_from_me = 0 "
+                "AND chat_jid IS NOT NULL ORDER BY chat_jid").fetchall()
+            for (jid,) in filas:
+                if (jid, nombre) in conocidos or jid in excluir:
+                    continue
+                if jid.endswith(("@broadcast", "@newsletter")):
+                    continue
+                if propio and re.sub(r"\D", "", jid.split("@", 1)[0]) == propio:
+                    continue
+                conocidos.add((jid, nombre))
+                chats.append({"jid": jid, "quien": f"chat sin etiqueta ({jid})",
+                              "cliente": "Sin etiquetar", "canal": "whatsapp",
+                              "puente": nombre})
+
+    for chat in chats:
         jid, quien = chat["jid"], chat.get("quien", "chat")
         # Ciego no es sano: si su puente no abre, el chat NO se anota como
         # vigilado, para que el tablero lo pinte como hueco de cobertura.
@@ -543,8 +589,8 @@ def credenciales_gmail(secretos=None, lector=None):
     publico.
     """
     if not secretos:
-        return (json.loads(GMAIL_CRED.read_text()),
-                json.loads(GMAIL_KEYS.read_text()))
+        return (json.loads(GMAIL_CRED.read_text(encoding="utf-8")),
+                json.loads(GMAIL_KEYS.read_text(encoding="utf-8")))
     lector = lector or secreto_aws
     region = secretos["region"]
     return (lector(secretos["credenciales"], region),
@@ -624,6 +670,21 @@ def es_autorespuesta(cabeceras, extracto):
     return any(f in t for f in FRASES_AUTO)
 
 
+DESCARTADOS = {"TRASH", "SPAM"}
+
+
+def sin_descartados(msgs):
+    """The thread without the client mails sent to Trash or Spam: nobody waits
+    on those. A reply of mine stays even when trashed: it was delivered, so it
+    still proves the thread was answered."""
+    salida = []
+    for m in msgs or []:
+        etiquetas = set(m.get("labelIds") or [])
+        if "SENT" in etiquetas or not DESCARTADOS & etiquetas:
+            salida.append(m)
+    return salida
+
+
 def arranca_hilo(msgs):
     """(mensaje donde arranco la espera, cuantos pendientes) de un hilo.
 
@@ -653,7 +714,10 @@ def hilos_gmail(remitente, dias, secretos=None):
     respuesta posterior no es silencio.
     """
     at = token_gmail(secretos)
-    q = f"in:all newer_than:{dias}d from:{remitente}"
+    # `in:all` does NOT leave out Trash and Spam on the API (measured Oct 9:
+    # 23 of the 25 results for one sender were in Trash). A trashed mail is a
+    # handled mail, and it also ate the 25 slots a real mail needed.
+    q = f"in:all -in:trash -in:spam newer_than:{dias}d from:{remitente}"
     d = gmail_get("messages", at, q=q, maxResults=25)
     hilos = {}
     for m in d.get("messages") or []:
@@ -662,7 +726,7 @@ def hilos_gmail(remitente, dias, secretos=None):
     for tid in hilos:
         th = gmail_get(f"threads/{tid}", at, format="metadata",
                        metadataHeaders="Auto-Submitted")
-        msgs = th.get("messages") or []
+        msgs = sin_descartados(th.get("messages") or [])
         if not msgs:
             continue
         ultimo_msg = msgs[-1]
@@ -786,7 +850,7 @@ def lee_estado():
     borre la memoria y vuelva a gritar todo lo ya avisado.
     """
     try:
-        d = json.loads(ESTADO.read_text())
+        d = json.loads(ESTADO.read_text(encoding="utf-8"))
     except Exception:
         return {"avisados": [], "pulso": None}
     if isinstance(d, list):
@@ -1138,6 +1202,34 @@ def selftest():
                 fallos.append(
                     f"chat {chat}: {'debia avisar y callo' if debia else 'no debia avisar y grito'}")
 
+        # ---- todos los chats, sin lista a mano -----------------------------
+        # Con `todos` el vigia descubre los chats con entrantes. A va en la lista
+        # explicita y SI avisa: debe salir una sola vez y con su etiqueta, nunca
+        # repetido como "sin etiqueta". E esta excluido. El numero propio (escrito
+        # como JID completo, como lo documenta la plantilla), una difusion y un
+        # canal tienen entrantes pero no cuentan. F y G salen como "sin etiqueta".
+        con = sqlite3.connect(db)
+        t = (ahora - timedelta(minutes=45)).astimezone().isoformat(sep=" ")
+        for mid, jid in (("p1", "5210000@s.whatsapp.net"), ("s1", "status@broadcast"),
+                         ("n1", "999@newsletter")):
+            con.execute("INSERT INTO messages VALUES (?,?,?,?,?,?)",
+                        (mid, jid, 0, t, None, "aviso"))
+        con.commit(); con.close()
+        cfg_todos = {"puentes": {"p": {"db": str(db),
+                                       "propio": "+52 10-000@s.whatsapp.net"}},
+                     "vigilancia": {"puente": "p", "umbral_minutos": 20,
+                                    "todos": True, "excluir": ["E"],
+                                    "chats": [{"jid": "A", "quien": "A",
+                                               "cliente": "A",
+                                               "canal": "whatsapp"}]}}
+        r_todos = Counter(s["quien"] for s in revisa(cfg_todos, ahora, [], []))
+        esperado = Counter({"A": 1, "chat sin etiqueta (F)": 1,
+                            "chat sin etiqueta (G)": 1})
+        casos += 1
+        if r_todos != esperado:
+            fallos.append(f"todos: esperaba {dict(esperado)} y salio "
+                          f"{dict(r_todos)}")
+
         # ---- un chat puede vivir en OTRO puente -----------------------------
         # El fallo que esto vigila es silencioso: con un solo puente global, un
         # chat del puente personal se buscaba en la base de soporte, no aparecia
@@ -1353,6 +1445,28 @@ def selftest():
     arranca, cuantos = arranca_hilo([m for m in hilo_insiste if "INBOX" in m["labelIds"]])
     if arranca["id"] != "m2" or cuantos != 3:
         fallos.append("un hilo sin respuesta mia deberia arrancar en el primero")
+    casos += 1
+    # a thread whose mails all went to Trash is handled: nothing left to wait on
+    if sin_descartados([{"id": "t1", "labelIds": ["UNREAD", "TRASH"]},
+                        {"id": "t2", "labelIds": ["SPAM"]}]):
+        fallos.append("a trashed or spam mail still counts as waiting")
+    casos += 1
+    # trash in the middle of a live thread is dropped, the inbox mails stay
+    vivos = sin_descartados(hilo_insiste + [{"id": "t3", "labelIds": ["TRASH"]}])
+    if [m["id"] for m in vivos] != ["m1", "m2", "m3", "m4"]:
+        fallos.append("dropping trash also dropped live mails")
+    casos += 1
+    # my reply was trashed afterwards: the thread is still answered
+    arranca, cuantos = arranca_hilo(sin_descartados(hilo_insiste + [
+        {"id": "m5", "internalDate": "500", "labelIds": ["SENT", "TRASH"]}]))
+    if cuantos != 0:
+        fallos.append("a trashed reply of mine reopened the thread")
+    casos += 1
+    # the client's last mail is trashed: the wait still starts at the first live one
+    arranca, cuantos = arranca_hilo(sin_descartados(hilo_insiste + [
+        {"id": "t4", "internalDate": "500", "labelIds": ["INBOX", "TRASH"]}]))
+    if arranca["id"] != "m2" or cuantos != 3:
+        fallos.append("a trashed client mail changed where the wait starts")
 
     # un remitente sin ningun hilo callado va SANO, en null. Sin esto no hay
     # verdes de correo.
@@ -2011,7 +2125,7 @@ def main():
         sys.exit(selftest())
 
     canal = canal_activo()
-    cfg = json.loads(CONFIG.read_text())
+    cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
     ahora = datetime.now(timezone.utc)
     cobertura, estados = [], []
     silencios = (revisa(cfg, ahora, estados, cobertura)

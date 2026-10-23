@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "sentinel-blocks-rerun",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Diagnose daily-idempotent endpoints that silently no-op because an earlier same-day run set a 'already-done' sentinel"
+}

@@ -1,0 +1,25 @@
+{
+  "arms_paths": {
+    "open": 7
+  },
+  "files": {
+    "arms/open/arm.json": {
+      "kind": "arm",
+      "name": "open",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    }
+  },
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/open"
+  },
+  "_comment": "An arms-paths.json value that is neither a path nor a list of paths.",
+  "_setup": {
+    "expect_reason": "is not a path or a list of paths"
+  }
+}

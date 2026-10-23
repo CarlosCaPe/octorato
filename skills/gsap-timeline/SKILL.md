@@ -2,6 +2,8 @@
 name: gsap-timeline
 description: Official GSAP skill for timelines — gsap.timeline(), position parameter, nesting, playback. Use when sequencing animations, choreographing keyframes, or when the user asks about animation sequencing, timelines, or animation order (in GSAP or when recommending a library that supports timelines).
 license: MIT
+metadata:
+  origin: "https://github.com/greensock/gsap-skills (MIT), Copyright (c) 2026 GreenSock. MIT requires the copyright notice to travel with the material, so the upstream LICENSE is retained verbatim in this skill."
 ---
 
 # GSAP Timeline

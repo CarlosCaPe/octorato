@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-support-bridge-carriage-return-splits-words",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "~/.claude/scripts/wa-soporte.sh 120360000000000000@g.us hello --menciones 5210000000001@lid\r5210000000002@lid"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_support_bridge_carriage_return_splits_words_transcript.jsonl"
+}

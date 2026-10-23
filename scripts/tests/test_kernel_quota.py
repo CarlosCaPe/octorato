@@ -41,6 +41,15 @@ def _load(name: str, path: Path):
 gate = _load("g_pretool_kernel", GATE)
 
 
+def _restore_env(saved: dict) -> None:
+    """Put HOME and USERPROFILE back exactly as they were, unset included."""
+    for k in ("HOME", "USERPROFILE"):
+        if k in saved:
+            os.environ[k] = saved[k]
+        else:
+            os.environ.pop(k, None)
+
+
 class QuotaBase(unittest.TestCase):
     """A sandbox HOME per test, plus the two helpers every test needs: write an
     occupant, and make one tool call as the harness would."""
@@ -68,6 +77,7 @@ class QuotaBase(unittest.TestCase):
         and the test reads a green gate that never saw its own fixture.
         """
         os.environ["HOME"] = os.environ["USERPROFILE"] = str(self.home)
+        self.addCleanup(_restore_env, dict(os.environ))
 
     def write_occupant(self, text) -> None:
         cfg = self.home / ".claude" / "company" / "config"

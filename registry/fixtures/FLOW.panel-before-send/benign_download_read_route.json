@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-benign-download-read-route",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl -s -X POST http://localhost:8080/api/download --data-binary @d.json"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_download_read_route_transcript.jsonl"
+}

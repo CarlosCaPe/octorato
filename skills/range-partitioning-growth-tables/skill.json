@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "range-partitioning-growth-tables",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Range Partitioning for Growth Tables"
+}

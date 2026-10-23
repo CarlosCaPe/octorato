@@ -1,0 +1,16 @@
+{
+  "session_id": "fx-rp-violation-ac22-summary-opened-no-receipt",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "The migration ran on the staging copy and the row counts match the source table. Two warnings remain, both about deprecated flags, and neither blocks the release. The rollback script is untested.\n\nProvenance: Basis: migration.log, row_counts.csv \u00b7 Engine: main loop",
+  "transcript_path": "violation_ac22_summary_opened_no_receipt_transcript.jsonl",
+  "_fixture": {
+    "stderr_has": [
+      "fc82b8eb6c9a8c1f99552ebfa9a8f4357905998fdda8b9040cdc4b1f78d36733"
+    ],
+    "stderr_lacks": [
+      "cannot decide"
+    ]
+  }
+}

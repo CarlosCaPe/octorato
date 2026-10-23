@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-a1",
+  "transcript_path": "violation_year_in_root_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

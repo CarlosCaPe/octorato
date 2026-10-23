@@ -1,0 +1,12 @@
+{
+  "session_id": "fx-rp-violation-ac10-payload-without-message",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "transcript_path": "violation_ac10_payload_without_message_transcript.jsonl",
+  "_fixture": {
+    "stderr_has": [
+      "payload has no last_assistant_message"
+    ]
+  }
+}

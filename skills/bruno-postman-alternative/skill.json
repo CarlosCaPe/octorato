@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "bruno-postman-alternative",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Open-source API client where collections are text files in the repo, reviewable by PR, with no cloud and no per-seat licenses. MIT. For teams that live in git or when Postman gets expensive."
+}

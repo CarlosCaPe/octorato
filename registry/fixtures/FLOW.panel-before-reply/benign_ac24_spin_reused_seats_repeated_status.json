@@ -1,0 +1,15 @@
+{
+  "session_id": "fx-rp-benign-ac24-spin-reused-seats-repeated-status",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": true,
+  "last_assistant_message": "Los revisores siguen con la segunda ronda.",
+  "transcript_path": "benign_ac24_spin_reused_seats_repeated_status_transcript.jsonl",
+  "_fixture": {
+    "spent": [
+      "toolu_r1",
+      "toolu_r2",
+      "toolu_r3"
+    ]
+  }
+}

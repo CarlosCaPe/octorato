@@ -90,6 +90,11 @@ from gitignored `company/config/memory.json`, never hardcoded (same precedent as
    `company/config/memory.json` (`brain_memory.remote` + `path`), then run
    `python3 scripts/memory_sync.py push`. The script `git init`s the nested repo on
    first run and pushes. No config → it soft-fails back to local-only.
+3. **More than one memory dir:** add `brain_memory.stores`, a list of
+   `{path, branch}` entries (an optional `remote` overrides the shared one). Each dir
+   gets its own nested repo on its own branch, and `status`/`pull`/`push` walk every
+   store. A nested repo whose `origin` differs from its configured remote is refused,
+   never pushed.
 
 ```bash
 python3 scripts/memory_sync.py status   # show config + nested-repo state
@@ -100,3 +105,10 @@ python3 scripts/memory_sync.py pull     # refresh on a new machine
 One-line mental model: **brain memory is who you are; arm memory is what this
 project taught you, and the framework ships the machinery empty, so your data
 never rides anyone's public history.**
+
+<!-- moved-from-claude-md v10-T13 -->
+## The constitution paragraph (moved from CLAUDE.md)
+
+These paragraphs were the constitution's own text until v10 (T13), moved here so `CLAUDE.md` keeps only what every session needs. They are kept as written, with em-dashes normalised; `CLAUDE.md` now carries a short paragraph pointing here.
+
+**Memory = the octopus's brains (1 + N).** A real octopus has nine brains (1 central + 8 arms, ~2/3 of its neurons in the arms); Octorato is **1 + N**, one central brain-memory (`octorato-memory`) plus one sealed arm-brain per arm, N unbounded (the `8 → ∞` anchor applied to brains). Memory is two-tier by scope: generic cross-arm lessons + operator identity → central brain memory; client-specific facts → that arm's memory, sealed, distilling *upward* only once generic. The public framework ships the **mechanism** (`scripts/memory_sync.py` + `templates/memory/` + docs), never the data or the private remote URL. Full model: `docs/architecture/memory-model.md`.

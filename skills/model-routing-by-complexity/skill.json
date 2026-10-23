@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "model-routing-by-complexity",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Routes work by complexity across the model ladder (mechanical, bulk, build, judgment), vendor-agnostic. Load when fanning out sub-agents or when picking the model override in a Workflow/Agent."
+}

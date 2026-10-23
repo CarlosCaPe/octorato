@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "session-learn-extractor",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Extracts the reusable pattern from the session and writes it as a DRAFT skill in skills/learned/. Triggers after 'ya quedo', 'fixed', 'shipped', 'merged' on something that took several investigation steps, or via /learn."
+}

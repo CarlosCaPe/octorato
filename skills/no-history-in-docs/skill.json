@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "no-history-in-docs",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Documents carry only current content; git is the version history. Never strikethrough to mark what is done, never old text next to the new one 'for the record', never sections commented out 'for reference'. Applies to every document edit or revision."
+}

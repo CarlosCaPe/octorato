@@ -1,0 +1,10 @@
+{
+  "session_id": "sess-arming",
+  "agent_id": "agent-a",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_arm",
+  "tool_input": {
+    "command": "split -b1 /tmp/e {{SANDBOX}}/.claude/scripts/qa-merge-gate.py"
+  },
+  "cwd": "{{SANDBOX}}/wt/state-gate"
+}

@@ -228,7 +228,7 @@ def main() -> int:
         # Load state
         if STATE_FILE.exists():
             try:
-                state = json.loads(STATE_FILE.read_text())
+                state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
                 backup = STATE_FILE.with_suffix(f".corrupt.{int(time.time())}")
                 STATE_FILE.rename(backup)

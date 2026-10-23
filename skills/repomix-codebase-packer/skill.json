@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "repomix-codebase-packer",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Packs a whole repo, local or remote, into a single LLM-optimized file, with Tree-sitter compression (~70% fewer tokens) and secret scanning. For auditing an entire repo or preparing subagent context."
+}

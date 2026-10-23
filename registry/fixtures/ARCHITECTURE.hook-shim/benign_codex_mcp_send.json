@@ -1,0 +1,23 @@
+{
+  "harness": "codex-cli",
+  "gate": "g__pretool-mcp__outward-send.py",
+  "payload": {
+    "session_id": "fx-h",
+    "transcript_path": "../COMMS.outward-send-gate/benign_hatch_in_prompt_transcript.jsonl",
+    "cwd": "/home/user",
+    "hook_event_name": "PreToolUse",
+    "model": "fixture",
+    "permission_mode": "default",
+    "turn_id": "fixture",
+    "tool_use_id": "toolu_shim",
+    "tool_name": "mcp__gmail__send_email",
+    "tool_input": {
+      "to": [
+        "x@ejemplo.com"
+      ],
+      "subject": "Queja",
+      "body": "No reconozco ese cargo."
+    }
+  },
+  "home_from": "COMMS.outward-send-gate"
+}

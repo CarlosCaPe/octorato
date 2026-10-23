@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "human-cadence",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "The 10 no-rules that strip AI tells from any text so it reads like a person: no em-dash, no filler words, no forced triads. ALWAYS ON in every output: chat, email, doc, commit, PR. CLAUDE.md carries the summary, the detail is here."
+}

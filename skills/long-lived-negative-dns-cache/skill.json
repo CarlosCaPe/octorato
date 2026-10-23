@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "long-lived-negative-dns-cache",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "A long-running process (a cron supervisor, a daemon, a worker pool parent) caches a NEGATIVE DNS result after a transient network blip and then never retries, so every downstream call fails forever even though the network recovered seconds later. A wrapper bug can log a fake `exit=0`, hiding it. Symptom: 'nothing runs anymore' with no error. Fix: restart the process, then bound the DNS/connection cache TTL."
+}

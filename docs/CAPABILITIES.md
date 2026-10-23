@@ -6,15 +6,15 @@
 
 | Metric | Count |
 |---|---|
-| Skills | 233 |
+| Skills | 246 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 116 |
+| Scripts: wired | 143 |
 | Scripts: orphan | 7 |
-| Rules | 77 |
-| Hook entries | 51 |
+| Rules | 106 |
+| Hook entries | 61 |
 
-## Skills (233)
+## Skills (246)
 
 | Name | Description |
 |---|---|
@@ -72,6 +72,7 @@
 | do-not-ask-to-pause | Canonical mandate , never ask the operator "should we pause?" or "do we close the session?" when there is queued work, a... |
 | doc | Use when the task involves reading, creating, or editing `.docx` documents, especially when formatting or layout fidelit... |
 | doc-tree-consolidation | Collapse N fragmented markdown docs into a small canonical set without losing content or breaking cross-references. Dist... |
+| doctor-visit-prep | Turns an assistant into a helper that prepares a medical appointment and explains what was said after it: a symptom time... |
 | document-code-review | Document Code Review - Full QA Pass |
 | document-semantic-coherence | Document Semantic Coherence |
 | dry-run-gate-pattern | Dry-Run Gate Pattern |
@@ -105,6 +106,7 @@
 | gsap-timeline | Official GSAP skill for timelines , gsap.timeline(), position parameter, nesting, playback. Use when sequencing animatio... |
 | gsap-utils | Official GSAP skill for gsap.utils , clamp, mapRange, normalize, interpolate, random, snap, toArray, wrap, pipe. Use whe... |
 | harmonization-over-accretion | Reusable rebuttal pattern for "let's import all N items from competitor X" temptations. Explains why connectome-graph br... |
+| hiring-assistant | Turns an assistant into a recruiter's helper for a small team: a job description from the real requirements, a scorecard... |
 | hook-profile-gating | Runtime gate hooks via OCTO_HOOK_PROFILE (minimal|standard|strict) and OCTO_DISABLED_HOOKS (comma-separated ids) , disab... |
 | horizontal-scroll-html-vs-body | Android Chrome ignores overflow-x:hidden on <body> if <html> still allows it , clip the root, not just the body, to kill... |
 | human-cadence | The 10 no-rules that strip AI tells from any text so it reads like a person: no em-dash, no filler words, no forced tria... |
@@ -118,7 +120,9 @@
 | infinite-monitor | Builds AI dashboards on Infinite Monitor, an open-source Next.js app where you describe the widget in natural language a... |
 | investigate-before-asking | Canonical mandate , before asking the operator any clarifying question, spend 30-60 seconds doing read-only investigatio... |
 | jupyter-notebook | Use when the user asks to create, scaffold, or edit Jupyter notebooks (`.ipynb`) for experiments, explorations, or tutor... |
+| kids-home-tutor | Turns an assistant into a patient home tutor a parent runs for a child: finds what the child already understands, explai... |
 | knowledge-corpus | Build and query focused knowledge corpora from brain skills, git history, and workspace files. Use when users want to co... |
+| legal-first-reader | Turns an assistant into a first reader of legal paper for a layperson: explains a contract, notice or official letter in... |
 | lii5 | Explains any document, concept or architecture in plain adult language, with analogies and no jargon. Triggers on 'lii5'... |
 | linear | Manage issues, projects & team workflows in Linear. Use when the user wants to read, create or updates tickets in Linear... |
 | llm-system-prompt-engineering | Design, debug, and optimize LLM system prompts for production chatbots , especially smaller/medium models (7B-70B) that ... |
@@ -148,6 +152,8 @@
 | pdf | Use when tasks involve reading, creating, or reviewing PDF files where rendering and layout matter; prefer visual checks... |
 | peer-review-lifecycle | Peer Review Lifecycle for Technical Documents |
 | peripheral-parallel-dispatch | Decision rule for WHEN to fan work out to N parallel sub-agents/arms vs solve it centrally, and HOW the center reconcile... |
+| personal-accountant | Turns an assistant into a personal bookkeeper for a household, a freelancer or a small business: classifies money in and... |
+| personal-finance-coach | Turns an assistant into a personal finance coach: a monthly budget from real numbers, a debt payoff order, an emergency ... |
 | pg-cron-scheduled-maintenance | pg_cron Scheduled Maintenance |
 | pg-stat-statements-observability | pg_stat_statements Query Observability |
 | phi-aware-rag-ingestion | Multi-stage RAG ingestion pipeline for regulated content. Fetch → text-normalize → PHI-screen → chunk → embed → route → ... |
@@ -155,7 +161,7 @@
 | playwright-interactive | Persistent browser and Electron interaction through `js_repl` for fast iterative UI debugging. |
 | post-check-verification | Post-Check Verification |
 | pr-first-on-auto-deploy-main | On repos where pushing to main auto-deploys to production, default to PR-based workflow even for self-authored changes ,... |
-| pre-merge-qa-gate | Before arming auto-merge on a PR that touches production code, dispatch a QA specialist agent against an explicit test/u... |
+| pre-merge-qa-gate | Before merging a PR that touches production code, dispatch a QA specialist agent against an explicit test/user-case spec... |
 | primary-key-coverage-identity | Primary Key Coverage & Identity Columns |
 | procedure-rebuild-pg-get-functiondef | Procedure Rebuild via pg_get_functiondef |
 | production-bug-fix-stored-functions | Production Bug Fix in Stored Functions |
@@ -171,11 +177,13 @@
 | querymaster-sqlite | Child skill of querymaster for SQLite: local file databases, Optuna storage, analytical sweeps and embedded use, with WA... |
 | querymaster-sqlserver | Child skill of querymaster for SQL Server and Azure SQL (Database, Managed Instance, on-prem): pyodbc connection with an... |
 | range-partitioning-growth-tables | Range Partitioning for Growth Tables |
+| real-estate-listing-assistant | Turns an assistant into a listing and client helper for a real-estate professional or an owner selling or renting: a lis... |
 | reflexes-over-discipline | When a rule or gate is chronically ignored, when designing enforcement for a new policy, or when the operator says a rul... |
 | render-deploy | Deploy applications to Render by analyzing codebases, generating render.yaml Blueprints, and providing Dashboard deeplin... |
 | repo-deep-learn | Deep analysis of ONE GitHub repo: inventories the code, extracts patterns that could become a skill and writes a report ... |
 | repo-watch | Daily monitor over a watchlist of GitHub repos: compares the HEAD SHA against the previous snapshot and writes a digest ... |
 | repomix-codebase-packer | Packs a whole repo, local or remote, into a single LLM-optimized file, with Tree-sitter compression (~70% fewer tokens) ... |
+| research-assistant | Turns an assistant into a research helper for a thesis, a paper or a report: sharpens the question, builds a search plan... |
 | research-checklist-discipline | Research Checklist Discipline |
 | runtime-adaptation-over-source-edit | Decision rule for WHERE a new behavior or lesson belongs , the runtime layer (skill / memory / config / hook) vs the cor... |
 | sandbox-sdk | Build sandboxed applications for secure code execution. Load when building AI code execution, code interpreters, CI/CD s... |
@@ -184,7 +192,9 @@
 | schema-row-counts | Get exact row counts per table in a given schema , PostgreSQL primary, with notes for other engines. Two-column result: ... |
 | schema-separation-orm-control | Schema Separation for ORM/Scaffolding Control |
 | screenshot | Use when the user explicitly asks for a desktop or system screenshot (full screen, specific app or window, or a pixel re... |
+| sdd-analyze | SDD: Analyze Spec and Plan |
 | sdd-archive | SDD: Archive |
+| sdd-converge | SDD: Converge |
 | sdd-feature | SDD: Feature Analysis |
 | sdd-implement | SDD: Implementation |
 | sdd-init | SDD: Init docs/project.md |
@@ -206,6 +216,7 @@
 | skill-installer | Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list ins... |
 | skillsmp | Searches, discovers and installs agent skills from skillsmp.com, the largest open collection of SKILL.md files. Triggers... |
 | slides | Create and edit presentation slide decks (`.pptx`) with PptxGenJS, bundled layout helpers, and render/validation utiliti... |
+| small-business-advisor | Turns an assistant into a working advisor for a small business owner: frames the one problem of the month, puts numbers ... |
 | snowflake-dbt-pitfalls | Snowflake and dbt traps that fail silently or destroy data: CREATE OR REPLACE, Dynamic Tables, PIVOT, sources.yml freshn... |
 | social-video-mining | Extracts insights from short video (TikTok, Shorts, Reels, Douyin) without paid speech-to-text: yt-dlp, ffmpeg and visio... |
 | sops-age-git-encryption | SOPS + age (per-user keys) as the default encryption stack for HIPAA / GDPR / SOC-2 / regulated-data git repos. Two-laye... |
@@ -220,11 +231,13 @@
 | stream-transcript-dom-scrape | When a Microsoft Stream recording is read-only and the transcript download says 'no permission', the player still render... |
 | stripe-payments | Pick and implement the right Stripe tier (Payment Link, Checkout, Elements, Connect, Billing), with MCP registration, lo... |
 | structural-completeness-verification | Structural Completeness Verification |
+| study-tutor | Turns an assistant into a personal study tutor: builds a plan back from the exam date, explains from the student's own c... |
 | submission-checklist-gate | Before sending a reply to a formal requirement (bank, government agency, any institution), build an explicit checklist o... |
 | summarize-100 | Compresses any topic, document or answer to ~100 words, the most semantically dense ones. Triggers on '100 palabras', 'v... |
 | svelte-tailwind-gotchas | Known gotchas and workarounds when combining Svelte (4/5) with Tailwind CSS. Use when Svelte template compilation fails ... |
 | table-normalization-1nf | Table Normalization (1NF Violations) |
 | tabularis-db-client | Open-source SQL client for PostgreSQL, MySQL and SQLite with a built-in MCP server, Apache 2.0. To recommend a database ... |
+| teacher-classroom-assistant | Turns an assistant into a classroom helper for a teacher: lesson plans tied to the official curriculum, materials at thr... |
 | teams-1on1-send-no-chat-read | Sends a Teams 1:1 message through the Graph API even when the token does NOT carry Chat.Read scopes: derives the chat ID... |
 | technical-document-craftsmanship | Skill #37 , Technical Document Craftsmanship |
 | theory-plus-practice-prompts | Any long technical document that explains a framework and demonstrates a case MUST carry runnable prompts with real data... |
@@ -486,7 +499,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (123)
+## Scripts (150)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -535,25 +548,34 @@
 | delegate-check | delegate-check , Mandatory 2D Delegate pre-flight for the Octopus brain. Scans REGISTRY.md (agents) ... | wired |
 | delegate-gate.py | PreToolUse hook , involuntary delegation reflex (FAIL-OPEN, by design). | wired |
 | dimension-awareness-hook.py | dimension-awareness-hook.py , PreToolUse hook for 4D session dimension awareness | wired |
+| external_review.py | external_review.py: receipts for a review run on another engine (v11 phase 4). | wired |
 | eye-check.py | Eye Check Hook , Forces agent-browser usage for web tasks. Runs on every UserPromptSubmit. Pure loca... | wired |
 | finops-digest.py | finops-digest.py , the FinOps lens over Claude Code session logs. "Lo que no se mide, no crece." Exi... | wired |
+| friction_ledger.py | friction_ledger.py: every gate deny and Stop block, counted by the system (v10 FR-01). | wired |
 | g__pretool-bash__git-discipline.py | g__pretool-bash__git-discipline.py: PreToolUse gate for the deterministic subset of GIT.version-cont... | wired |
 | g__pretool-bash__prod-write.py | PreToolUse Bash hook , compuerta de ESCRITURA EN PRODUCCION (FAIL-CLOSED). | wired |
 | g__pretool-bash__tree-owner.py | g__pretool-bash__tree-owner.py: one writer per tree and per lane (Bash side). | wired |
 | g__pretool-mcp__chat-context.py | g__pretool-mcp__chat-context.py: PreToolUse gate for COMMS.chat-context-before-send. | wired |
 | g__pretool-mcp__outward-send.py | g__pretool-mcp__outward-send.py: the ONE outward-send gate (v7 phase 2). | wired |
 | g__pretool-write__tree-owner.py | g__pretool-write__tree-owner.py: one writer per tree and per lane (Write side). | wired |
+| g__pretool__arming-surface.py | g__pretool__arming-surface.py: the LIVE files that decide whether gates run. | wired |
+| g__pretool__export-flip.py | g__pretool__export-flip.py: an agent never opens an arm to trace export. | wired |
 | g__pretool__kernel.py | g__pretool__kernel.py: PreToolUse `*` gate. No tool call runs unjournaled. | wired |
+| g__shim__hook.py | g__shim__hook.py: run an Octorato gate under a second harness (v11 AC-05). | wired |
 | g__stop__defer-today.py | g__stop__defer-today.py: Stop gate: "no dejes para mañana lo que puedas hacer hoy" (do not put off u... | wired |
 | g__stop__delegation-audit.py | g__stop__delegation-audit.py: Stop gate for FLOW.bulk-fetch-delegation. | wired |
 | g__stop__draft-promise.py | g__stop__draft-promise.py , Stop gate: no future-tense promises in paste-ready drafts. | wired |
 | g__stop__goal-anchor.py | g__stop__goal-anchor.py: Stop gate: the goal stack does not erode. | wired |
+| g__stop__no-menu-question.py | g__stop__no-menu-question.py: Stop gate: a reply never ENDS on a menu for the operator. | wired |
 | g__stop__paste-ready-raw.py | g__stop__paste-ready-raw.py: Stop gate: a message meant for pasting ships RAW and LAST. | wired |
+| g__stop__reply-panel.py | g__stop__reply-panel.py: no reply to the operator leaves the turn unreviewed (v11). | wired |
 | g__stop__unsourced-absence.py | g__stop__unsourced-absence.py: Stop gate: no "this has no origin" claim ships | wired |
 | g__stop__unsourced-attribute.py | g__stop__unsourced-attribute.py , Stop gate: no unsourced classifying attribute | wired |
+| g__wrap__export-guard.py | g__wrap__export-guard.py: start a tracing hook only for an arm that allows export. | wired |
 | gap-capture.py | gap-capture.py , capture 2D-Delegate SELF misses as a gap backlog. When the delegate gate finds no a... | wired |
 | gate-check | gate-check , 4D Gate Enforcement Validator for the Octopus brain. Validates that the 4D paradigm pha... | wired |
 | gate_selftest.py | gate_selftest.py: shared fixture-driven liveness harness for fail-closed gates. | wired |
+| gen_skill_manifests.py | gen_skill_manifests.py: mint a `skill.json` per skill from its SKILL.md front matter. | wired |
 | generate-octorato-wiki.py | Regenerate the octorato wiki catalog pages from the live brain. | wired |
 | generate_memory_map.py | Memory Map Generator , TF-IDF + cosine index over the brain's life-memories. WHY THIS EXISTS The con... | wired |
 | generate_neural_map.py | generate_neural_map.py , Octopus Connectome Generator Builds a deep neural connectivity map inspired... | wired |
@@ -562,6 +584,7 @@
 | grafo-ledger-check.py | Stop hook , the graph-before-grep teeth (turn-scoped). | wired |
 | grafo-turn-reset.py | UserPromptSubmit hook , reset the per-turn graph ledger. | wired |
 | harmony-check.py | harmony-check.py , Octorato Harmony drift checker (the octopus moves as one). | wired |
+| hook_projector.py | hook_projector.py: the shared core of the second-harness Hook_Projectors. | wired |
 | impact-radius-hook.py | impact-radius-hook , PostToolUse Write|Edit reflex (the cerebellum's feedback arm). | wired |
 | impact-radius.py | impact-radius.py , SEEK the lineage graph; do not SCAN (grep) the repo. | wired |
 | inbox-sweep-reflex.py | inbox-sweep-reflex.py - UserPromptSubmit hook. | wired |
@@ -574,28 +597,43 @@
 | mail-guardia.py | Mail watch: what arrived and we have not answered. Sibling of wa-guardia.py. | wired |
 | memory_lexicon_es_en.json |  | orphan |
 | memory_sync.py | memory_sync , sync the brain's private memory store to a standalone remote. | wired |
+| merge-hooks-codex.py | merge-hooks-codex.py: project hooks.json into a Codex CLI hooks.json. | wired |
 | merge-hooks-cursor.py | merge-hooks-cursor.py , project hooks.json into Cursor's native ~/.cursor/hooks.json. | wired |
+| merge-hooks-gemini.py | merge-hooks-gemini.py: project hooks.json into a Gemini CLI settings.json `hooks` block. | wired |
 | merge-hooks.py | merge-hooks.py , Merge shared hooks.json into local settings.json Called by ai-pull after pulling th... | wired |
 | migrate-octorato.sh | migrate-octorato.sh , One-shot migration after the dotclaude → octorato rebrand (May 2026). | wired |
 | news_article_digest.py | AI News & Blogs Daily Curation , feeds the brain (sibling of github_trending_digest). Pulls recent i... | wired |
 | no-pause-suggestion.py | Stop hook , block "let's pause / leave for tomorrow / take a break" framing. The operator has flagge... | wired |
 | octo-dim.py | octo-dim.py , 4D session dimension manager. | wired |
 | octo.py | octo.py: the terminal view of the v8 kernel (docs/architecture/v8-kernel.md). | wired |
+| octo_dash.py | octo_dash.py: one self-contained HTML page of what the brain already knows. | wired |
+| octo_pkg.py | octo_pkg.py: the PACKAGE primitive of the v8 kernel. | wired |
 | octorato-isomorphism.py | octorato-isomorphism , compute the invariant shared by the three Octorato anchors. | wired |
+| panel_digest.py | panel_digest.py: the digest a panel reviews and the outward-send gate checks. | wired |
+| panel_fixture_seed.py | panel_fixture_seed.py: seed panel receipts into an outward-send fixture home. | wired |
+| panel_preflight.py | panel_preflight.py: run the reply-text Stop gates on a draft BEFORE its panel. | wired |
+| proc_group.py | Kill a child's process group without ever killing our own. | wired |
 | publish-wiki.py | publish-wiki.py - publish docs/wiki/ to the public GitHub wiki. | wired |
 | qa-merge-gate.py | PreToolUse Bash hook , QA gate (FAIL-CLOSED for merge actions). | wired |
 | query_connectome.py | query_connectome.py , Octopus Ventosas (Sucker Neural Interface) Each sucker is an independent senso... | wired |
 | querymaster-security-detector.py | QueryMaster security-canon detector (RULE #1 backing for SECURITY.querymaster-rules). | wired |
 | quickstart.py | quickstart.py , zero-to-alive for a brand-new Octorato user, in one command. | wired |
 | r__permission-denied__journal.py | r__permission-denied__journal.py: PermissionDenied reflex, the harness's own refusals. | wired |
+| r__posttool-bash__external-review.py | r__posttool-bash__external-review.py: complete an External_Review_Receipt (v11 AC-18). | wired |
 | r__posttool__receipt-seek.py | r__posttool__receipt-seek.py: PostToolUse reflex that writes a SEEK receipt. | wired |
+| r__posttool__sent-ledger.py | r__posttool__sent-ledger.py: PostToolUse reflex that records every message | wired |
+| r__pretool-bash__external-review.py | r__pretool-bash__external-review.py: open an External_Review_Receipt (v11 AC-18). | wired |
 | r__pretool-write__base-freshness.py | r__pretool-write__base-freshness.py: PreToolUse warner for a STALE EDIT BASE. | wired |
 | r__session__proc-register.py | r__session__proc-register.py: SessionStart reflex that opens a kernel process. | wired |
+| r__stop__friction-ledger.py | r__stop__friction-ledger.py: Stop reflex that keeps the Friction_Ledger current (v10 FR-01, AC-01). | wired |
 | r__subagent-start__proc-register.py | r__subagent-start__proc-register.py: SubagentStart reflex, a child process. | wired |
 | r__subagent-stop__proc-exit.py | r__subagent-stop__proc-exit.py: SubagentStop reflex, the child's exit line. | wired |
 | r__subagent-stop__qa-receipt.py | r__subagent-stop__qa-receipt.py: SubagentStop reflex that writes a QA receipt. | wired |
 | receipt_ledger.py | receipt_ledger.py: the v7 receipt ledger (shared library, not a hook). | wired |
+| replay_harness.py | replay_harness.py: replay real tool calls and Stop turns through the gates (v10 FR-01, AC-03, AC-04)... | wired |
 | repo_watch.py | repo_watch.py , daily monitor for high-value GitHub repos. | wired |
+| requa.py | Base_Update_Verifier helper for `/requa <pr>` (spec v10, AC-12). | wired |
+| runtime_census.py | runtime_census.py: measure a harness before the brain calls it supported. | wired |
 | scan-external-refs | scan-external-refs , Scan reference repos for new skills, agents, and patterns | orphan |
 | secrets-grep-guard.py | secrets-grep-guard.py , PreToolUse:Bash hook: deny raw reads of secret-bearing files. | wired |
 | session-isolation-hook.py | session-isolation-hook.py , SessionStart hook: isolation by DEFAULT. | wired |
@@ -603,6 +641,8 @@
 | slos.py | slos.py , observability surface 3. Brain SLOs + error budget burn rate. Reads the SLO config (`~/.cl... | wired |
 | social-video-digest.py | social-video-digest , daily triage of social-video creators for brain-worthy gems. What this DOES (c... | wired |
 | source-attribution-check.py | source-attribution-check.py: Stop hook, every answer MUST end with its provenance. | wired |
+| spec_lint.py | spec_lint.py: the deterministic reader of a v9 spec (Spec-Format: ears-1). | wired |
+| statusline.py | statusline.py: one short line for Claude Code's statusLine slot. | wired |
 | sync-ai-docs.ps1 |  | orphan |
 | sync-readme-counts.py | Sync the skill/agent counts cited in README.md + FAQ.md to the numbers on disk. | wired |
 | trace-hook.py | trace-hook.py , observability surface 1 , capture hook. Reads a Claude Code hook event from stdin an... | wired |
@@ -614,19 +654,30 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (77)
+## Rules (106)
 
 ### ARCHITECTURE
 
 - ARCHITECTURE.arm-onboarding
+- ARCHITECTURE.arming-surface
 - ARCHITECTURE.core-principles
 - ARCHITECTURE.drift-self-heal
+- ARCHITECTURE.hook-projectors
+- ARCHITECTURE.hook-shim
 - ARCHITECTURE.information-flow
+- ARCHITECTURE.instruction-sync
 - ARCHITECTURE.kernel-isolation
 - ARCHITECTURE.kernel-process
 - ARCHITECTURE.layers
+- ARCHITECTURE.octo-dash
 - ARCHITECTURE.octopus-architecture
+- ARCHITECTURE.runtime-census
+- ARCHITECTURE.runtime-census-evidence
+- ARCHITECTURE.runtime-census-gates
+- ARCHITECTURE.runtime-registry
 - ARCHITECTURE.session-isolation
+- ARCHITECTURE.status-line
+- ARCHITECTURE.tracing-latency-bench
 
 ### CODE
 
@@ -651,6 +702,7 @@
 - COMMS.deliverable-complete-before-send
 - COMMS.human-cadence
 - COMMS.machine-register
+- COMMS.no-menu-question
 - COMMS.no-pause
 - COMMS.outward-send-gate
 - COMMS.paste-ready-raw-message
@@ -669,19 +721,29 @@
 - FLOW.canon-heal
 - FLOW.delegate-gate
 - FLOW.do-it-today
+- FLOW.done-is-a-verdict
 - FLOW.enforcement-scripts
+- FLOW.external-review-receipt
 - FLOW.figma-use-prerequisite
+- FLOW.friction-ledger
+- FLOW.friction-replay
 - FLOW.graph-before-grep
 - FLOW.image-analyzer-trigger
 - FLOW.impact-radius
 - FLOW.kernel-journal
 - FLOW.kernel-quota
 - FLOW.orchestrated-planning-reporting-contract
+- FLOW.panel-before-reply
+- FLOW.panel-before-send
 - FLOW.prune-dead-cells
 - FLOW.qa-receipt
 - FLOW.receipt-ledger
+- FLOW.requa-base-update
 - FLOW.root-goal-anchor
+- FLOW.self-verdict-live-source
+- FLOW.sent-message-ledger
 - FLOW.skill-first
+- FLOW.spec-contract
 - FLOW.suggest-unlock
 - FLOW.wa-guardia-on-pending
 - FLOW.web-agent-browser
@@ -711,27 +773,34 @@
 ### META
 
 - META.ai-sync-canonical
+- META.constitution-budget
+- META.kernel-package
 - META.multi-machine-sync
 - META.pre-push-gate
 - META.querymaster
 - META.rule-1-wired-or-corrupt
+- META.skill-manifest-coverage
 
 ### SECURITY
 
 - SEC.prod-write-gate
 - SECURITY.baseline
+- SECURITY.export-flip
+- SECURITY.export-guard
 - SECURITY.never-read-secrets-raw
 - SECURITY.querymaster-rules
+- SECURITY.tracing-switch
+- SECURITY.tracing-wrapper-package
 
 ## Hooks
 
 | Event | Wired Scripts |
 |---|---|
 | PermissionDenied | r__permission-denied__journal.py |
-| PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, r__posttool__receipt-seek.py, trace-hook.py |
-| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-bash__tree-owner.py, g__pretool-mcp__chat-context.py, g__pretool-mcp__outward-send.py, g__pretool-write__tree-owner.py, g__pretool__kernel.py, grafo-gate.py, qa-merge-gate.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
-| SessionStart | merge-hooks.py, r__session__proc-register.py, session-isolation-hook.py |
-| Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__defer-today.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, g__stop__goal-anchor.py, g__stop__paste-ready-raw.py, g__stop__unsourced-absence.py, g__stop__unsourced-attribute.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
+| PostToolUse | budget-check.py, cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, r__posttool-bash__external-review.py, r__posttool__receipt-seek.py, r__posttool__sent-ledger.py, trace-hook.py |
+| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-bash__tree-owner.py, g__pretool-mcp__chat-context.py, g__pretool-mcp__outward-send.py, g__pretool-write__tree-owner.py, g__pretool__arming-surface.py, g__pretool__export-flip.py, g__pretool__kernel.py, grafo-gate.py, qa-merge-gate.py, r__pretool-bash__external-review.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
+| SessionStart | budget-check.py, merge-hooks.py, r__session__proc-register.py, session-isolation-hook.py |
+| Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__defer-today.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, g__stop__goal-anchor.py, g__stop__no-menu-question.py, g__stop__paste-ready-raw.py, g__stop__reply-panel.py, g__stop__unsourced-absence.py, g__stop__unsourced-attribute.py, grafo-ledger-check.py, no-pause-suggestion.py, r__stop__friction-ledger.py, source-attribution-check.py, trace-hook.py |
 | SubagentStart | r__subagent-start__proc-register.py |
 | SubagentStop | r__subagent-stop__proc-exit.py, r__subagent-stop__qa-receipt.py |
 | UserPromptSubmit | 4d-reminder.py, arm-recall-hook.py, brain-memory-recall.py, connectome-heartbeat.py, eye-check.py, grafo-turn-reset.py, inbox-sweep-reflex.py, trace-hook.py |

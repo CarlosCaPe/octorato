@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "teacher-classroom-assistant",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Turns an assistant into a classroom helper for a teacher: lesson plans tied to the official curriculum, materials at three levels, exercises with answer keys, rubrics and feedback drafts, with no student data in the chat. Use on 'planea mi clase', 'lesson plan', 'hazme una rúbrica', 'ejercicios para sexto'."
+}

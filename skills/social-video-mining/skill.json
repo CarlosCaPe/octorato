@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "social-video-mining",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Extracts insights from short video (TikTok, Shorts, Reels, Douyin) without paid speech-to-text: yt-dlp, ffmpeg and vision over the frames. Use it when on-screen text carries the signal or when there is no transcript."
+}

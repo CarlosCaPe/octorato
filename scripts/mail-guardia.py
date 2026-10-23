@@ -43,8 +43,8 @@ API = "https://gmail.googleapis.com/gmail/v1/users/me"
 def token_de_acceso():
     """Un access_token fresco a partir del refresh_token. Nunca lo imprime."""
     try:
-        cred = json.loads(CRED.read_text())
-        keys = json.loads(KEYS.read_text())
+        cred = json.loads(CRED.read_text(encoding="utf-8"))
+        keys = json.loads(KEYS.read_text(encoding="utf-8"))
     except Exception as e:
         sys.exit(f"ERROR: no se pudo leer la credencial de Gmail: {e}")
     inst = keys.get("installed") or keys.get("web") or keys

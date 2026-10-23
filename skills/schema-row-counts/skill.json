@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "schema-row-counts",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Get exact row counts per table in a given schema — PostgreSQL primary, with notes for other engines. Two-column result: table_name, row_count."
+}

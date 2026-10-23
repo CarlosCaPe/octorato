@@ -1,0 +1,15 @@
+{
+  "harness": "gemini-cli",
+  "gate": "g__pretool-bash__prod-write.py",
+  "payload": {
+    "session_id": "sess-shim",
+    "transcript_path": "",
+    "cwd": "/home/user/project",
+    "hook_event_name": "BeforeTool",
+    "timestamp": "1970-01-01T00:00:00Z",
+    "tool_name": "run_shell_command",
+    "tool_input": {
+      "command": "git status"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "svelte-tailwind-gotchas",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Known gotchas and workarounds when combining Svelte (4/5) with Tailwind CSS. Use when Svelte template compilation fails with Tailwind class names, when class directives break, when dynamic classes don't apply, or when debugging CSS-related Svelte compiler errors. Covers class:directive parser bugs, dark mode, opacity shorthand, arbitrary values, and conditional class patterns."
+}

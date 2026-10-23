@@ -1,0 +1,10 @@
+{
+  "session_id": "sess-arming",
+  "agent_id": "agent-a",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_arm",
+  "tool_input": {
+    "command": "find {{SANDBOX}}/.claude/scripts -name '*.py' -exec rm {} ;"
+  },
+  "cwd": "{{SANDBOX}}/wt/state-gate"
+}

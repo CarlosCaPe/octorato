@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "production-bug-fix-stored-functions",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Production Bug Fix in Stored Functions"
+}

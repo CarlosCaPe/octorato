@@ -38,6 +38,24 @@ pulled once should become a permanent reflex).
 3. **(implicit) ¿Qué de esto debe volverse permanente?** Pick the single sharpest
    reusable lesson and write it to memory.
 
+## Hours to the ledger (same re-read, second output)
+
+The retro already re-reads the session against its evidence (commits, messages,
+commands run). That re-read is also a time sheet, so it produces two outputs, not
+one. Before the memory step, log the session's hours per arm in the time ledger
+the company brain declares (its `company/` config names the tool and how it is
+reached, for example an invoicing SaaS over MCP). One entry per arm and day, the
+duration as a conservative figure, and the evidence in the notes (commit hashes,
+message ids, command ids), the same receipts the retro just collected. If the
+company brain declares no ledger, skip this step and say so in the retro.
+
+Why here: this is the one ritual that runs before the sync, so nothing ships
+with its hours unrecorded, and the reconstruction costs nothing extra. Why a
+figure with evidence and not a stopwatch: the brain's stance is receipts over
+recall, and an hour that points at a commit survives an audit; an hour typed
+from memory does not. A session that dies without closing logs nothing; that
+gap is a reflex for a session-end hook, not a discipline to remember.
+
 ## The step that makes it count: write the lesson to memory
 
 This is what separates this skill from "a nice answer":

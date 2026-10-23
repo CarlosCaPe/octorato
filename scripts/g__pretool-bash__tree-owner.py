@@ -56,8 +56,9 @@ NAMED RESIDUALS, measured as passing and deliberately not covered here. The list
 is pinned by a test, so it stays equal to what the gate actually does:
 `rsync --delete`, `shred`, `ln -sf`, `perl -pi`; a `python -c` body (only
 best-effort, scanned as shell text) including one aimed at the state dir;
-`git apply|rebase|merge|pull|cherry-pick|revert`; variable and brace expansion
-(`rm -rf $DIR`, `rm -rf {pkg,x}`, unknowable without running the shell); a `-c` body nested deeper
+`git apply|rebase|merge|pull|cherry-pick|revert`; brace expansion
+(`rm -rf {pkg,x}`, unknowable without running the shell) and a variable NOBODY here can read
+(`rm -rf $UNSET`, `export DIR=$OTHER && rm -rf $DIR`); a `-c` body nested deeper
 than 3; and xargs fed from STDIN (`cat list | xargs rm`, `xargs rm < list`),
 where the targets never appear in the command at all. Each is a distinct verb
 table or an evaluator, not a gap in this one, and none is the weekend shape.
@@ -85,7 +86,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
+
+# Hook payloads are UTF-8 JSON; the Windows default (cp1252) mangles any
+# non-ASCII character before it is read.
+try:
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -184,8 +193,93 @@ def peel_env(tokens: list) -> list:
     return tokens[i:]
 
 
+# WHICH `NAME=value` IN A COMMAND LINE ACTUALLY CHANGES A LATER EXPANSION. Two
+# spellings look identical and behave oppositely, and getting it wrong is a
+# FAIL-OPEN in one direction, so the difference is the whole function:
+#
+#   HOME=/tmp/x; rm -f $HOME/.claude/settings.json    -> /tmp/x/... (a statement)
+#   HOME=/tmp/x  rm -f $HOME/.claude/settings.json    -> the LIVE file (a prefix)
+#
+# A PREFIX assignment is put in the environment of the command it prefixes, and
+# the shell has already expanded that command's own words by then, so `$HOME`
+# on that line is still the old one. Reading a prefix as a statement would let
+# one space in front of `rm` disarm the gate, so a segment holding anything
+# other than assignments contributes NOTHING.
+#
+# Boundaries come from the brain's one splitter, borrowed not copied, for the
+# same reason every other reader here borrows it: a raw-text scan matches
+# `HOME=/tmp` inside `git commit -m "HOME=/tmp"` and shadows the real variable
+# from inside a quoted argument. `shlex` then removes the quotes, so
+# `export HOME="/tmp/a b"` keeps its space.
+#
+# A VALUE THIS PROCESS CANNOT EVALUATE (`$`, a backtick, a glob) maps to None,
+# which means unknowable, not "use the environment": `export HOME=$REAL && rm
+# -rf $HOME/.claude` abstains exactly as every unexpanded variable did before.
+# LAST ASSIGNMENT WINS, and that ordering is a security property: taking the
+# first would read `HOME=/tmp/x; HOME=<live>; rm -f $HOME/.claude/settings.json`
+# as a sandbox while the shell aims at the brain.
+_ASSIGN_HOSTS = ("export", "declare", "typeset", "readonly", "local")
+_UNEVALUABLE = ("$", "`", "*", "?")
+
+
+def command_assignments(command: str) -> dict:
+    """{name: value or None} for the variables *command* sets for LATER words."""
+    import shlex
+    split_subcmds, _broad = _dim_helpers()
+    out = {}
+    for seg in split_subcmds(command or ""):
+        try:
+            toks = shlex.split(seg.strip().rstrip(";").strip())
+        except ValueError:
+            continue                      # unparseable: shadow nothing, deny wins
+        if not toks:
+            continue
+        i = 1 if toks[0] in _ASSIGN_HOSTS else 0
+        found = {}
+        while i < len(toks) and is_env_assign(toks[i]):
+            name, _eq, val = toks[i].partition("=")
+            found[name] = None if any(c in val for c in _UNEVALUABLE) else val
+            i += 1
+        if i < len(toks) and toks[0] not in _ASSIGN_HOSTS:
+            continue                      # a PREFIX: scoped to that one command
+        out.update(found)                 # later segments overwrite earlier ones
+    return out
+
+
 def resolve(path: str, here: str) -> str:
-    path = os.path.expanduser(path)
+    """One token, absolute. THE single place a written path becomes a real one.
+
+    `~` is expanded and `$VAR` was not, and the order below is why that mattered
+    more than it looks: the ABSOLUTENESS test runs after expansion, so
+    `$HOME/.claude/x` was judged relative and joined onto the live cwd, landing
+    on `<cwd>/$HOME/.claude/x` — a path that exists nowhere and matches nothing.
+    Expanding here, before `isabs`, is the only place that can fix it: after the
+    join the leading `/` is gone and no later reader can put it back. Tilde
+    first, then the variable, which is the order the shell itself uses.
+    `kernel_proc.expand_env` resolves only names this process can actually read
+    and leaves the rest verbatim, so an undefined `$SOMEDIR` still reaches the
+    callers carrying its `$` and keeps the unknowable reading it had.
+
+    TWO NAMES THE ENVIRONMENT ANSWERS WRONGLY, and they arrived with the
+    expansion above. `PWD` and `OLDPWD` are maintained by the SHELL from its own
+    working directory; a hook process holds whichever pair the terminal that
+    launched the harness happened to have, while the tool call runs in the
+    payload's cwd. Measured on this branch, same command, same payload cwd, the
+    verdict flipped with the hook's environment: `rm -f $PWD/.claude/
+    settings.json` DENIED when the hook's PWD was the brain and ALLOWED when it
+    was /tmp, so the same expansion produced a false deny and a false allow from
+    one variable. `here` is the answer for `PWD`: it is the cwd this segment
+    actually runs in, `cd` included, since the caller rebinds it on every `cd`
+    and `pushd`. `OLDPWD` has no answer here at all (nobody knows where the
+    shell was BEFORE), so it is marked unknowable rather than read from the
+    environment, and a target spelled with it keeps its `$` and the abstention
+    that goes with it."""
+    path = kernel_proc.expand_env(os.path.expanduser(path),
+                                  overrides={"PWD": here, "OLDPWD": None})
+    # After expansion and before `isabs`, for the same reason as `$VAR`: on
+    # Windows `/c/Users/...` is Git Bash's spelling of `C:/Users/...`, and read
+    # natively it landed on `<drive>:\c\Users\...`, matching nothing.
+    path = kernel_proc.msys_to_native(path)
     return kernel_proc.norm_path(path if os.path.isabs(path) else os.path.join(here, path))
 
 
@@ -566,20 +660,31 @@ def _split_words(text: str):
     tokenizes to `C:worktree`: every separator is eaten, the target resolves to
     a path that exists nowhere, and it matches no lane. The gate then denies
     nothing, which is how a rule labelled fail-closed goes silently inert on
-    Windows while the doctor still reports it wired. Doubling the backslashes
-    first restores them verbatim and changes no other POSIX rule (quoting, word
-    splitting, comments), so one command parses the same on both platforms.
+    Windows while the doctor still reports it wired. Doubling a backslash that
+    sits before a path character restores it verbatim and changes no other
+    POSIX rule (quoting, word splitting, comments).
 
-    A backslash that genuinely was an escape (`a\\ b`) survives as a literal
-    backslash inside the token. That token only ever reaches path matching,
-    where a literal backslash matches no lane either, so nothing loosens.
+    ONLY before a path character. Doubling every backslash also doubled the
+    ones that ARE escapes, and an escaped space is how a shell spells one word:
+    `rm -rf C:/Users/A\\ B/.claude/scripts` became `C:/Users/A\\` plus
+    `B/.claude/scripts`, two targets that match nothing, and the removal of
+    every gate body was measured ALLOW on a profile whose name has a space. A
+    backslash before a space, a quote, `$` or another backslash keeps the
+    meaning bash gives it.
 
     Raises ValueError exactly as `shlex.split` does, so each call site keeps the
     fallback it already chose.
     """
     import shlex
 
-    return shlex.split(text.replace("\\", "\\\\") if os.name == "nt" else text)
+    if os.name == "nt":
+        text = _PATH_BACKSLASH.sub(r"\\\\", text)
+    return shlex.split(text)
+
+
+# A backslash followed by a character that can continue a path segment is a
+# Windows separator; anything else is a shell escape.
+_PATH_BACKSLASH = re.compile(r"\\(?=[\w.~-])")
 
 
 def scan(command: str, cwd: str, depth: int = 0) -> list:
@@ -589,6 +694,12 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
     `git checkout <arg>` needs to tell a branch from a file."""
     if not any(t in command for t in _TRIGGERS):
         return []
+    if depth == 0:
+        # `resolve` below expands `$VAR` from this process's environment, which
+        # is stale for any name THIS command assigns. Read those first, at the
+        # top level only: a `-c` body or a subshell inherits the outer
+        # assignments and must not clear them.
+        kernel_proc.set_command_assignments(command_assignments(command))
     split_subcmds, broad_git_verb = _dim_helpers()
     shell_c = _shell_c() if depth < _MAX_DEPTH else None
     here = kernel_proc.norm_path(cwd or os.getcwd())

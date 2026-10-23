@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "spacetimedb-backend-as-database",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "A database that REPLACES the backend: logic runs as modules inside the DB and clients subscribe to live state, with no API layer. For real-time multiplayer. A new paradigm, not a default."
+}

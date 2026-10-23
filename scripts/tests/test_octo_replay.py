@@ -276,7 +276,8 @@ class ReceiptJoinTest(ReplayCase):
 def orphan_deny_rules(pids, registered, since=None) -> dict:
     """Deny rule ids in these journals that no registry row carries.
 
-    The doctor's `kernel-replay` check asks exactly this question over the last
+    The doctor's `kernel-replay` check asks a scoped form of this question (per
+    firing checkout, at its committed HEAD) over the last
     7 days; the helper is here so the QUESTION is unit-tested without running
     the whole doctor against the machine's real journals.
     """

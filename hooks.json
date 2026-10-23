@@ -17,6 +17,11 @@
           "command": "python3 ~/.claude/scripts/trace-hook.py",
           "timeout": 5,
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/budget-check.py --refresh --background",
+          "timeout": 5,
+          "type": "command"
         }
       ],
       "matcher": "Agent"
@@ -61,6 +66,11 @@
           "statusMessage": "✍ client-doc-lint (entregable cliente)...",
           "timeout": 20,
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/r__posttool-bash__external-review.py",
+          "timeout": 30,
+          "type": "command"
         }
       ],
       "matcher": "Bash"
@@ -85,6 +95,17 @@
         }
       ],
       "matcher": "mcp__whatsapp__list_messages|mcp__whatsapp__get_message_context|mcp__gmail__search_emails|mcp__gmail__read_email|mcp__claude_ai_Gmail__search_threads|mcp__claude_ai_Gmail__get_thread|mcp__claude_ai_Gmail__get_message|Bash"
+    },
+    {
+      "hooks": [
+        {
+          "command": "python3 ~/.claude/scripts/r__posttool__sent-ledger.py",
+          "statusMessage": "🧾 sent-message ledger",
+          "timeout": 5,
+          "type": "command"
+        }
+      ],
+      "matcher": "mcp__gmail__send_email|mcp__claude_ai_Gmail__send_message|mcp__claude_ai_Gmail__reply|mcp__claude_ai_Gmail__forward|mcp__whatsapp__send_message|mcp__whatsapp__send_file|mcp__whatsapp__send_audio_message|Bash"
     }
   ],
   "PreToolUse": [
@@ -193,6 +214,11 @@
           "statusMessage": "⚙ kernel: one writer per tree...",
           "timeout": 5,
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/r__pretool-bash__external-review.py",
+          "timeout": 30,
+          "type": "command"
         }
       ],
       "matcher": "Bash"
@@ -222,9 +248,24 @@
     {
       "hooks": [
         {
+          "command": "python3 ~/.claude/scripts/g__pretool__export-flip.py",
+          "statusMessage": "🔒 export-flip (telemetry.export allow is the operator's)...",
+          "timeout": 5,
+          "type": "command"
+        }
+      ],
+      "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash"
+    },
+    {
+      "hooks": [
+        {
           "command": "python3 ~/.claude/scripts/g__pretool__kernel.py",
           "timeout": 5,
           "type": "command"
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/g__pretool__arming-surface.py"
         }
       ],
       "matcher": "*"
@@ -242,6 +283,11 @@
         {
           "command": "python3 ~/.claude/scripts/session-isolation-hook.py",
           "statusMessage": "♦ 4D: dimension isolation (auto-fork)...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/budget-check.py --refresh --background",
           "timeout": 5,
           "type": "command"
         },
@@ -294,6 +340,12 @@
           "type": "command"
         },
         {
+          "command": "python3 ~/.claude/scripts/g__stop__no-menu-question.py",
+          "statusMessage": "🔀 sin-menú (decide con /choice, no preguntes opción múltiple)...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
           "command": "python3 ~/.claude/scripts/source-attribution-check.py",
           "timeout": 5,
           "type": "command"
@@ -330,6 +382,17 @@
         },
         {
           "command": "python3 ~/.claude/scripts/g__stop__goal-anchor.py",
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/r__stop__friction-ledger.py",
+          "timeout": 10,
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/g__stop__reply-panel.py",
+          "statusMessage": "🧾 reply panel (PASS receipt for this exact reply)...",
+          "timeout": 20,
           "type": "command"
         }
       ]
@@ -417,7 +480,7 @@
       "hooks": [
         {
           "command": "python3 ~/.claude/scripts/r__permission-denied__journal.py",
-          "statusMessage": "\u2699 kernel: recording the harness refusal...",
+          "statusMessage": "⚙ kernel: recording the harness refusal...",
           "timeout": 5,
           "type": "command"
         }

@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-chatok",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "extracurricular@example.test"
+    ],
+    "subject": "Inscripción extraescolares 2ESO",
+    "body": "Buenos días, adjunto la hoja de inscripción firmada. Saludos."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_chat_sendok_third_party_transcript.jsonl"
+}

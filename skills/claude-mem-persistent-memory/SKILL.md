@@ -1,6 +1,8 @@
 ---
 name: claude-mem-persistent-memory
-description: "Persistent cross-session memory for coding agents: captures the session, compresses it and re-injects what is relevant later, with ~75% fewer tokens. AGPL 3.0, watch the copyleft in commercial deliverables."
+description: "Persistent cross-session memory for coding agents: captures the session, compresses it and re-injects what is relevant later, with ~75% fewer tokens. Apache-2.0 upstream, permissive."
+metadata:
+  origin: "https://github.com/thedotmack/claude-mem. This skill DECLARES no license and its manifest carries the repo default over ORIGINAL text (measured against the upstream README at the entry ref eb6344a6: ratio 0.0211, longest shared run 15 characters). The TOOL was Apache-2.0 when this entered on 2026-05-18, relicensed from AGPL-3.0 on 2026-05-08 (36b0929f). Four earlier lines here asserted AGPL 3.0 and gave copyleft advice from it; they were already false on the day they were written and are corrected."
 ---
 
 # claude-mem — Persistent Memory for Claude Code
@@ -17,13 +19,13 @@ Brain-multiplier skill. Compresses past sessions into structured context and re-
 ## When NOT to use
 
 - One-shot tasks (overhead not worth it)
-- Highly sensitive arms where AGPL copyleft creates IP issues with client deliverables — see "License caveat" below
+- Arms whose deliverables cannot carry a third-party dependency at all. The copyleft objection that used to sit here was about AGPL and does not apply: upstream has been Apache-2.0 since 2026-05-08. See "License caveat" below for what to check instead
 - Engagements where the brain's existing auto-memory at `~/.claude/projects/<arm>/memory/` already covers the need (it's lighter, no compression, no ChromaDB)
 
 ## Source of truth
 
 - Repository: `github.com/thedotmack/claude-mem` (76.5k+ stars at time of writing — verify current state)
-- License: **AGPL 3.0** ← read the License caveat section before adopting
+- License: **Apache-2.0** upstream since 2026-05-08 (36b0929f), before this skill entered on 2026-05-18. It was AGPL-3.0 until then, which is what an older reading of this repo would tell you, so check the LICENSE at the commit you actually vendor.
 - Requires: Node >= 18, ChromaDB (vector store) running locally
 - Compatible agents per repo: Claude Code, OpenClaw, Codex, Gemini, Hermes, Copilot, OpenCode and more
 - Local viewer UI typically at `localhost:37777`
@@ -48,7 +50,9 @@ After install, the next Claude Code session writes session digests automatically
 
 ## License caveat (READ before embedding in client work)
 
-AGPL 3.0 is **copyleft and triggers on network use**. If you embed claude-mem inside a hosted service you deliver to a client, that service's source code may need to be made available to its users under AGPL.
+This section used to say AGPL 3.0 and warn about network copyleft. That was WRONG at the time it was written: upstream relicensed to Apache-2.0 on 2026-05-08 (36b0929f), ten days before this skill entered the repo on 2026-05-18. Apache-2.0 is permissive and carries no network-copyleft trigger, so the warning was advice nobody needed against a license nobody had.
+
+What survives is the method, not the verdict. A license is a fact about a DATE: read the LICENSE file at the exact commit you vendor, because this repo alone has been AGPL-3.0 and then Apache-2.0, and a skill that quotes yesterday's answer is a false claim about somebody else's terms.
 
 **Safe usage patterns:**
 - Personal / internal tooling (your laptop, your brain) — no issue
@@ -73,7 +77,7 @@ claude-mem is heavier and dynamic — it captures **session-level activity** and
 ## Risk-aware rollout plan (recommended)
 
 1. Pilot on ONE arm where token cost is high and engagements are long
-2. Verify AGPL is OK for that arm's deliverables
+2. Read the upstream LICENSE at the commit you pin and verify it is OK for that arm's deliverables
 3. Measure: actual token-reduction vs claimed ~75%, retrieval quality, false positives
 4. If pilot proves out, roll to other arms one at a time
 5. Update CLAUDE.md to document the cross-session memory expectation

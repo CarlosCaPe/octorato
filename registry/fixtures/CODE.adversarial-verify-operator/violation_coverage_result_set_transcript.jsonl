@@ -1,0 +1,2 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "name": "Bash", "input": {"command": "grep -rl TODO . | head -20"}}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "La busqueda devolvio todos los resultados del repo."}]}}

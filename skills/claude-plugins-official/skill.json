@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "claude-plugins-official",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Official, Anthropic-managed directory of high quality Claude Code Plugins."
+}

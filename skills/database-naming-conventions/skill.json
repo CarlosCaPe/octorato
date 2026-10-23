@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "database-naming-conventions",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Database Naming Conventions"
+}

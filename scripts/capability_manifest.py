@@ -75,6 +75,13 @@ def scan_skills() -> list[dict]:
     for skill_dir in sorted(skills_dir.iterdir()):
         if not skill_dir.is_dir():
             continue
+        # A symlinked skill dir is an installed package (v8 PACKAGE: skills/<name> ->
+        # skills/vendor/<name>). Counting it would make docs/CAPABILITIES.md depend on
+        # which packages this machine happens to have installed, and the manifest gate
+        # at pre-push demands a machine-independent file. Packages are listed by
+        # `octo pkg list`, not here.
+        if skill_dir.is_symlink():
+            continue
         skill_file = skill_dir / "SKILL.md"
         if not skill_file.exists():
             continue
@@ -286,14 +293,16 @@ def _build_wiring_index(hooks: dict[str, list[str]]) -> set[str]:
     for m in re.finditer(r"scripts/([\w\-]+)", claude_text):
         wired.add(m.group(1))
 
-    # from README.md
-    readme = BRAIN / "README.md"
-    if readme.exists():
-        readme_text = readme.read_text(encoding="utf-8", errors="replace")
-        for m in re.finditer(r"[\w\-]+\.py", readme_text):
+    # from README.md and the long tour it points at (docs/ANATOMY.md holds the
+    # former README body, so a script named only there stays wired)
+    for prose in (BRAIN / "README.md", BRAIN / "docs" / "ANATOMY.md"):
+        if not prose.exists():
+            continue
+        prose_text = prose.read_text(encoding="utf-8", errors="replace")
+        for m in re.finditer(r"[\w\-]+\.py", prose_text):
             wired.add(m.group())
             wired.add(Path(m.group()).stem)
-        for m in re.finditer(r"scripts/([\w\-]+)", readme_text):
+        for m in re.finditer(r"scripts/([\w\-]+)", prose_text):
             wired.add(m.group(1))
 
     # invocations within scripts/ themselves

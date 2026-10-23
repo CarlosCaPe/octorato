@@ -1,0 +1,13 @@
+{
+  "session_id": "sess-arming",
+  "agent_id": "agent-a",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_arm",
+  "tool_input": {
+    "command": "python -c \"open('{{SANDBOX}}/.claude/settings.json','w').write('{}')\""
+  },
+  "cwd": "{{SANDBOX}}/wt/state-gate",
+  "_setup": {
+    "expect_names": "settings.json"
+  }
+}
