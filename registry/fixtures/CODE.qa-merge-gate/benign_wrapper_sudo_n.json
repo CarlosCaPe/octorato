@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "sudo -n gh pr list"}, "cwd": "/nonexistent/repo"}
