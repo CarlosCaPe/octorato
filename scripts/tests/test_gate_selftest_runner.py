@@ -514,6 +514,81 @@ class InheritedFds(_Base):
         self.assertEqual(got[0], got[1])          # the fork matches it
 
 
+@unittest.skipUnless(FORKS, "legs are spawned here, not forked")
+class RunnerDeath(_Base):
+    """A SIGKILLed runner never reaches its deadline kill. Its supervisor, the
+    gate and the gate's in-group children must still die with it."""
+
+    RUNNER = textwrap.dedent("""
+        import json, os, sys
+        sys.path.insert(0, sys.argv[1])
+        import gate_selftest as gs
+        if not gs._starts_like_fresh():
+            print("nofork", flush=True)
+            sys.exit(3)
+        gs.run_scripts([{"script": sys.argv[2], "input": "{}", "cwd": sys.argv[3],
+                         "env": dict(os.environ), "timeout": 120}])
+        """)
+
+    @staticmethod
+    def _alive(pid: int) -> bool:
+        try:
+            with open("/proc/%d/stat" % pid, "rb") as fh:
+                state = fh.read().rsplit(b")", 1)[1].split()[0]
+        except OSError:
+            return False
+        return state != b"Z"
+
+    def test_a_killed_runner_leaves_no_leg_process(self):
+        import signal
+        pids_file = os.path.join(self.tmp, "pids.json")
+        script = self.gate(f"""
+            import json, os, subprocess, sys, time
+            kid = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+            with open({pids_file!r} + ".tmp", "w") as fh:
+                json.dump({{"gate": os.getpid(), "sup": os.getppid(),
+                           "kid": kid.pid}}, fh)
+            os.rename({pids_file!r} + ".tmp", {pids_file!r})
+            time.sleep(120)
+            """)
+        runner = os.path.join(self.tmp, "runner.py")
+        with open(runner, "w", encoding="utf-8") as fh:
+            fh.write(self.RUNNER)
+        proc = subprocess.Popen([sys.executable, runner, str(SCRIPTS), script, self.tmp],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        pids = {}
+        try:
+            end = time.monotonic() + 20
+            while not os.path.exists(pids_file):
+                if proc.poll() is not None:
+                    self.fail("runner exited early: %r" % (proc.communicate(),))
+                if time.monotonic() > end:
+                    self.fail("the hung leg never started")
+                time.sleep(0.02)
+            with open(pids_file) as fh:
+                pids = json.load(fh)
+            for name, pid in pids.items():
+                self.assertTrue(self._alive(pid), name)
+            os.kill(proc.pid, signal.SIGKILL)
+            proc.wait(timeout=10)
+            end = time.monotonic() + 5
+            while time.monotonic() < end and any(map(self._alive, pids.values())):
+                time.sleep(0.02)
+            left = {n: p for n, p in pids.items() if self._alive(p)}
+            self.assertEqual(left, {}, "leg processes outlived the runner")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            for stream in (proc.stdout, proc.stderr):
+                stream.close()
+            for pid in pids.values():
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+
+
 class ReplacedRun(_Base):
     """runtime_census replaces subprocess.run to route every leg through the
     hook shim. A forked leg would bypass the replacement and the census would
