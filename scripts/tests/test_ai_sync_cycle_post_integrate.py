@@ -34,9 +34,6 @@ class CyclePostIntegrate(unittest.TestCase):
                 return 0, next(heads), ""
             if args == ("rev-parse", "--abbrev-ref", "HEAD"):
                 return 0, branch, ""
-            if args[:2] == ("rev-parse", "--absolute-git-dir") or \
-                    args[-1:] == ("--git-common-dir",):
-                return 0, "/brain/.git", ""
             if args[:1] == ("pull",):
                 events.append(("git", args))
                 return 0, "", ""
@@ -61,6 +58,7 @@ class CyclePostIntegrate(unittest.TestCase):
 
         ns = argparse.Namespace(message=[])
         with mock.patch.object(ai_sync, "_is_repo", return_value=True), \
+                mock.patch.object(ai_sync, "_is_linked_worktree", return_value=False), \
                 mock.patch.object(ai_sync, "git", side_effect=fake_git), \
                 mock.patch.object(ai_sync, "self_heal_origin"), \
                 mock.patch.object(ai_sync, "ensure_hooks_path"), \

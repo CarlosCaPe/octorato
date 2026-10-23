@@ -507,6 +507,8 @@ def pull(args) -> int:
                 warn("⚠ Changes available — run 'ai-pull'")
                 print(git("--no-pager", "log", "--oneline", "HEAD..@{u}")[1])
             return 0
+        if not _guard_live_root("ai-pull"):
+            return 1
         _, pre, _ = git("rev-parse", "HEAD")
         print("=== Pulling ~/.claude/ ===")
         code, out, e = git("pull")
@@ -760,16 +762,23 @@ def live_root_off_trunk(rama: str, linked_worktree: bool) -> bool:
     return not linked_worktree and not es_tronco(rama)
 
 
+def _is_linked_worktree() -> bool:
+    """A linked worktree's `.git` is a file; the main checkout's is a directory.
+
+    Read from the filesystem rather than `rev-parse --path-format`, which git
+    older than 2.31 echoes back as output instead of rejecting.
+    """
+    return (Path(_this_tree()) / ".git").is_file()
+
+
 def _guard_live_root(verb: str) -> bool:
     """Refuse to sync a live root that is off the trunk. True = go ahead."""
     _, rama, _ = git("rev-parse", "--abbrev-ref", "HEAD", quiet=True)
-    _, gd, _ = git("rev-parse", "--absolute-git-dir", quiet=True)
-    _, gc, _ = git("rev-parse", "--path-format=absolute", "--git-common-dir", quiet=True)
-    linked = bool(gd and gc) and not _same_path(gd, gc)
-    if not live_root_off_trunk(rama, linked):
+    if not live_root_off_trunk(rama, _is_linked_worktree()):
         return True
     trunk = tronco_remoto()
-    err(f"✗ {verb} aborted: the live brain {_this_tree()} is on branch '{rama}', "
+    where = "a detached HEAD" if rama == "HEAD" else f"branch '{rama}'"
+    err(f"✗ {verb} aborted: the live brain {_this_tree()} is on {where}, "
         f"not on '{trunk}'.")
     err("   Branch work belongs in a dimension worktree; the live root follows the trunk.")
     err("   Its switch is the operator's terminal step (the arming-surface gate denies it here):")
@@ -1099,11 +1108,11 @@ def cycle(args) -> int:
         err("✗ ~/.claude is not a git repo — cannot sync")
         return 1
 
-    self_heal_origin()
-    ensure_hooks_path()
-
     if not _guard_live_root("ai-sync"):
         return 1
+
+    self_heal_origin()
+    ensure_hooks_path()
 
     # Co-tenancy guard (mirrors push): never reconcile a tree a sibling SESSION on
     # THIS machine shares. Different machines have different trees, so this never
