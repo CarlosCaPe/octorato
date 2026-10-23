@@ -1,0 +1,10 @@
+{
+  "session_id": "sess-flip",
+  "tool_name": "Edit",
+  "tool_use_id": "toolu_flip",
+  "tool_input": {
+    "file_path": "arms/plain/arm.json",
+    "old_string": "\"kind\": \"arm\",",
+    "new_string": "\"kind\": \"arm\",\n  \"telemetry\": {\"export\": \"allow\"},"
+  }
+}

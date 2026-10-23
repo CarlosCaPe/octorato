@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "One value is missing.\n\ninput-needed: Shall I go ahead with the export?\n\nProvenance: Basis: the purchase order (no RFC field) \u00b7 Engine: main loop"}]}}

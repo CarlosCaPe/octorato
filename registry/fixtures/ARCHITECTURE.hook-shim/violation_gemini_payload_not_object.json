@@ -1,0 +1,8 @@
+{
+  "harness": "gemini-cli",
+  "gate": "g__pretool__arming-surface.py",
+  "payload_raw": "[1, 2]",
+  "_setup": {
+    "expect_reason": "not a JSON object"
+  }
+}

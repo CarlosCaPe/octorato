@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-rp-violation-ac24-reused-seats-all-handed-back",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Esperando la segunda ronda de los revisores.",
+  "transcript_path": "violation_ac24_reused_seats_all_handed_back_transcript.jsonl",
+  "_fixture": {
+    "stderr_lacks": [
+      "cannot decide"
+    ]
+  }
+}

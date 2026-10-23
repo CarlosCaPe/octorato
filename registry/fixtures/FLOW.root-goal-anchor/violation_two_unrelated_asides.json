@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-asides",
+  "transcript_path": "violation_two_unrelated_asides_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

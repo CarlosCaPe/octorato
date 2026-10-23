@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-rp-violation-ac26-probe-concession-agent-from-previous-turn",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Tienes raz\u00f3n, Codex queda fuera.",
+  "transcript_path": "violation_ac26_probe_concession_agent_from_previous_turn_transcript.jsonl",
+  "_fixture": {
+    "stderr_lacks": [
+      "cannot decide"
+    ]
+  }
+}

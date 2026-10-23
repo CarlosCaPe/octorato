@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-rp-benign-ac22-summary-opened-pending-status-line",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Panel running on the draft, the reply follows when it returns.",
+  "transcript_path": "benign_ac22_summary_opened_pending_status_line_transcript.jsonl",
+  "_fixture": {
+    "expect_spent": [
+      "toolu_s1"
+    ]
+  }
+}

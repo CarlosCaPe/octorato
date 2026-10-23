@@ -1,0 +1,42 @@
+{
+  "arms_paths": {
+    "open": "arms/open",
+    "closed": "arms/closed"
+  },
+  "dirs": [
+    "arms/open/src",
+    "arms/closed/src",
+    "elsewhere"
+  ],
+  "files": {
+    "arms/open/arm.json": {
+      "kind": "arm",
+      "name": "open",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      },
+      "description": "x",
+      "dependencies": {},
+      "homepage": "https://example.invalid/r"
+    },
+    "arms/closed/arm.json": {
+      "kind": "arm",
+      "name": "closed",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "deny"
+      }
+    }
+  },
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/open",
+    "transcript_path": "{{SANDBOX}}/t.jsonl",
+    "prompt": "ünïcode"
+  },
+  "_comment": "The arm template shape with export allow, plus unrelated payload keys."
+}

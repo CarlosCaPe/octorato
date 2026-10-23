@@ -75,6 +75,8 @@ skills/vendor/
 # Skills the harness syncs from its own catalog into the brain tree (skills/synced/<id>/...).
 # Foreign code, harness-owned and regenerated; never part of the public brain.
 skills/synced/
+# Removed skills the harness parks in skills/.trash/<id>/ before deleting them. Never brain content.
+skills/.trash/
 agents/vendor/
 # packages.lock.json.<pid>.tmp (atomic replace) and packages.lock.json.lock
 # (the advisory guard octo_pkg holds around load-modify-save). Both are per-process

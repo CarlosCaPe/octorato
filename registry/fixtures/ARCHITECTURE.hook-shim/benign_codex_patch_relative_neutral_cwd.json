@@ -1,0 +1,19 @@
+{
+  "harness": "codex-cli",
+  "gate": "g__pretool__arming-surface.py",
+  "payload": {
+    "session_id": "sess-shim",
+    "transcript_path": null,
+    "cwd": "{{SANDBOX}}/wt/shim/gone",
+    "hook_event_name": "PreToolUse",
+    "model": "fixture",
+    "permission_mode": "default",
+    "turn_id": "fixture",
+    "tool_use_id": "toolu_shim",
+    "tool_name": "apply_patch",
+    "tool_input": {
+      "command": "*** Begin Patch\n*** Add File: ../hooks.json\n+x\n*** End Patch\n"
+    }
+  },
+  "neutral_cwd": true
+}

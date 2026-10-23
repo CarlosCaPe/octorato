@@ -1,0 +1,8 @@
+{
+  "command": "{{NODE}} {{CODEX}} exec --skip-git-repo-check -m review-model 'Review this block and end with the panel lines.'",
+  "expect_complete": 0,
+  "output": "Reviewed.\nPANEL-VERDICT: PASS\nPANEL-SHA256: 0000000000000000000000000000000000000000000000000000000000000000\n",
+  "env": {
+    "OPENAI_BASE_URL": "http://127.0.0.1:9"
+  }
+}

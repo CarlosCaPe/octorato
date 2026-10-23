@@ -29,6 +29,8 @@ A skill that wants to be installable by a stranger ships a `skill.json` alongsid
 | `capabilities` | — | privileged tools the skill declares it needs (blast radius) |
 | `dependencies` | — | `{ skill-slug: semver-range }` |
 | `author` / `homepage` | — | attribution / source URL |
+| `kind` | — | `skill` (absent means skill), `arm`, or `plugin`: a signed Claude Code plugin whose every hook runs through `scripts/g__wrap__export-guard.py`, installed by `octo_pkg.py install --kind plugin` under `plugins/octorato-local/<name>` (v11 AC-13) |
+| `telemetry.export` | — | arm only (refused unless `kind` is `arm`): `deny` or `allow`, absent means `deny` (see below) |
 
 Validate a manifest:
 
@@ -51,6 +53,27 @@ vendor dir); this script only knows the paths it was handed.
 `homepage` is http(s) only, enforced by a `pattern`. `format: "uri"` is an annotation most
 validators do not enforce, and where it is enforced `javascript:alert(1)` is a well-formed
 URI that passes it.
+
+## `telemetry.export`: an arm's Export_Policy
+
+An arm's `arm.json` (`kind: arm`) may carry the Export_Policy of the v11 tracing spec:
+
+```json
+"telemetry": { "export": "deny" }
+```
+
+| Value | Meaning |
+|---|---|
+| `deny` | The template default. No session in this arm starts the upstream tracing hook: `scripts/g__wrap__export-guard.py` exits 0 with no output and spawns nothing. |
+| `allow` | The upstream tracing hook runs for sessions in this arm, with its own redaction left on. |
+| absent | The field, or the whole `telemetry` object, missing: read as `deny` (AC-09). |
+
+Exactly those two strings. The schema refuses any other value at install time, and the
+guard reads anything it cannot parse, or any value other than `allow`, as `deny`, so a
+typo can only ever close the arm. Only the operator writes `allow`, from his own
+terminal: `scripts/g__pretool__export-flip.py` denies an agent write that sets it (AC-16).
+`templates/arm/arm.json.template` ships `deny`, so a new arm says so in writing rather
+than by omission.
 
 ## How `license` is decided, and the three ways it used to be wrong
 

@@ -1,0 +1,12 @@
+{
+  "session_id": "sess-arming",
+  "agent_id": "agent-a",
+  "tool_name": "Edit",
+  "tool_use_id": "toolu_arm",
+  "tool_input": {
+    "file_path": "{{SANDBOX}}/plugins/installed_plugins.json",
+    "old_string": "{",
+    "new_string": "{\"plugins\": {}, "
+  },
+  "cwd": "{{SANDBOX}}/wt/state-gate"
+}

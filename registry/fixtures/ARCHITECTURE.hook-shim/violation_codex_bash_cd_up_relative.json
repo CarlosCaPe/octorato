@@ -1,0 +1,21 @@
+{
+  "harness": "codex-cli",
+  "gate": "g__pretool__arming-surface.py",
+  "payload": {
+    "session_id": "sess-shim",
+    "transcript_path": null,
+    "cwd": "{{SANDBOX}}/wt/shim/proj",
+    "hook_event_name": "PreToolUse",
+    "model": "fixture",
+    "permission_mode": "default",
+    "turn_id": "fixture",
+    "tool_use_id": "toolu_shim",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd .. && apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: .claude/hooks.json\n+x\n*** End Patch\nEOF\n"
+    }
+  },
+  "_setup": {
+    "expect_reason": "relative patch path"
+  }
+}

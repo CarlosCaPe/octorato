@@ -1,0 +1,71 @@
+{
+  "_comment": "Reviewer_Pins (v11 phase 4). Copy to ~/.claude/company/config/reviewer-pins.json ONLY through the command `python3 ~/.claude/scripts/external_review.py pin-command` prints, run by the operator in a terminal. Never edited by an agent: the live file is on the arming surface. Paths below are placeholders.",
+  "schema": 1,
+  "engines": {
+    "codex": {
+      "entries": [
+        {
+          "role": "interpreter",
+          "path": "/opt/node/bin/node",
+          "realpath": "/opt/node/bin/node",
+          "kind": "file",
+          "sha256": "<64 hex>",
+          "pin_root": "/opt/node"
+        },
+        {
+          "role": "script",
+          "path": "/opt/node/lib/node_modules/@openai/codex/bin/codex.js",
+          "realpath": "/opt/node/lib/node_modules/@openai/codex/bin/codex.js",
+          "kind": "file",
+          "sha256": "<64 hex>",
+          "pin_root": "/opt/node"
+        },
+        {
+          "role": "engine",
+          "path": "/opt/node/lib/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+          "realpath": "/opt/node/lib/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+          "kind": "file",
+          "sha256": "<64 hex>",
+          "pin_root": "/opt/node"
+        }
+      ]
+    },
+    "gemini": {
+      "entries": [
+        {
+          "role": "interpreter",
+          "path": "/opt/node/bin/node",
+          "realpath": "/opt/node/bin/node",
+          "kind": "file",
+          "sha256": "<64 hex>",
+          "pin_root": "/opt/node"
+        },
+        {
+          "role": "script",
+          "path": "/opt/node/lib/node_modules/@google/gemini-cli/bundle/gemini.js",
+          "realpath": "/opt/node/lib/node_modules/@google/gemini-cli/bundle/gemini.js",
+          "kind": "file",
+          "sha256": "<64 hex>",
+          "pin_root": "/opt/node"
+        },
+        {
+          "role": "engine",
+          "path": "/opt/node/lib/node_modules/@google/gemini-cli/bundle",
+          "realpath": "/opt/node/lib/node_modules/@google/gemini-cli/bundle",
+          "kind": "dir",
+          "sha256": "<64 hex over sorted (relative path, file sha256) pairs>",
+          "pin_root": "/opt/node"
+        }
+      ]
+    }
+  },
+  "files": {
+    "~/.bashrc": "<64 hex, or null when absent>",
+    "~/.bash_profile": null,
+    "~/.profile": "<64 hex, or null when absent>",
+    "~/.codex/config.toml": "<64 hex, or null when absent>",
+    "~/.gemini/settings.json": null,
+    "~/.gemini/.env": null,
+    "~/.env": "<64 hex, or null when absent>"
+  }
+}

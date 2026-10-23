@@ -123,7 +123,7 @@ A bash hook that runs on **every** `git push`, including a plain `git commit && 
 
 ### Enabling enforcement on a fresh clone
 
-Git does not version `core.hooksPath`, so the hook must be activated once per clone:
+Git does not version `core.hooksPath`, so the hook must be activated once per clone. `python3 ~/.claude/scripts/quickstart.py` does it for you and checks that `pre-push` is executable; by hand it is:
 
 ```bash
 git config core.hooksPath .githooks

@@ -1,0 +1,36 @@
+{
+  "arms_paths": {
+    "open": "arms/open",
+    "closed": "arms/closed"
+  },
+  "files": {
+    "arms/open/arm.json": {
+      "kind": "arm",
+      "name": "open",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    },
+    "arms/closed/arm.json": {
+      "kind": "arm",
+      "name": "closed",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "deny"
+      }
+    }
+  },
+  "payload_raw": "{\"cwd\": \"{{SANDBOX}}/elsewhere\", \"cwd\": \"{{SANDBOX}}/arms/open\"}",
+  "dirs": [
+    "arms/open/src",
+    "arms/closed/src",
+    "elsewhere"
+  ],
+  "_comment": "A payload repeating cwd: refused, not last-wins.",
+  "_setup": {
+    "expect_reason": "repeated key"
+  }
+}

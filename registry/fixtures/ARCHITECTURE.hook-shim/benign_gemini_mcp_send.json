@@ -1,0 +1,24 @@
+{
+  "harness": "gemini-cli",
+  "gate": "g__pretool-mcp__outward-send.py",
+  "payload": {
+    "session_id": "fx-h",
+    "transcript_path": "../COMMS.outward-send-gate/benign_hatch_in_prompt_transcript.jsonl",
+    "cwd": "/home/user",
+    "hook_event_name": "BeforeTool",
+    "timestamp": "1970-01-01T00:00:00Z",
+    "tool_name": "mcp_gmail_send_email",
+    "tool_input": {
+      "to": [
+        "x@ejemplo.com"
+      ],
+      "subject": "Queja",
+      "body": "No reconozco ese cargo."
+    },
+    "mcp_context": {
+      "server_name": "gmail",
+      "tool_name": "send_email"
+    }
+  },
+  "home_from": "COMMS.outward-send-gate"
+}

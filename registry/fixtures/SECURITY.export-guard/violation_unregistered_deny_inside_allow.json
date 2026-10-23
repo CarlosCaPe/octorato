@@ -1,0 +1,30 @@
+{
+  "_comment": "A client repo cloned into an allow arm's tree before it was registered keeps its own deny (QA probe).",
+  "_setup": {
+    "expect_reason": "Export_Policy of the arm.json at"
+  },
+  "arms_paths": {
+    "open": "arms/open"
+  },
+  "files": {
+    "arms/open/arm.json": {
+      "kind": "arm",
+      "name": "open",
+      "telemetry": {
+        "export": "allow"
+      }
+    },
+    "arms/open/vendor/client/arm.json": {
+      "kind": "arm",
+      "name": "client",
+      "telemetry": {
+        "export": "deny"
+      }
+    }
+  },
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/open/vendor/client"
+  }
+}

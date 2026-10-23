@@ -1,0 +1,31 @@
+{
+  "arms_paths": {
+    "open": "links/open"
+  },
+  "files": {
+    "arms/open/arm.json": {
+      "kind": "arm",
+      "name": "open",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    }
+  },
+  "dirs": [
+    "arms/open/src"
+  ],
+  "symlinks": [
+    [
+      "links/open",
+      "arms/open"
+    ]
+  ],
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/open/src"
+  },
+  "_comment": "The registered path is a symlink to the real arm root."
+}

@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "timeout 5 env -S gh pr merge 1"}, "cwd": "/nonexistent/repo"}

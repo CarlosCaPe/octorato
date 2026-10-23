@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-rp-violation-ac24-status-with-claim-word-es",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Las correcciones locales est\u00e1n hechas y el revisor sigue.",
+  "transcript_path": "violation_ac24_status_with_claim_word_es_transcript.jsonl",
+  "_fixture": {
+    "stderr_lacks": [
+      "cannot decide"
+    ]
+  }
+}

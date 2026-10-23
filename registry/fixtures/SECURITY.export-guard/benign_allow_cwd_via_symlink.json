@@ -1,0 +1,43 @@
+{
+  "arms_paths": {
+    "open": "arms/open",
+    "closed": "arms/closed"
+  },
+  "files": {
+    "arms/open/arm.json": {
+      "kind": "arm",
+      "name": "open",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    },
+    "arms/closed/arm.json": {
+      "kind": "arm",
+      "name": "closed",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "deny"
+      }
+    }
+  },
+  "dirs": [
+    "arms/open/src",
+    "arms/closed/src",
+    "elsewhere"
+  ],
+  "symlinks": [
+    [
+      "elsewhere/ln",
+      "arms/open/src"
+    ]
+  ],
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/elsewhere/ln"
+  },
+  "_comment": "The cwd is a symlink from outside into the allow arm: the real path decides."
+}
