@@ -1,0 +1,35 @@
+{
+  "arms_paths": {
+    "outer": "arms/closed",
+    "inner": "arms/closed/inner"
+  },
+  "files": {
+    "arms/closed/arm.json": {
+      "kind": "arm",
+      "name": "outer",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "deny"
+      }
+    },
+    "arms/closed/inner/arm.json": {
+      "kind": "arm",
+      "name": "inner",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    }
+  },
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/closed/inner"
+  },
+  "_comment": "An allow arm nested in a deny arm inherits the deny.",
+  "_setup": {
+    "expect_reason": "Export_Policy of the arm"
+  }
+}

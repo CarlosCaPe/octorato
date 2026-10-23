@@ -1,6 +1,9 @@
 ---
 name: project-timeline-report
 description: Generate a "Journey Into [Project]" narrative report analyzing a project's entire development history from git log, CHANGELOG, and release notes. Use when user asks for a timeline report, project history analysis, development journey, full project report, or "what's the story of this project?". No external dependencies.
+license: NOASSERTION
+metadata:
+  origin: "Adapted from https://github.com/thedotmack/claude-mem (timeline-report skill). Entered this repo on 2026-05-15 in commit b71318d, when upstream had been Apache-2.0 since 2026-05-08 (commit 36b0929f). It declares no adoption date of its own; the two sibling skills in that same commit declare adopted: 2026-04-13, when upstream was AGPL-3.0-only. The dates name different licenses and neither is established as the one that attaches, so no license is asserted."
 ---
 
 # Project Timeline Report

@@ -68,7 +68,7 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     env.update({
         "GIT_AUTHOR_NAME": "fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
         "GIT_COMMITTER_NAME": "fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
-        "HOME": str(cwd),
+        "HOME": str(cwd), "USERPROFILE": str(cwd),
     })
     return subprocess.run(["git", *args], cwd=str(cwd), env=env,
                           capture_output=True, text=True)
@@ -142,7 +142,7 @@ class OrphanJudgementScope(unittest.TestCase):
             + appends
         )
         cp = subprocess.run([sys.executable, "-c", driver],
-                            env=dict(os.environ, HOME=str(home)),
+                            env=dict(os.environ, HOME=str(home), USERPROFILE=str(home)),
                             capture_output=True, text=True)
         self.assertEqual(cp.returncode, 0, cp.stderr)
         return home
@@ -156,7 +156,7 @@ class OrphanJudgementScope(unittest.TestCase):
             "print(json.dumps({'status': r.status, 'message': r.message}))\n"
         )
         cp = subprocess.run([sys.executable, "-c", driver],
-                            env=dict(os.environ, HOME=str(home)),
+                            env=dict(os.environ, HOME=str(home), USERPROFILE=str(home)),
                             capture_output=True, text=True, cwd=str(self.brain))
         self.assertEqual(cp.returncode, 0, cp.stderr)
         return json.loads(cp.stdout.strip().splitlines()[-1])

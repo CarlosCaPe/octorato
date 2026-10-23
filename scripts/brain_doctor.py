@@ -188,27 +188,202 @@ def check_interpreter(fix: bool) -> Result:
                   "install Python 3.8+ and ensure it is on PATH")
 
 
+# The distribution name at the start of a requirement line; what follows it (extras,
+# a version specifier, an environment marker) is not part of the name.
+_REQ_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+# A line that is a bare URL or VCS reference names no distribution of its own, and
+# neither does a local path or an archive file.
+_REQ_URL = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*://|git\+|hg\+|svn\+|bzr\+)")
+_REQ_PATH = re.compile(r"^[./~]|[/\\]|\.(?:whl|zip|tar\.gz|tgz|tar\.bz2)$|^[A-Za-z]:")
+_REQ_INCLUDE = re.compile(r"^(?:-r|--requirement)(?:\s+|=)?(\S+)$")
+
+
+def _read_requirements(path: Path, seen: set | None = None, broken: list | None = None) -> list:
+    """(name, marker) for every requirement, following `-r` / `--requirement`
+    includes relative to the including file. Option lines (`-c` constraints
+    included), bare URLs, local paths and archives carry no distribution name and
+    are skipped; a cycle of includes is read once. An include that does not exist
+    is appended to `broken`: pip refuses such a file, and dropping it silently took
+    every requirement it held out of the check."""
+    seen = seen if seen is not None else set()
+    real = path.resolve()
+    if real in seen:
+        return []
+    if not path.is_file():
+        if broken is not None:
+            broken.append(str(path))
+        return []
+    seen.add(real)
+    out = []
+    # Join continuation lines first, as pip does: `pip-compile --generate-hashes`
+    # writes `name==1.0 \` and the hashes below it, and an unjoined trailing
+    # backslash read the requirement as a path and dropped it from the check. Like
+    # pip, a comment line is never joined to the next one.
+    lines, buf = [], ""
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if not buf and raw.lstrip().startswith("#"):
+            lines.append(raw)
+            continue
+        if raw.endswith("\\"):
+            buf += raw[:-1] + " "
+            continue
+        lines.append(buf + raw)
+        buf = ""
+    if buf:
+        lines.append(buf)
+    for raw in lines:
+        line = raw.split(" #", 1)[0].split("\t#", 1)[0].strip()
+        if not line or line.startswith("#"):
+            continue
+        inc = _REQ_INCLUDE.match(line)
+        if inc:
+            out += _read_requirements(path.parent / inc.group(1), seen, broken)
+            continue
+        if line.startswith("-") or _REQ_URL.match(line):
+            continue
+        spec, _, marker = line.partition(";")
+        spec = spec.split(" --", 1)[0].strip()  # per-requirement options (--hash=...)
+        marker = marker.split(" --", 1)[0].strip()
+        name = spec.split("@", 1)[0].strip() if "@" in spec else spec
+        if _REQ_PATH.search(name):
+            continue
+        m = _REQ_NAME.match(name)
+        if m:
+            out.append((m.group(0), marker.strip()))
+    return out
+
+
+# requirements.txt names DISTRIBUTIONS, and a distribution's import name can differ
+# from it: `pyyaml` is imported as `yaml`. Probing `import <name>` reported PyYAML
+# missing where it was installed. Probing only the metadata was weaker still: a
+# distribution whose own dependency is gone keeps its metadata, so it read as
+# present while `import` failed. The probe does both: the distribution must be
+# installed, and each top-level module it provides must import.
+#
+# Which modules a distribution provides comes from packages_distributions(), then
+# top_level.txt. A listed module that is not on the path is skipped (some packages
+# list one they never ship), unless NONE of the listed modules is there, which is a
+# broken install. A listed module that resolves only as a namespace package while
+# the distribution's own RECORD lists an `__init__.py` for it is a leftover
+# directory, and counts as absent.
+#
+# With no list from those two, the modules its entry points run are used. With no
+# list at all the import name is unknown. Debian strips RECORD and a
+# hatchling build writes no top_level.txt, so Ubuntu's own python3-jsonschema is in
+# this case, and so is any requirement on Python < 3.10 without top_level.txt. The
+# name is tried as a module; when no such module exists the metadata is all there
+# is, and that is reported as UNVERIFIED (a WARN), never as importable, because
+# reading it as a PASS hid a deleted jsonschema module and reading it as missing
+# called PyGObject (module `gi`) absent.
+#
+# An environment marker is evaluated in the TARGET interpreter, the one it
+# describes. Without `packaging` (or pip's vendored copy) the requirement is checked
+# as written.
+#
+# Runs in the target interpreter: argv[1] is the distribution, argv[2] the marker.
+# Exit codes: 0 verified, 3 metadata only, 4 unreadable marker, 5 excluded by its
+# marker, anything else missing or broken.
+_DEP_PROBE = """
+import importlib, importlib.metadata as md, importlib.util, re, sys
+name, marker = sys.argv[1], sys.argv[2]
+if marker:
+    try:
+        from packaging.markers import Marker, InvalidMarker
+    except ImportError:
+        try:
+            from pip._vendor.packaging.markers import Marker, InvalidMarker
+        except ImportError:
+            Marker = None
+    if Marker is not None:
+        try:
+            applies = Marker(marker).evaluate()
+        except Exception:  # InvalidMarker, and evaluation errors such as InvalidVersion
+            sys.exit(4)
+        if not applies:
+            sys.exit(5)
+dist = md.distribution(name)
+norm = lambda n: re.sub(r"[-_.]+", "_", n).lower()
+listed = set()
+try:
+    for mod, owners in md.packages_distributions().items():
+        if any(norm(o) == norm(dist.metadata["Name"]) for o in owners):
+            listed.add(mod)
+except AttributeError:
+    pass
+if not listed:
+    listed = set((dist.read_text("top_level.txt") or "").split())
+if not listed:
+    # Entry points name the modules they run: Ubuntu's python3-jsonschema has no
+    # RECORD and no top_level.txt, but its console script points at jsonschema.cli.
+    # Only a module named after the distribution counts: a plugin's entry point
+    # names its HOST, and trusting that blamed the plugin for a missing host, or
+    # passed a plugin whose own module was gone.
+    named = {ep.value.split(":")[0].split(".")[0].strip() for ep in dist.entry_points}
+    listed = {m for m in named if norm(m) == norm(name)}
+listed = {m for m in listed if not m.startswith("_") and m.isidentifier()}
+# RECORD read raw: from 3.12 Distribution.files drops entries that no longer exist
+# on disk, which is exactly the file a leftover directory has lost.
+shipped = {line.split(",", 1)[0].replace("\\\\", "/")
+           for line in (dist.read_text("RECORD") or "").splitlines() if line}
+
+def real(mod):
+    spec = importlib.util.find_spec(mod)
+    if spec is None:
+        return False
+    if spec.origin in (None, "namespace") and mod + "/__init__.py" in shipped:
+        return False
+    return True
+
+if listed:
+    present = [m for m in sorted(listed) if real(m)]
+    if not present:
+        sys.exit("none of the modules " + ", ".join(sorted(listed)) + " is on the path")
+else:
+    guess = norm(name)
+    present = [guess] if guess.isidentifier() and real(guess) else []
+for mod in present:
+    importlib.import_module(mod)
+if not present:
+    sys.exit(3)
+"""
+
+
 def check_python_deps(fix: bool) -> Result:
     key = "python-deps"
     req_file = CLAUDE_DIR / "requirements.txt"
     if not req_file.exists():
         return Result(key, WARN, "no requirements.txt at brain root",
                       "create ~/.claude/requirements.txt listing third-party deps")
-    required = []
-    for line in req_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        name = line.split("==")[0].split(">=")[0].split("<")[0].split("[")[0].strip()
-        if name:
-            required.append(name)
-    missing = []
-    for pkg in required:
-        probe = run([PYTHON or "python3", "-c", f"import {pkg}"])
-        if probe.returncode != 0:
-            missing.append(pkg)
+    broken_includes: list = []
+    reqs = _read_requirements(req_file, broken=broken_includes)
+    if broken_includes:
+        return Result(key, FAIL,
+                      f"requirements include not found: {', '.join(broken_includes)}; "
+                      f"the requirements it lists are not checked",
+                      "fix the -r path in requirements.txt")
+    if not reqs:
+        return Result(key, WARN, "requirements.txt declares no distribution",
+                      "list the brain's third-party imports in ~/.claude/requirements.txt")
+    verified, unverified, excluded, bad_marker, missing = [], [], [], [], []
+    for name, marker in reqs:
+        rc = run([PYTHON or "python3", "-c", _DEP_PROBE, name, marker]).returncode
+        {0: verified, 3: unverified, 4: bad_marker, 5: excluded}.get(rc, missing).append(name)
+    notes = []
+    if excluded:
+        notes.append(f"not for this interpreter by marker: {', '.join(excluded)}")
+    if unverified:
+        notes.append(f"installed, module name unknown so the import is unverified: "
+                     f"{', '.join(unverified)}")
+    tail = (" | " + "; ".join(notes)) if notes else ""
+    if bad_marker:
+        return Result(key, FAIL,
+                      f"unreadable environment marker for: {', '.join(bad_marker)}{tail}",
+                      "fix the marker after ';' in requirements.txt")
     if not missing:
-        return Result(key, PASS, f"all declared deps importable ({', '.join(required)})")
+        status = WARN if unverified else PASS
+        return Result(key, status,
+                      f"declared deps installed and importable ({', '.join(verified) or 'none'}){tail}",
+                      "an import name the probe cannot find: check it by hand" if unverified else "")
     if fix:
         install = run([PYTHON or "python3", "-m", "pip", "install", "--user",
                        "-r", str(req_file)])
@@ -218,7 +393,7 @@ def check_python_deps(fix: bool) -> Result:
                       f"pip install failed (missing: {', '.join(missing)})",
                       f"run manually: pip install --user -r {req_file}")
     return Result(key, FAIL,
-                  f"missing deps: {', '.join(missing)} — heartbeat/connectome will silently degrade",
+                  f"missing deps: {', '.join(missing)}: heartbeat/connectome will silently degrade{tail}",
                   f"pip install --user -r {req_file}  (or rerun with --fix)")
 
 
@@ -502,9 +677,15 @@ def check_arms_config(fix: bool) -> Result:
     return Result(key, PASS, "arms-paths.json present and valid JSON")
 
 
-def check_sync_targets(fix: bool) -> list[Result]:
+def check_sync_targets(fix: bool, arms_file: Path | None = None,
+                       registry: Path | None = None) -> list[Result]:
+    """Every arm's mirrors equal its .claude/CLAUDE.md: the two base mirrors plus
+    the instruction file of every `supported` harness (v11 AC-07). WARN, never
+    FAIL: a mirror that is a symlink (sync refuses to write through it), and an
+    instruction file of a harness that is NOT supported, which sync leaves in
+    place and no longer updates (a stale mirror)."""
     key = "sync-targets"
-    p = CLAUDE_DIR / "company" / "config" / "arms-paths.json"
+    p = arms_file or (CLAUDE_DIR / "company" / "config" / "arms-paths.json")
     if not p.exists():
         return [Result(key, WARN, "arms-paths.json absent — skipping sync-target verification",
                        "create arms-paths.json to enable")]
@@ -513,7 +694,21 @@ def check_sync_targets(fix: bool) -> list[Result]:
     except Exception as e:
         return [Result(key, FAIL, f"arms-paths.json unreadable: {e}", "fix JSON")]
 
+    try:
+        sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
+        import ai_sync
+        mirrors = [*ai_sync.BASE_MIRRORS,
+                   *ai_sync.harness_instruction_files(registry, quiet=True)]
+        stale_names = ai_sync.harness_instruction_files(registry, supported=False, quiet=True)
+        refusal = ai_sync.mirror_refusal
+    except Exception as e:  # keep the base check alive if ai_sync cannot load
+        mirrors, stale_names, refusal = [".github/copilot-instructions.md", ".cursorrules"], [], None
+        results_note = f"ai_sync unavailable ({type(e).__name__}); base mirrors only"
+    else:
+        results_note = None
     results = []
+    if results_note:
+        results.append(Result(key, WARN, results_note, "fix scripts/ai_sync.py"))
     checked = 0
     for arm, value in arms.items():
         repo = resolve_home_relative(value)
@@ -527,8 +722,14 @@ def check_sync_targets(fix: bool) -> list[Result]:
                                   "ensure arm has .claude/CLAUDE.md"))
             continue
         src_bytes = read_bytes(source)
-        for mirror_rel in (".github/copilot-instructions.md", ".cursorrules"):
+        for mirror_rel in mirrors:
             mirror = repo / mirror_rel
+            why = refusal(repo, mirror_rel) if refusal else None
+            if why:
+                results.append(Result(f"{key}:{arm}", WARN,
+                                      f"{arm}: {mirror_rel} not synced, {why}",
+                                      "replace it with a regular file; sync never writes through a link"))
+                continue
             if not mirror.exists():
                 results.append(Result(f"{key}:{arm}", WARN,
                                       f"{arm}: {mirror_rel} missing",
@@ -538,7 +739,13 @@ def check_sync_targets(fix: bool) -> list[Result]:
                 results.append(Result(f"{key}:{arm}", WARN,
                                       f"{arm}: {mirror_rel} differs from .claude/CLAUDE.md",
                                       "run sync-ai-docs to re-sync mirror"))
-        # if both mirrors matched, no per-mirror result emitted; add a PASS marker
+        for stale_rel in stale_names:
+            if os.path.lexists(repo / stale_rel):
+                results.append(Result(f"{key}:{arm}", WARN,
+                                      f"{arm}: {stale_rel} is a stale mirror; its harness is not "
+                                      "`supported` in registry/runtimes.yaml, so sync no longer updates it",
+                                      "delete it in the arm, or keep it knowing it will not track CLAUDE.md"))
+        # if every mirror matched, no per-mirror result emitted; add a PASS marker
         arm_problems = [r for r in results if r.key == f"{key}:{arm}"]
         if not arm_problems:
             results.append(Result(f"{key}:{arm}", PASS, f"{arm}: mirrors in sync"))
@@ -547,6 +754,42 @@ def check_sync_targets(fix: bool) -> list[Result]:
         return [Result(key, WARN, "no arm repos resolve on this machine",
                        "clone arm repos or update arms-paths.json")]
     return results
+
+
+def check_reply_panel_arm_env(fix: bool, arms_file: Path | None = None) -> Result:
+    """v11 (FLOW.panel-before-reply, AC-16, residual R-10): OCTO_REPLY_PANEL in
+    an arm's `.claude/settings*.json` env block switches the reply panel off
+    for every later session launched in that arm, and the arming surface does
+    not see those scopes. Warn, naming the file; never block. Only the arm
+    paths listed in arms-paths.json are scanned."""
+    key = "reply-panel-arm-env"
+    p = arms_file or (CLAUDE_DIR / "company" / "config" / "arms-paths.json")
+    if not p.exists():
+        return Result(key, PASS, "arms-paths.json absent; no arm settings scanned")
+    try:
+        arms = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        return Result(key, WARN, f"arms-paths.json unreadable, arm settings not scanned: {e}",
+                      "fix arms-paths.json")
+    hits, scanned = [], 0
+    for value in (arms.values() if isinstance(arms, dict) else []):
+        repo = resolve_home_relative(value)
+        if repo is None:
+            continue
+        for f in sorted((repo / ".claude").glob("settings*.json")):
+            scanned += 1
+            try:
+                env = json.loads(f.read_text(encoding="utf-8")).get("env")
+            except Exception:
+                continue
+            if isinstance(env, dict) and "OCTO_REPLY_PANEL" in env:
+                hits.append(str(f))
+    if hits:
+        return Result(key, WARN, f"{len(hits)} arm settings file(s) set OCTO_REPLY_PANEL in env: "
+                      + "; ".join(hits[:5]),
+                      "the off switch belongs to the shell that launches Claude Code; "
+                      "remove it from these files unless the operator put it there")
+    return Result(key, PASS, f"no arm settings file sets OCTO_REPLY_PANEL ({scanned} scanned)")
 
 
 def check_blocklist(fix: bool) -> Result:
@@ -569,6 +812,29 @@ def check_finops_enforcement(fix: bool) -> Result:
         return Result(key, WARN,
                       "budgets.yaml absent — per-arm budget caps are NOT enforced (FinOps off)",
                       "cp budgets.yaml.example budgets.yaml, then set monthly_usd_cap per arm")
+    # Read it the way budget-check.py reads it: a file in a shape the gate does
+    # not read (an `arms:` map, say) enforced nothing while this line said ON.
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_budget_check_doctor", CLAUDE_DIR / "scripts" / "budget-check.py")
+        bc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bc)
+        try:
+            import yaml  # type: ignore[import-not-found]
+            loaded = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+            problems = bc.config_problems(loaded)
+        except ImportError:
+            problems = ["PyYAML is not installed, so budget-check cannot read budgets.yaml"]
+        except Exception as e:  # noqa: BLE001
+            problems = [f"budgets.yaml does not parse: {e}"]
+        fix = bc.CONFIG_FIX
+    except Exception as e:  # noqa: BLE001
+        problems, fix = [f"budget-check.py could not be loaded to read the config: {e}"], \
+            "convert to the budgets: list documented in budget-check.py"
+    if problems:
+        return Result(key, WARN, "budgets.yaml is present but budget-check cannot read it: "
+                      + "; ".join(problems), fix)
     n = cfg.read_text(encoding="utf-8", errors="ignore").count("monthly_usd_cap")
     return Result(key, PASS, f"FinOps enforcement ON — budgets.yaml present ({n} cap line(s))")
 
@@ -2401,6 +2667,87 @@ def check_packages_verified(fix: bool) -> Result:
                   f"arms validated)")
 
 
+_SPEC_GATE_CMD = (r'^[ \t]*if[ \t]+![ \t]+"?\$\{?PYTHON\}?"?[ \t]+'
+                  r'[^|;]*spec_lint\.py[^|;]*--push-range[^|;]*;[ \t]*then[ \t]*$')
+
+
+def _spec_gate_blocks(text: str) -> bool:
+    """The stanza must be `if ! "$PYTHON" ... spec_lint.py --push-range ...; then`
+    and its body must reach `exit 1` before the matching `fi`. A presence grep
+    alone matched `... || true` and `...; :`, which keep the line and drop the gate."""
+    lines = text.splitlines()
+    for n, ln in enumerate(lines):
+        if re.search(_SPEC_GATE_CMD, ln):
+            for body in lines[n + 1:n + 40]:
+                s = body.strip()
+                if s.startswith("fi"):
+                    break
+                if re.match(r"exit[ \t]+1\b", s):
+                    return True
+    return False
+
+
+def check_spec_contract(fix: bool) -> Result:
+    """v9, done is a verdict: every ears-1 spec in the tree reads clean, and the
+    push gate that keeps it that way is in .githooks/pre-push.
+
+    The two gate rules (FLOW.spec-contract, FLOW.done-is-a-verdict) prove their
+    fixtures through gate-liveness; what that cannot see is the brain's OWN specs.
+    A spec edited on a branch pushed with --no-verify, or merged through the web UI,
+    reaches master without the push stanza ever running, so the doctor re-reads
+    every ears-1 spec on disk. Legacy specs without the header are skipped by the
+    linter, as they are at push time."""
+    key = "spec-contract"
+    script = CLAUDE_DIR / "scripts" / "spec_lint.py"
+    if not script.exists():
+        return Result(key, FAIL, "scripts/spec_lint.py is missing",
+                      "restore the spec linter; the v9 push gate calls it")
+    text = _rt(CLAUDE_DIR / ".githooks" / "pre-push") or ""
+    if not _spec_gate_blocks(text):
+        return Result(key, FAIL,
+                      ".githooks/pre-push does not invoke spec_lint.py --push-range, so a "
+                      "spec can claim converged without a verdict",
+                      "restore the OCTORATO-SPEC-GATE stanza in .githooks/pre-push")
+    dirs = sorted(p.parent for base in ("docs/specs", "docs/specs-archive")
+                  for p in (CLAUDE_DIR / base).glob("*/feature.md"))  # the gate's own scope
+    if not dirs:
+        return Result(key, PASS, "no spec directories yet; the push stanza is present")
+    cp = run([PYTHON or "python3", str(script), *map(str, dirs)], cwd=CLAUDE_DIR)
+    lines = (cp.stdout or "").strip().splitlines()
+    linted = sum(1 for ln in lines if ln.startswith("ok "))
+    skipped = sum(1 for ln in lines if ln.startswith("skip "))
+    if cp.returncode != 0:
+        bad = [ln for ln in lines if not ln.startswith(("ok ", "skip "))]
+        return Result(key, FAIL, f"{len(bad)} finding(s): " + "; ".join(bad[:3]),
+                      "python3 scripts/spec_lint.py <spec-dir> and fix the findings")
+    # The push stanza is skippable (--no-verify from a worktree is not denied, and a
+    # web-UI merge runs no hook), so a converged status can reach the tree without a
+    # verdict. Receipts are per machine, so a missing one is a WARN, never a FAIL: a
+    # second machine that pulled a legitimately converged spec holds no receipt.
+    unverified = []
+    try:
+        sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
+        import receipt_ledger
+        import spec_lint
+        for d in dirs:
+            text = (d / "feature.md").read_text(encoding="utf-8")
+            # The gate's own reader: any header shape the linter accepts or flags.
+            if spec_lint.is_ears(text) and spec_lint.spec_status(text) == "converged":
+                rel = d.relative_to(CLAUDE_DIR).as_posix()
+                if receipt_ledger.converge_pass_for(rel) is None:
+                    unverified.append(rel)
+    except Exception as exc:  # the ledger is advisory here; the push gate is the enforcer
+        unverified.append(f"(receipt ledger unreadable: {exc})")
+    if unverified:
+        return Result(key, WARN,
+                      f"{len(unverified)} spec(s) say converged with no CONVERGED receipt on "
+                      f"this machine: " + ", ".join(unverified[:3]),
+                      "run /sdd-converge on it here, or confirm it converged on the machine "
+                      "that pushed it")
+    return Result(key, PASS,
+                  f"{linted} ears-1 spec(s) clean, {skipped} legacy skipped; push stanza present")
+
+
 def check_skill_manifests(fix: bool) -> Result:
     """v8 PACKAGE, the in-repo half: does every skill this brain SHIPS carry a
     `skill.json`?
@@ -2450,6 +2797,733 @@ def check_skill_manifests(fix: bool) -> Result:
     return Result(key, status, data.get("detail", ""), data.get("fix", ""))
 
 
+# --- claude-md-budget (spec v10, AC-17) --------------------------------------
+# The constitution loads into every session, so its size and its language are
+# pinned here and not by memory of the PR that cut it.
+#
+# Estimator: a per-piece bound over the cl100k_base pre-tokenizer, computed on
+# a bare interpreter because tiktoken is not a dependency the doctor can rely
+# on. The text is split the way cl100k splits it before BPE (`_PIECE_RE`, a
+# stdlib approximation of tiktoken's pattern: `\p{L}` becomes `[^\W\d_]`), and
+# each piece costs ceil(ASCII chars / 7) + ceil(2 * non-ASCII UTF-8 bytes / 3).
+# Any character the pattern does not match costs one token per byte.
+#
+# Measured against tiktoken cl100k_base (`uvx --with tiktoken`, 2026-10-07):
+#
+#   mix                               cl100k   bound   ratio  chars/4  ratio
+#   CLAUDE.md master 0641797          11,920  12,617   1.058   11,881  0.997
+#   CLAUDE.md after the headroom cut  10,944  11,518   1.052   10,812  0.988
+#   pre-#392 CLAUDE.md (b2c8b9a)      24,000  25,506   1.063   24,154  1.006
+#   its three Spanish sections         1,267   1,285   1.014    1,130  0.892
+#   scripts/brain_doctor.py           37,376  40,078   1.072   38,271  1.024
+#   docs/CAPABILITIES.md              17,462  18,954   1.085   19,451  1.114
+#   registry/rules.yaml               20,171  20,996   1.041   17,541  0.870
+#   symbol and emoji string            2,421   4,600   1.900      720  0.297
+#
+# So the bound sits at or above cl100k on all seven mixes, and chars/4, the
+# estimator this check used before, reads under on four of them. It is an
+# empirical bound over those mixes and over the whole file, not a proof. What
+# it does not see: a section dense in paths, table rules or ALL-CAPS words
+# reads under on its own (as low as 0.90 on `## Arm Onboarding`), and across
+# the repo's 1,526 text files of 2,000+ characters, 30 read under (worst 0.755,
+# a fixture of repeated upper-case tokens). A CLAUDE.md that grows mostly in
+# that kind of text can pass here and exceed 12,000 cl100k; re-run the table
+# above when the file's mix changes. The ceiling is stated in this bound's units.
+CLAUDE_MD_TOKEN_CEILING = 12000
+
+# Spanish function words that English prose does not use. Ambiguous ones
+# ("a", "no", "me", "he", "e", "o", "son" excluded on purpose) stay out.
+_ES_STOPWORDS = frozenset("""
+de la que el en los del se las por un para con una su al lo como más pero sus le
+ya este porque esta entre cuando muy sin sobre también hasta hay donde quien desde
+todo nos durante todos uno les ni contra otros ese eso ante ellos esto antes
+algunos qué unos yo otro otras otra él tanto esa estos mucho quienes nada muchos
+cual poco ella estar estas algunas algo nosotros mi mis tú te ti tu tus es fue
+era y cada siempre nunca solo sólo puede hacer tiene así
+""".split())
+# Measured on 2026-10-07 with the data spans below removed, heading included:
+# every section of master a741eff reads at most 0.010; the three Spanish
+# sections of b2c8b9a read 0.412, 0.448 and 0.452. QA on PR #395 measured
+# Portuguese prose at 0.19, Catalan at 0.22 and Spanish prose at 0.41 to 0.48,
+# and an English section quoting three Spanish operator phrases WITHOUT quote
+# marks at 0.134, close under a gate that blocks the push.
+#
+# AUTHORS: put every Spanish phrase you quote in backticks, double quotes or
+# parentheses. Those spans are data and are not counted; bare Spanish words in
+# English prose are, and a few of them push a short section toward 0.15.
+_ES_RATIO_MAX = 0.15
+_ES_MIN_WORDS = 30
+# Quoted data is not prose: trigger phrases a gate matches on (`pásame el
+# mensaje`), the Spanish filler blocklists of Human Cadence (in parentheses) and
+# quoted operator words. Code fences, inline code, double quotes and
+# parentheses are removed before counting.
+_ES_DATA_SPANS = (
+    re.compile(r"```.*?```", re.S),
+    re.compile(r"`[^`\n]*`"),
+    re.compile(r'"[^"\n]*"'),
+    re.compile(r"“[^”\n]*”"),
+    re.compile(r"\([^)\n]*\)"),
+)
+_WORD_RE = re.compile(r"[a-záéíóúñü]+")
+
+
+# cl100k_base pre-tokenizer, stdlib form: contractions, an optional non-letter
+# lead plus a letter run, 1-3 digits, a punctuation run, newlines, whitespace.
+_PIECE_RE = re.compile(
+    r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\w]?[^\W\d_]+|\d{1,3}"
+    r"| ?(?:[^\s\w]|_)+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+")
+
+
+def estimate_tokens(text: str) -> int:
+    """Per-piece upper bound on the cl100k_base token count (see the table above)."""
+    total, pos = 0, 0
+    for m in _PIECE_RE.finditer(text):
+        if m.start() > pos:  # unmatched gap: one token per byte
+            total += len(text[pos:m.start()].encode("utf-8"))
+        piece = m.group()
+        ascii_n = sum(1 for ch in piece if ch < "\x80")
+        wide = len(piece.encode("utf-8")) - ascii_n
+        total += -(-ascii_n // 7) + -(-2 * wide // 3)
+        pos = m.end()
+    if pos < len(text):
+        total += len(text[pos:].encode("utf-8"))
+    return total
+
+
+def _md_sections(text: str) -> list:
+    """(heading, body) per `##`/`###` section; text before the first is '(preamble)'."""
+    out, head, buf, fence = [], "(preamble)", [], False
+    for ln in text.splitlines():
+        if ln.lstrip().startswith("```"):
+            fence = not fence
+        if not fence and re.match(r"#{2,3} ", ln):
+            out.append((head, "\n".join(buf)))
+            head, buf = ln.strip(), []
+        else:
+            buf.append(ln)
+    out.append((head, "\n".join(buf)))
+    return out
+
+
+def spanish_sections(text: str) -> list:
+    """[(heading, ratio, words)] for every section whose prose reads as Spanish."""
+    hits = []
+    for head, body in _md_sections(text):
+        prose = head.lstrip("# ") + "\n" + body
+        for rx in _ES_DATA_SPANS:
+            prose = rx.sub(" ", prose)
+        words = _WORD_RE.findall(prose.lower())
+        if len(words) < _ES_MIN_WORDS:
+            continue
+        ratio = sum(1 for w in words if w in _ES_STOPWORDS) / len(words)
+        if ratio > _ES_RATIO_MAX:
+            hits.append((head, round(ratio, 3), len(words)))
+    return hits
+
+
+def check_claude_md_budget(fix: bool, path: Path | None = None) -> Result:
+    """AC-17: CLAUDE.md loads at most 12,000 tokens (per-piece bound) and has no section
+    written in a language other than English (Spanish stopword ratio per section)."""
+    key = "claude-md-budget"
+    p = path or CLAUDE_MD
+    try:
+        text = p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        return Result(key, FAIL, f"{p.name} unreadable: {e}", "restore CLAUDE.md")
+    tokens = estimate_tokens(text)
+    spanish = spanish_sections(text)
+    problems = []
+    if tokens > CLAUDE_MD_TOKEN_CEILING:
+        problems.append(f"{tokens:,} tokens (per-piece bound) over the {CLAUDE_MD_TOKEN_CEILING:,} ceiling")
+    if spanish:
+        problems.append(f"{len(spanish)} non-English section(s): "
+                        + "; ".join(f"'{h[:50]}' ({r:.2f})" for h, r, _ in spanish[:4]))
+    if problems:
+        return Result(key, FAIL, "; ".join(problems),
+                      "move mechanism narrative into docs/architecture/ and translate the "
+                      "section; a Spanish phrase kept as data goes in backticks or quotes "
+                      "(spec v10 AC-17)")
+    return Result(key, PASS,
+                  f"{tokens:,} tokens (per-piece bound, ceiling {CLAUDE_MD_TOKEN_CEILING:,}); "
+                  "every section reads as English")
+
+
+def selftest_claude_md_budget(fixtures: Path) -> int:
+    """Fixture proof for META.constitution-budget, run by gate-liveness: every
+    `violation_*.md` must FAIL the check and every `benign_*.md` must PASS. Two
+    benign files are their violation twin with one edit (one character under the
+    budget, the Spanish section quoted), so a check that fails everything is
+    caught as surely as one that passes everything. The third,
+    `benign_english_with_a_spanish_name.md`, is not a twin: it is an English
+    control that carries Spanish proper nouns, so a stopword ratio ceiling
+    mutated to 0.0 fails it and is caught."""
+    viol = sorted(fixtures.glob("violation_*.md"))
+    ben = sorted(fixtures.glob("benign_*.md"))
+    if not viol or not ben:
+        print(f"selftest: no violation_*/benign_* fixtures in {fixtures}")
+        return 1
+    bad = []
+    for f in viol:
+        r = check_claude_md_budget(False, path=f)
+        if r.status != FAIL:
+            bad.append(f"{f.name} should FAIL, got {r.status}: {r.message}")
+    for f in ben:
+        r = check_claude_md_budget(False, path=f)
+        if r.status != PASS:
+            bad.append(f"{f.name} should PASS, got {r.status}: {r.message}")
+    for b in bad:
+        print(f"selftest: {b}")
+    print(f"selftest claude-md-budget: {len(viol)} violation(s) fail, {len(ben)} benign pass"
+          if not bad else f"selftest claude-md-budget: {len(bad)} wrong verdict(s)")
+    return 1 if bad else 0
+
+
+# ---------------------------------------------------------------------------
+# Runtime_Registry (v11 spec 202610141000, AC-01, AC-03)
+# ---------------------------------------------------------------------------
+
+RUNTIMES_PATH = CLAUDE_DIR / "registry" / "runtimes.yaml"
+RUNTIMES_DOC = CLAUDE_DIR / "docs" / "architecture" / "multi-runtime.md"
+RUNTIME_STATUSES = ("supported", "gap")
+# Harnesses whose `supported` status must come from a census record, and the
+# tool classes that record must show blocked with the benign twin allowed.
+CENSUS_HARNESSES = ("gemini-cli", "codex-cli")
+# Harnesses whose `supported` status rests on a brain_doctor check instead of a
+# census record, pinned to the ONE check that measures that harness: the
+# registry's `evidence` must name exactly this check (self-reference or any other
+# check FAILs). Sources: check_gate_liveness runs every fail-closed gate's
+# --selftest against registry/fixtures, written for Claude Code; check_cursor_hooks_sync
+# compares ~/.cursor/hooks.json with the projection of hooks.json
+# (scripts/merge-hooks-cursor.py). Any registry key outside CENSUS_HARNESSES and
+# these keys fails closed.
+EVIDENCE_HARNESSES = {"claude-code": "gate-liveness", "cursor": "cursor-hooks-sync"}
+# A census harness's evidence is its census record, which runtime-census-evidence
+# itself reads, so its `evidence` must name that check and nothing else.
+CENSUS_EVIDENCE_CHECK = "runtime-census-evidence"
+CENSUS_REQUIRED_CLASSES = ("shell", "file_write", "file_edit")
+_EVIDENCE_CHECK_RE = re.compile(r"\bbrain_doctor\s+([a-z0-9][a-z0-9-]*)")
+_RUNTIME_FIELDS = ("name", "status", "instruction_file", "hook_config",
+                   "block_contract", "tool_map", "tiers", "unprojected")
+# AC-08: a `supported` harness maps exactly these four tiers to its model slugs.
+RUNTIME_TIERS = ("mechanical", "bulk", "build", "judgment")
+
+
+def runtime_tier_problems(rid: str, entry: dict) -> list:
+    """AC-08, for a `supported` entry: `tiers` is a mapping of exactly the four
+    tiers, each a non-empty string. Any other entry is unbound: `tiers: null`."""
+    tiers = entry.get("tiers")
+    if entry.get("status") != "supported":
+        if tiers is not None:
+            return [f"{rid}: `{entry.get('status')}` with tiers {tiers!r}; an unbound "
+                    "harness holds `tiers: null` (AC-08)"]
+        return []
+    if not isinstance(tiers, dict):
+        return [f"{rid}: supported with `tiers` {tiers!r}, not a mapping of "
+                f"{', '.join(RUNTIME_TIERS)} (AC-08)"]
+    missing = [t for t in RUNTIME_TIERS if not isinstance(tiers.get(t), str) or not tiers[t].strip()]
+    extra = sorted(str(k) for k in tiers if k not in RUNTIME_TIERS)
+    out = []
+    if missing:
+        out.append(f"{rid}: supported with no model slug for tier(s) {', '.join(missing)} (AC-08)")
+    if extra:
+        out.append(f"{rid}: unknown tier(s) {', '.join(extra)}; the ladder has four (AC-08)")
+    return out
+
+
+def _yaml_load_unique(text: str):
+    """yaml.safe_load, except a mapping that repeats a key raises instead of the
+    last value silently winning (a second `cursor:` would override the first)."""
+    import yaml  # type: ignore[import-not-found]
+
+    class _UniqueKeyLoader(yaml.SafeLoader):
+        pass
+
+    def _construct(loader, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            k = loader.construct_object(key_node, deep=deep)
+            if k in seen:
+                raise ValueError(f"duplicate key {k!r} at line {key_node.start_mark.line + 1}")
+            seen.add(k)
+        return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
+
+    _UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct)
+    return yaml.load(text, Loader=_UniqueKeyLoader)  # noqa: S506 (SafeLoader subclass)
+
+
+def load_runtime_registry(path: Path | None = None):
+    """Returns (runtimes dict, problem list). A problem means the file is absent,
+    does not parse, or an entry lacks a field or carries an unknown status."""
+    p = path or RUNTIMES_PATH
+    if not p.exists():
+        return None, [f"{p.name} is missing"]
+    try:
+        data = _yaml_load_unique(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        return None, [f"{p.name} does not parse: {e}"]
+    runtimes = data.get("runtimes") if isinstance(data, dict) else None
+    if not isinstance(runtimes, dict) or not runtimes:
+        return None, [f"{p.name} has no `runtimes` mapping"]
+    problems = []
+    for rid, entry in runtimes.items():
+        if not isinstance(entry, dict):
+            problems.append(f"{rid}: entry is not a mapping")
+            continue
+        missing = [f for f in _RUNTIME_FIELDS if f not in entry]
+        if missing:
+            problems.append(f"{rid}: missing {', '.join(missing)}")
+        if entry.get("status") not in RUNTIME_STATUSES:
+            problems.append(f"{rid}: status {entry.get('status')!r} is not one of "
+                            f"{', '.join(RUNTIME_STATUSES)}")
+        if entry.get("status") == "supported" and not entry.get("evidence"):
+            problems.append(f"{rid}: supported with no `evidence` naming a brain_doctor check")
+        problems.extend(runtime_tier_problems(rid, entry))
+    return runtimes, problems
+
+
+def runtime_doc_rows(text: str) -> dict:
+    """{runtime name: status} from the table under the doc's `## Runtimes` heading.
+    The name cell drops bold markers, the status cell drops backticks."""
+    rows, in_section, header = {}, False, None
+    for ln in text.splitlines():
+        if ln.startswith("## "):
+            if in_section:
+                break
+            in_section = ln.strip() == "## Runtimes"
+            continue
+        if not in_section or not ln.lstrip().startswith("|"):
+            continue
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+        if header is None:
+            header = [c.lower() for c in cells]
+            continue
+        if all(set(c) <= set("-: ") for c in cells):
+            continue
+        if "runtime" not in header or "status" not in header:
+            break
+        name = cells[header.index("runtime")].replace("*", "").strip()
+        status = cells[header.index("status")].replace("`", "").strip()
+        rows[name] = status
+    return rows
+
+
+def census_blocking_gaps(record) -> list:
+    """The required classes a census record does NOT show blocked with the benign
+    twin allowed. Only literal `true` counts: null (not measured) is not evidence."""
+    classes = (record or {}).get("tool_classes") or {}
+    gaps = []
+    for cls in CENSUS_REQUIRED_CLASSES:
+        c = classes.get(cls) or {}
+        if c.get("harness_blocked_violation") is not True or c.get("harness_allowed_benign") is not True:
+            gaps.append(cls)
+    return gaps
+
+
+def check_runtime_registry(fix: bool, path: Path | None = None) -> Result:
+    """AC-01: registry/runtimes.yaml is present, parses, and every entry carries
+    the Runtime_Registry fields with a status of `supported` or `gap`. AC-08: every
+    `supported` entry maps the four tiers to model slugs."""
+    key = "runtime-registry"
+    runtimes, problems = load_runtime_registry(path)
+    if problems:
+        return Result(key, FAIL, "; ".join(problems[:4]),
+                      "restore registry/runtimes.yaml (v11 spec 202610141000, T02)")
+    counts = {s: sum(1 for e in runtimes.values() if e.get("status") == s) for s in RUNTIME_STATUSES}
+    return Result(key, PASS, f"{len(runtimes)} runtime(s): {counts['supported']} supported, "
+                  f"{counts['gap']} gap")
+
+
+def check_runtime_doc_agreement(fix: bool, path: Path | None = None,
+                                doc: Path | None = None) -> Result:
+    """AC-01: the registry and the doc's Runtimes table hold the same harnesses
+    with the same status."""
+    key = "runtime-doc-agreement"
+    runtimes, problems = load_runtime_registry(path)
+    if runtimes is None:
+        return Result(key, FAIL, "; ".join(problems), "restore registry/runtimes.yaml")
+    d = doc or RUNTIMES_DOC
+    try:
+        rows = runtime_doc_rows(d.read_text(encoding="utf-8"))
+    except OSError as e:
+        return Result(key, FAIL, f"{d.name} unreadable: {e}", "restore the multi-runtime doc")
+    if not rows:
+        return Result(key, FAIL, f"{d.name} has no `## Runtimes` table with Runtime and Status columns",
+                      "restore the Runtimes table in docs/architecture/multi-runtime.md")
+    reg = {e.get("name"): e.get("status") for e in runtimes.values() if isinstance(e, dict)}
+    diffs = [f"{n} only in registry" for n in sorted(set(reg) - set(rows))]
+    diffs += [f"{n} only in doc" for n in sorted(set(rows) - set(reg))]
+    diffs += [f"{n}: registry {reg[n]}, doc {rows[n]}"
+              for n in sorted(set(reg) & set(rows)) if reg[n] != rows[n]]
+    if diffs:
+        return Result(key, FAIL, "; ".join(diffs[:4]),
+                      "edit registry/runtimes.yaml and the Runtimes table together")
+    return Result(key, PASS, f"{len(rows)} runtime(s) agree between registry and doc")
+
+
+REVIEWERS_PATH = CLAUDE_DIR / "registry" / "reviewers.yaml"
+_MACHINE_PATH = re.compile(r"(?:^|[\s\"'=(])(?:/home/|/Users/|/root/|[A-Za-z]:\\Users\\)|\$HOME\b")
+
+
+def _strings(obj):
+    if isinstance(obj, str):
+        yield obj
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            yield str(k)
+            yield from _strings(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _strings(v)
+
+
+def check_reviewer_registry(fix: bool, path: Path | None = None) -> Result:
+    """v11 phase 4 (FR-06, FR-07, AC-29). registry/reviewers.yaml parses with
+    the reader receipt_ledger uses (scripts/external_review.py), carries no
+    machine path (those live in the gitignored Reviewer_Pins), and holds no
+    `allowed` pair: an `allowed` pair rests on a Replay_Record that the AC-36
+    recompute (task T20) checks, and until that recompute exists this check
+    fails closed on any. It never reads or changes a runtime status: Codex CLI
+    and Gemini CLI stay census-only (runtime-census-evidence)."""
+    key = "reviewer-registry"
+    p = path or REVIEWERS_PATH
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_external_review_doctor", Path(__file__).resolve().parent / "external_review.py")
+        er = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(er)
+    except Exception as e:
+        return Result(key, FAIL, f"external_review.py unloadable: {e}",
+                      "restore scripts/external_review.py")
+    data, problems = er.load_reviewer_registry(p)
+    if data is None or problems:
+        return Result(key, FAIL, "; ".join(problems[:4]),
+                      "restore registry/reviewers.yaml (v11 spec 202610141000, T19)")
+    leaks = sorted({x for x in _strings(data) if _MACHINE_PATH.search(x)})
+    if leaks:
+        return Result(key, FAIL, f"machine path in the tracked registry: {leaks[0][:80]!r}",
+                      "keep machine paths in company/config/reviewer-pins.json only")
+    pairs = data.get("pairs") or []
+    allowed = [f"{x.get('engine')}/{x.get('model')}" for x in pairs if x.get("status") == "allowed"]
+    if allowed:
+        return Result(key, FAIL, f"`allowed` without the AC-36 replay recompute: {', '.join(allowed)}",
+                      "mark the pair `not-allowed` until its Replay_Record is recomputed (T20)")
+    return Result(key, PASS, f"{len(pairs)} engine/model pair(s), none allowed; runtime status "
+                  "stays census-only (FR-07)")
+
+
+# Results of the run in progress, by CHECKS key, so an `evidence` check named by
+# a runtime entry is read, not executed a second time (run_all fills it).
+_CURRENT_RUN: dict = {}
+
+
+def _worst(out) -> "Result":
+    if isinstance(out, list):
+        order = {PASS: 0, WARN: 1, FAIL: 2}
+        return max(out, key=lambda r: order.get(r.status, 2)) if out else Result("?", FAIL, "no result")
+    return out
+
+
+def _evidence_result(name: str):
+    """The current result of the doctor check `name`, or None when it was not run
+    (a SLOW_CHECKS member outside a full run, i.e. --fast or a standalone call)."""
+    if name in _CURRENT_RUN:
+        return _CURRENT_RUN[name]
+    if name in SLOW_CHECKS:
+        return None
+    fn = dict(CHECKS).get(name)
+    try:
+        return _worst(fn(False))
+    except Exception as e:
+        return Result(name, FAIL, f"check crashed: {e}")
+
+
+def check_runtime_census_evidence(fix: bool, path: Path | None = None,
+                                  root: Path | None = None) -> Result:
+    """AC-03, fail closed. Every census harness has an entry; no other harness id
+    than the census and evidence allowlists appears; every status is exactly
+    `supported` or `gap`; every `supported` entry's `evidence` names the check
+    pinned for that harness (EVIDENCE_HARNESSES, or this check for a census
+    harness), and for an evidence harness that check's current result is not
+    FAIL (WARN or not run under --fast degrades this check to WARN, never PASS);
+    a census harness is `supported` only when its record shows shell, file write
+    and file edit blocked with the benign twins allowed; a `gap` entry lists
+    exactly the classes its record does not show."""
+    key = "runtime-census-evidence"
+    runtimes, problems = load_runtime_registry(path)
+    if runtimes is None:
+        return Result(key, FAIL, "; ".join(problems), "restore registry/runtimes.yaml")
+    base = root or CLAUDE_DIR
+    known = set(CENSUS_HARNESSES) | set(EVIDENCE_HARNESSES)
+    check_keys = {k for k, _ in CHECKS}
+    bad, warn, checked = [], [], 0
+    for rid in CENSUS_HARNESSES:
+        if not isinstance(runtimes.get(rid), dict):
+            bad.append(f"{rid} has no registry entry (census harnesses are required)")
+    for rid in sorted(set(runtimes) - known):
+        bad.append(f"{rid} is not a known harness id ({', '.join(sorted(known))})")
+    for rid, entry in runtimes.items():
+        if rid not in known or not isinstance(entry, dict):
+            continue
+        checked += 1
+        status = entry.get("status")
+        if status not in RUNTIME_STATUSES:
+            bad.append(f"{rid}: status {status!r} is not one of {', '.join(RUNTIME_STATUSES)} "
+                       "(exact, lower case)")
+        if status == "supported":
+            ev = entry.get("evidence")
+            m = _EVIDENCE_CHECK_RE.search(ev) if isinstance(ev, str) else None
+            named = m.group(1) if m else None
+            pinned = EVIDENCE_HARNESSES.get(rid, CENSUS_EVIDENCE_CHECK)
+            if named is None:
+                bad.append(f"{rid} is supported with no `evidence` naming a brain_doctor check")
+            elif named != pinned:
+                bad.append(f"{rid} evidence names {named!r}; the only check that evidences "
+                           f"{rid} is {pinned!r}")
+            elif pinned not in check_keys:
+                bad.append(f"{rid} evidence names unknown doctor check {named!r}")
+            elif rid in EVIDENCE_HARNESSES:
+                res = _evidence_result(named)
+                if res is None:
+                    warn.append(f"{rid} evidence {named} not verified (not run in this profile)")
+                elif res.status == FAIL:
+                    bad.append(f"{rid} is supported but its evidence {named} FAILs: {res.message}")
+                elif res.status == WARN:
+                    warn.append(f"{rid} evidence {named} is WARN: {res.message}")
+        if rid not in CENSUS_HARNESSES:
+            continue
+        rel = entry.get("census")
+        record = None
+        if rel:
+            try:
+                record = json.loads((base / rel).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                record = None
+        gaps = census_blocking_gaps(record) if record is not None else list(CENSUS_REQUIRED_CLASSES)
+        if status == "supported":
+            if record is None:
+                bad.append(f"{rid} is supported with no readable census record ({rel or 'none named'})")
+            elif gaps:
+                bad.append(f"{rid} is supported but its census shows no block for {', '.join(gaps)}")
+        elif status == "gap":
+            listed = entry.get("classes_not_blocked") or []
+            if sorted(listed) != sorted(gaps):
+                bad.append(f"{rid} lists classes_not_blocked {sorted(listed)}, census says {sorted(gaps)}")
+    if checked == 0 and not bad:
+        bad.append("no known harness entry was checked")
+    if bad:
+        return Result(key, FAIL, "; ".join(bad + warn),
+                      "keep every census harness in registry/runtimes.yaml, use only known ids, "
+                      "name a passing brain_doctor check in `evidence` for each `supported`, and "
+                      "mark a census harness `gap` until registry/census/<harness>.json shows the blocks")
+    if warn:
+        return Result(key, WARN, "; ".join(warn),
+                      "run the full profile, or fix the named evidence check")
+    return Result(key, PASS, f"{checked} runtime(s) match their evidence or census record")
+
+
+# ---------------------------------------------------------------------------
+# v11 opt-in tracing (spec 202610141000, T16): AC-12 and AC-13
+# ---------------------------------------------------------------------------
+
+# The upstream tracer's documented switch (docs.langchain.com/langsmith/trace-claude-code):
+# an `env` entry in a project's .claude/settings.local.json or the global
+# ~/.claude/settings.json, or a shell export.
+TRACING_SWITCH = "TRACE_TO_LANGSMITH"
+_SWITCH_OFF = ("", "0", "false", "no", "off")
+
+
+def _switch_on(value) -> bool:
+    """A value the upstream could read as on. Fail-closed: anything that is not a
+    recognisable OFF counts as set, so a typo is reported rather than trusted."""
+    if value is None or value is False:
+        return False
+    if value is True:
+        return True
+    return str(value).strip().lower() not in _SWITCH_OFF
+
+
+def _settings_switch(f: Path) -> str | None:
+    """'set', 'unreadable' or None for one settings file. A file that does not parse
+    but names the switch is 'unreadable': it cannot be proven off."""
+    try:
+        raw = f.read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return "unreadable"
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):
+        return "unreadable" if TRACING_SWITCH.encode() in raw else None
+    env = data.get("env") if isinstance(data, dict) else None
+    if isinstance(env, dict) and TRACING_SWITCH in env and _switch_on(env[TRACING_SWITCH]):
+        return "set"
+    return None
+
+
+def _load_by_path(modname: str, path: Path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(modname, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+ARM_SETTINGS_DEPTH = 6
+_ARM_WALK_SKIP = frozenset({"node_modules", ".git"})
+
+
+def _arm_settings_files(root: Path) -> list:
+    """Every `.claude/settings*.json` under an arm, to ARM_SETTINGS_DEPTH directories,
+    skipping node_modules and .git, never following a symlink. Sorted."""
+    out = []
+    for dirpath, dirnames, _files in os.walk(root, followlinks=False):
+        here = Path(dirpath)
+        depth = len(here.relative_to(root).parts)
+        dirnames[:] = [d for d in dirnames if d not in _ARM_WALK_SKIP
+                       and (d == ".claude" or not d.startswith("."))
+                       and depth < ARM_SETTINGS_DEPTH]
+        if here.name == ".claude":
+            out += [f for f in here.glob("settings*.json") if not f.is_symlink()]
+            dirnames[:] = []
+    return sorted(out)
+
+
+def _effective_policy(guard, root: str, d: str) -> str:
+    """The guard's verdict for a session in directory `d` of the arm at `root`: the
+    arm's own policy and every arm.json from `d` up to the root must read allow."""
+    if guard.export_policy(root) != "allow":
+        return "deny"
+    p = os.path.realpath(d)
+    while True:
+        if os.path.lexists(os.path.join(p, "arm.json")) and guard.export_policy(p) != "allow":
+            return "deny"
+        if p == root:
+            return "allow"
+        parent = os.path.dirname(p)
+        if parent == p or not guard._contains(root, parent):
+            return "allow"
+        p = parent
+
+
+def check_tracing_switch(fix: bool, home: Path | None = None,
+                         brain: Path | None = None) -> Result:
+    """AC-12: FAIL when the tracing switch is on in the project settings of an arm
+    whose Export_Policy is `deny` or absent, or in the global settings while any
+    registered arm is `deny` or absent.
+
+    The arms and their policies are read with the Export_Guard's OWN functions
+    (`load_arm_roots`, `export_policy` in scripts/g__wrap__export-guard.py, loaded by
+    path), so this check and the guard cannot disagree on which arm a root is or
+    what its arm.json says. An arms-paths.json the guard cannot read is a FAIL: the
+    global half cannot be decided without the arm list.
+
+    The guard already makes the switch inert in a deny arm (no upstream process is
+    started), so a hit here is a misconfiguration that would export the moment the
+    guard were bypassed, and the Doctor is the detector the plan names for it. A
+    shell export is reported as WARN: AC-12 names settings files, and the doctor's
+    own environment is the only shell it can see.
+
+    Every `.claude/settings*.json` under a registered arm is read, not only the
+    root's: a session started in a subdirectory loads that subdirectory's project
+    settings (QA probe on 5845c59: `arm/sub/.claude/settings.local.json` in a deny
+    arm reported PASS). Its policy is the guard's walk: the arm's own and every
+    `arm.json` between the subdirectory and the arm root must say allow.
+
+    NOT seen, named: the settings of a project directory ARM_SETTINGS_DEPTH or more
+    levels below the arm root (its `.claude/` is past the walk's last level), or a file
+    under `node_modules/`, a hidden directory other than `.claude/`, or a symlinked
+    directory (the walk never follows a
+    link); and a settings file of an arm not on this machine.
+    """
+    key = "tracing-switch"
+    home = Path(home) if home is not None else HOME
+    brain = Path(brain) if brain is not None else CLAUDE_DIR
+    try:
+        guard = _load_by_path("_export_guard_for_doctor",
+                              brain / "scripts" / "g__wrap__export-guard.py")
+    except Exception as e:
+        return Result(key, FAIL, f"the Export_Guard cannot be loaded: {type(e).__name__}: {e}",
+                      "restore scripts/g__wrap__export-guard.py")
+    try:
+        arms = guard.load_arm_roots(str(home), guard.brain_paths(str(home)))
+    except guard.Deny as e:
+        return Result(key, FAIL, f"the arm list cannot be read the way the guard reads it: {e}",
+                      "fix company/config/arms-paths.json")
+    fails, deny_arms = [], []
+    for name, root in arms:
+        policy = guard.export_policy(root)
+        if policy != "allow":
+            deny_arms.append(name)
+        for f in _arm_settings_files(Path(root)):
+            state = _settings_switch(f)
+            if not state:
+                continue
+            here = _effective_policy(guard, root, str(f.parent.parent))
+            if here != "allow":
+                fails.append(f"{f} ({state}; arm {name}, here {here})")
+    global_hits = []
+    for f in (home / ".claude" / "settings.json", home / ".claude" / "settings.local.json"):
+        state = _settings_switch(f)
+        if state:
+            global_hits.append(f"{f} ({state})")
+    if global_hits and deny_arms:
+        fails += [f"{g} while {len(deny_arms)} arm(s) are deny or absent "
+                  f"({', '.join(sorted(deny_arms)[:4])})" for g in global_hits]
+    if fails:
+        return Result(key, FAIL, f"{TRACING_SWITCH} is on where export is not allowed: "
+                      + "; ".join(fails[:5]),
+                      f"remove {TRACING_SWITCH} from those files; it belongs only in the "
+                      f"project settings of an arm whose arm.json says telemetry.export allow")
+    if _switch_on(os.environ.get(TRACING_SWITCH)) and deny_arms:
+        return Result(key, WARN, f"{TRACING_SWITCH} is exported in this shell while "
+                      f"{len(deny_arms)} arm(s) are deny or absent; the guard still keeps "
+                      f"their sessions untraced",
+                      f"unset {TRACING_SWITCH} in the shell profile")
+    return Result(key, PASS, f"{TRACING_SWITCH} is off wherever export is not allowed "
+                  f"({len(arms)} arm(s), {len(deny_arms)} deny or absent"
+                  + (", global switch on with every arm allow" if global_hits else "") + ")")
+
+
+def check_tracing_plugins(fix: bool, brain: Path | None = None) -> Result:
+    """AC-13: FAIL when an installed Tracing_Wrapper tree (or any copy the harness
+    made of it under plugins/) does not hash to its lock entry, or when the upstream
+    `langsmith-tracing` plugin is installed under plugins/ outside the wrapper.
+
+    One implementation: octo_pkg's plugin ladder (`_verify_plugin_entry` and
+    `scan_plugins`), loaded by path, which `verify --all` also runs at push time.
+    This check is that ladder alone, under its own name, so a doctor reader meets
+    the tracing verdict in one line rather than inside the package count.
+    """
+    key = "tracing-plugins"
+    brain = Path(brain) if brain is not None else CLAUDE_DIR
+    try:
+        pkg = _load_by_path("_octo_pkg_for_doctor", brain / "scripts" / "octo_pkg.py")
+        b = pkg.Brain(brain)
+        lock = b.load_lock()
+    except Exception as e:
+        return Result(key, FAIL, f"the package lock cannot be read: {type(e).__name__}: {e}",
+                      "python3 scripts/octo_pkg.py verify --all")
+    rows = [p for p in lock["packages"] if pkg.lock_kind(p) == "plugin"]
+    results = [pkg._verify_plugin_entry(b, p) for p in rows]
+    results += pkg.scan_plugins(b, {str(p.get("name")) for p in rows})
+    fails = [m for s, m in results if s == FAIL]
+    warns = [m for s, m in results if s == WARN]
+    if fails:
+        return Result(key, FAIL, f"{len(fails)} plugin problem(s): " + "; ".join(fails[:3]),
+                      "inspect the tree; reinstall the signed wrapper from a terminal, "
+                      "or remove the upstream with: claude plugin uninstall "
+                      f"{pkg.UPSTREAM_TRACING_PLUGIN}")
+    if warns:
+        return Result(key, WARN, "; ".join(warns[:3]), "see the fix in the message")
+    if not rows:
+        return Result(key, PASS, "no Tracing_Wrapper installed and no upstream tracer "
+                      "under plugins/")
+    return Result(key, PASS, f"{len(rows)} plugin(s) match their lock entry, every harness "
+                  f"copy included; no upstream tracer outside the wrapper")
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
@@ -2474,10 +3548,15 @@ CHECKS = [
     ("hooks-runtime-sync", check_hooks_runtime_sync),
     ("hooks-merge-fresh", check_hooks_merge_fresh),
     ("cursor-hooks-sync", check_cursor_hooks_sync),
+    ("runtime-registry", check_runtime_registry),
+    ("runtime-doc-agreement", check_runtime_doc_agreement),
+    ("runtime-census-evidence", check_runtime_census_evidence),
+    ("reviewer-registry", check_reviewer_registry),
     ("leak-guard", check_leak_guard),
     ("connectome-fresh", check_connectome_fresh),
     ("arms-config", check_arms_config),
     ("sync-targets", check_sync_targets),
+    ("reply-panel-arm-env", check_reply_panel_arm_env),
     ("blocklist", check_blocklist),
     ("finops-enforcement", check_finops_enforcement),
     ("lineage-sound", check_lineage_sound),
@@ -2485,20 +3564,49 @@ CHECKS = [
     ("stale-merged-branches", check_stale_merged_branches),
     ("capability-manifest-fresh", check_capability_manifest),
     ("packages-verified", check_packages_verified),
+    ("tracing-switch", check_tracing_switch),
+    ("tracing-plugins", check_tracing_plugins),
     ("skill-manifests", check_skill_manifests),
+    ("spec-contract", check_spec_contract),
+    ("claude-md-budget", check_claude_md_budget),
 ]
+
+# The --fast profile (v10, AC-15) skips the checks that EXECUTE other programs
+# or call the network, and runs every other check unchanged. It exists for the
+# first run after a clone, where a newcomer waits on the doctor. Measured on a
+# populated machine on 2026-10-06, read-only, wall time per check, one run: every
+# check except gate-liveness took 220 s together, 189 s of it enforcement-floor,
+# and gate-liveness runs the same selftests again; --fast took 16.7, 14.4 and
+# 13.7 s on three consecutive runs there. A fast PASS proves the brain is wired and its static
+# state is sound; it does NOT prove a gate blocks, so it never writes the gate
+# receipt (gate-liveness is skipped). ai-pull follows it with --gate-receipt
+# whenever no receipt covers the current gate tree, so sends keep working, and
+# pre-push keeps calling the checks it always called (--registry, --gate-receipt). Keys only: a check added later
+# runs in --fast until someone measures it slow and lists it here.
+SLOW_CHECKS = {
+    "gate-liveness": "runs every fail-closed gate's --selftest and writes the gate receipt",
+    "enforcement-floor": "re-runs every gate selftest to compute the enforcement floor",
+    "kernel-isolation-gate": "runs the isolation gates' selftests",
+    "kernel-process-live": "verifies hash chains and replays the golden journal",
+    "stale-merged-branches": "calls GitHub through gh (network)",
+}
 
 STATUS_ICON = {PASS: "✓", WARN: "!", FAIL: "✗"}
 
 
-def run_all(fix: bool) -> list[Result]:
+def run_all(fix: bool, fast: bool = False) -> list[Result]:
     results: list[Result] = []
+    _CURRENT_RUN.clear()
     for key, fn in CHECKS:
+        if fast and key in SLOW_CHECKS:
+            continue
         try:
             out = fn(fix)
         except Exception as e:  # one bad check never crashes the run
             results.append(Result(key, FAIL, f"check crashed: {e}", "report this bug"))
+            _CURRENT_RUN[key] = results[-1]
             continue
+        _CURRENT_RUN[key] = _worst(out)
         if isinstance(out, list):
             results.extend(out)
         else:
@@ -2534,10 +3642,22 @@ def main() -> int:
     ap.add_argument("--fix", action="store_true", help="perform idempotent repairs (opt-in)")
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     ap.add_argument("--registry", action="store_true",
-                    help="run ONLY the RULE #1 registry checks (for .githooks/pre-push)")
+                    help="run ONLY the RULE #1 registry checks and claude-md-budget (for .githooks/pre-push)")
     ap.add_argument("--gate-receipt", action="store_true",
-                    help="run ONLY gate-liveness and write the v7 gate receipt (pre-push, ai-pull)")
+                    help="run ONLY gate-liveness and write the v7 gate receipt "
+                         "(pre-push, and ai-pull after --fast when no receipt covers the current gate tree)")
+    ap.add_argument("--fast", action="store_true",
+                    help="skip the checks that run gate selftests or call the network "
+                         "(see SLOW_CHECKS); used by quickstart and ai-pull, never by pre-push; "
+                         "ai-pull follows it with --gate-receipt when the gate tree has no receipt")
+    ap.add_argument("--selftest", metavar="DIR",
+                    help="run ONLY the claude-md-budget fixture proof over DIR "
+                         "(violation_*.md must fail, benign_*.md must pass); used by gate-liveness")
     args = ap.parse_args()
+    if args.selftest:
+        return selftest_claude_md_budget(Path(args.selftest))
+    if args.fast and (args.gate_receipt or args.registry):
+        ap.error("--fast is a profile of the full run; it does not combine with --registry or --gate-receipt")
 
     if args.gate_receipt:
         try:
@@ -2546,13 +3666,15 @@ def main() -> int:
             results = [Result("gate-liveness", FAIL, f"gate-liveness crashed: {e}", "report this bug")]
     elif args.registry:
         try:
-            results = check_registry(args.fix) + check_naming(args.fix) + check_orphan_hooks(args.fix)
+            results = (check_registry(args.fix) + check_naming(args.fix) + check_orphan_hooks(args.fix)
+                       + [check_claude_md_budget(args.fix)])
         except Exception as e:
             results = [Result("rule-1-registry", FAIL, f"registry check crashed: {e}",
                               "fix registry/rules.yaml so it loads and validates")]
     else:
-        results = run_all(args.fix)
+        results = run_all(args.fix, fast=args.fast)
     fails = sum(1 for r in results if r.status == FAIL)
+    skipped = sorted(SLOW_CHECKS) if args.fast else []
 
     if args.json:
         warns = sum(1 for r in results if r.status == WARN)
@@ -2560,11 +3682,16 @@ def main() -> int:
         print(json.dumps({
             "claude_dir": str(CLAUDE_DIR),
             "interpreter": PYTHON,
+            "profile": "fast" if args.fast else "full",
+            "skipped": skipped,
             "summary": {"passed": passes, "warn": warns, "fail": fails},
             "checks": [r.to_dict() for r in results],
         }, indent=2))
     else:
         render_human(results)
+        if skipped:
+            print(f"  fast profile: skipped {len(skipped)} slow check(s): {', '.join(skipped)}")
+            print("  run `python3 scripts/brain_doctor.py` for the full profile, which proves every gate blocks")
 
     return 1 if fails else 0
 

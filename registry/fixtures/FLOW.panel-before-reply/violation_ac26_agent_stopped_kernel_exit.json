@@ -1,0 +1,16 @@
+{
+  "session_id": "fx-rp-violation-ac26-agent-stopped-kernel-exit",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Waiting on the reviewer.",
+  "transcript_path": "violation_ac26_agent_stopped_kernel_exit_transcript.jsonl",
+  "_fixture": {
+    "kernel_exit": {
+      "athis": "2026-10-14T09:24:00.000Z"
+    },
+    "stderr_lacks": [
+      "cannot decide"
+    ]
+  }
+}

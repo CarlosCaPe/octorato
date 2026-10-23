@@ -697,6 +697,33 @@ class ExitHookTest(SandboxHome):
         self.run_stop(self.payload())
         self.assertEqual(len(self.exits("c1")), 1)
 
+    def _handback_transcript(self, success=True):
+        tp = os.path.join(self.home, "agent-c1.jsonl")
+        h = {"uuid": "u", "parentUuid": "p", "sessionId": "s1", "timestamp": "2026-09-30T10:00:00Z"}
+        entries = [dict(h, type="assistant", message={"role": "assistant", "content": [
+                       {"type": "tool_use", "id": "hb1", "name": "SubagentHandback",
+                        "input": {"message": "Reviewed and shipped."}}]}),
+                   dict(h, type="user", toolUseResult={"success": success},
+                        message={"role": "user", "content": [
+                            {"type": "tool_result", "tool_use_id": "hb1", "content": "x"}]})]
+        with open(tp, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(json.dumps(e) for e in entries) + "\n")
+        return tp
+
+    def test_a_delivered_handback_with_an_empty_payload_message_is_ok(self):
+        self.child()
+        tp = self._handback_transcript(success=True)
+        self.run_stop(self.payload(last_assistant_message="", agent_transcript_path=tp))
+        (e,) = self.exits()
+        self.assertEqual(e["status"], "ok")
+
+    def test_a_refused_handback_with_no_other_report_is_still_an_error(self):
+        self.child()
+        tp = self._handback_transcript(success=False)
+        self.run_stop(self.payload(last_assistant_message="", agent_transcript_path=tp))
+        (e,) = self.exits()
+        self.assertEqual(e["status"], "error")
+
     def test_a_payload_without_an_agent_id_is_ignored(self):
         self.child()
         cp = self.run_stop(self.payload(agent_id=""))

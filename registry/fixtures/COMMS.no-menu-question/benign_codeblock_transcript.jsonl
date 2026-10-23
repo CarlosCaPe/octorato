@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Borrador del mensaje para el proveedor, ya revisado por el panel.\n\n```\n¿Prefieren factura mensual o quincenal?\n```\n\nProvenance: Basis: scripts/g__stop__defer-today.py · Engine: build · Touched: none · Verified: selftest"}]}}

@@ -1,0 +1,14 @@
+{
+  "tool_name": "mcp__whatsapp__send_message",
+  "tool_input": {
+    "recipient": "5210000000000",
+    "message": "The form is signed."
+  },
+  "tool_response": {
+    "success": true,
+    "message": "Message sent to 5210000000000 [message_id=3EB0FIXTURE01 chat_jid=5210000000000@s.whatsapp.net]"
+  },
+  "session_id": "fx-sent",
+  "tool_use_id": "toolu_wa_personal_send",
+  "_now": "2026-10-02T12:00:00.000Z"
+}

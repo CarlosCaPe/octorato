@@ -40,7 +40,7 @@ Scheduled daily at 06:45 UTC via the local cron supervisor (a quarter hour befor
    - `mcp-candidate`: mentions Model Context Protocol
    - `SKIP`: pure news/opinion with no reusable artifact, OR an existing skill already covers it (TF-IDF via `query_connectome.py`)
 4. **Harmonization action** per survivor, same model as trending: `ADD` (net-new), `MERGE-WITH:<skill>` / `EXTEND:<skill>` (real overlap), or `SKIP` (covered). Harmonize, don't accrete.
-5. **LLM QA gate**: Groq `llama-3.3-70b-versatile` (`GROQ_API_KEY` from `projects/dataqbs_site/.dev.vars`). Drops announcements with no "how". Graceful skip if the key is missing.
+5. **LLM QA gate**: Groq `openai/gpt-oss-120b` (`GROQ_API_KEY` from `projects/dataqbs_site/.dev.vars`). Drops announcements with no "how". Graceful skip if the key is missing.
 6. **Writes** `~/.claude/knowledge/news-articles/<date>.md` (human digest) + `<date>.json` (machine sidecar, ALL items incl. SKIP + reasons).
 
 ## Operator daily workflow

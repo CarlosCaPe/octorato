@@ -1,0 +1,8 @@
+{
+  "command": "{{NODE}} {{CODEX}} exec 'Review this block.'",
+  "expect_complete": 1,
+  "expect_fields": {
+    "requested_model": "unknown"
+  },
+  "output": "Reviewed.\nPANEL-VERDICT: PASS\nPANEL-SHA256: 0000000000000000000000000000000000000000000000000000000000000000\n"
+}

@@ -24,14 +24,20 @@ When a new editor or model shows up in real operator use:
 
 Unknown engine today ≠ unsupported forever. Unknown = "binding not yet written"; the OS still runs on whatever the harness selected.
 
-## Supported runtimes (known as of 2026-09-06, v7.2.0)
+## Runtimes
 
-| Runtime | How the brain is loaded | How hooks fire | How MCP is listed | Detect |
-|---|---|---|---|---|
-| **Claude Code** | Reads `~/.claude/CLAUDE.md` natively | `~/.claude/hooks.json` | `claude mcp list` / `claude mcp add` | `claude` CLI present, no `CURSOR_AGENT` |
-| **Cursor** | Project/user rules + arm `CLAUDE.md`; skills from brain + arm | `scripts/merge-hooks-cursor.py` → `~/.cursor/hooks.json` | Cursor MCP panel / `GetMcpTools` (no `claude` CLI) | `CURSOR_AGENT=1` |
+Each row has an entry in `registry/runtimes.yaml` (the Runtime_Registry), and `brain_doctor` fails when a harness is in one and not the other or when the Status cells disagree (`runtime-doc-agreement`). Claude Code is `supported` on the gate selftests (`gate-liveness`), Cursor on the hook projection check (`cursor-hooks-sync`). Gemini CLI and Codex CLI become `supported` only when their record in `registry/census/` shows shell, file write and file edit blocked with the benign twins allowed; the doctor fails a `supported` entry without that record (`runtime-census-evidence`).
 
-Next candidates (binding TBD when first used in anger): Windsurf, Continue, Aider, OpenAI Codex CLI, JetBrains AI: same four columns, new row.
+| Runtime | Status | How the brain is loaded | How hooks fire | How MCP is listed | Detect |
+|---|---|---|---|---|---|
+| **Claude Code** | `supported` | Reads `~/.claude/CLAUDE.md` natively | `~/.claude/hooks.json` | `claude mcp list` / `claude mcp add` | `claude` CLI present, no `CURSOR_AGENT` |
+| **Cursor** | `supported` | Project/user rules + arm `CLAUDE.md`; skills from brain + arm | `scripts/merge-hooks-cursor.py` → `~/.cursor/hooks.json` | Cursor MCP panel / `GetMcpTools` (no `claude` CLI) | `CURSOR_AGENT=1` |
+| **Gemini CLI** | `gap` | `GEMINI.md` per arm, written by `sync-ai-docs` only while `supported` | `.gemini/settings.json` `BeforeTool`, projected by `scripts/merge-hooks-gemini.py` only while `supported` | `gemini mcp list` / `gemini mcp add` | not recorded yet |
+| **Codex CLI** | `gap` | `AGENTS.md` per arm, written by `sync-ai-docs` only while `supported` | `~/.codex/hooks.json` `PreToolUse`, after `/hooks` trust, projected by `scripts/merge-hooks-codex.py` only while `supported` | `codex mcp list` / `codex mcp add` | not recorded yet |
+
+The two `gap` rows have a census record (`registry/census/gemini.json`, `registry/census/codex.json`). Codex's record shows shell, file write and file edit blocked with the benign twins allowed in one live session (`live_block`, codex-cli 0.159.3), and its status stays `gap` until the operator flips it (AC-03). Gemini's live leg is unmeasured: the call ended in a 429 quota error (`live_block.reason`).
+
+Next candidates (binding TBD when first used in anger): Windsurf, Continue, Aider, JetBrains AI: same columns, new row.
 
 ## Model ladder is tier-first, vendor-second
 
@@ -45,6 +51,17 @@ Four vendor-agnostic tiers. Each runtime maps its available model slugs onto tho
 | **judgment** | QA, review, adversarial verify | **Fable** (no exceptions on Claude Code) | strongest *independent* engine ≥ builder | prefer a **different vendor** than the builder when available; else fresh same-tier session |
 
 **Invariant unchanged:** the verifier must be at least as strong as the builder. A weaker reviewer approves what it cannot see.
+
+### Tier bindings per runtime
+
+One row per entry of `registry/runtimes.yaml` (`tiers`). A `supported` runtime maps all four tiers, and `brain_doctor` (`runtime-registry`) fails one that does not (AC-08). A `gap` runtime is not bound: its row names what is unmeasured instead of guessing a slug.
+
+| Runtime | Status | mechanical | bulk | build | judgment | Source |
+|---|---|---|---|---|---|---|
+| **Claude Code** | `supported` | `haiku` | `sonnet` | `opus` | `fable` | `CLAUDE.md` "Route work by complexity"; the ladder table above |
+| **Cursor** | `supported` | `composer-2.5-fast` | `gpt-5.5-medium` | `grok-4.5-fast-xhigh` | strongest independent engine at least as strong as the builder | `skills/model-routing-by-complexity/SKILL.md`, "Cursor + xAI Grok" table |
+| **Gemini CLI** | `gap` | not bound | not bound | not bound | not bound | Unmeasured: the model list of the account tier (`registry/census/gemini.json` `account_tier.measured` false). The only slug in the census, `gemini-3.8-flash`, is named by the 429 error of the live call; it exists, its tier is not measured. |
+| **Codex CLI** | `gap` | not bound | not bound | not bound | not bound | Unmeasured: the session model (`registry/census/codex.json` `account_tier.model` null) and the slugs plan `free` offers; the census names no Codex slug. |
 
 ## Q2 MCP check is runtime-aware
 
@@ -86,3 +103,24 @@ These are known, intentional, or pending, not silent failures:
 - `scripts/_pricing.py`: multi-vendor list prices
 - `scripts/merge-hooks-cursor.py`: Cursor hook projector
 - `docs/wiki/Getting-Started.md`: install for either runtime
+
+<!-- moved-from-claude-md v10-T13 -->
+## Constitution detail (moved from CLAUDE.md)
+
+These paragraphs were the constitution's own text until v10 (T13), moved here so `CLAUDE.md` keeps only what every session needs. They are kept as written, with em-dashes normalised; `CLAUDE.md` now carries a short paragraph pointing here.
+
+### 2D Q2: the MCP census
+
+| Q | Question | Tool |
+|---|---|---|
+| Q2 | Is there an MCP/API? (token-efficient access) | **Runtime-aware MCP census (not a mental check).** Claude Code → `claude mcp list` (+ `claude mcp add --transport http <name> <url>` to register). Cursor (`CURSOR_AGENT=1`) → inspect MCP via `GetMcpTools` / Cursor Settings → MCP (no `claude` CLI required). Priority on every runtime: registered MCP > **register a NEW MCP if an official one exists** > REST API > SDK > scraping (last resort). **"No MCP connected" ≠ "no MCP available".** Before dropping to scraping or hand-rolled REST, you MUST verify whether an official MCP server exists for this service (web-search "<service> MCP server") and register it on the active runtime. Skipping this check is a hard failure, not a shortcut. See `docs/architecture/multi-runtime.md`. |
+
+### Route work by complexity across the model ladder
+
+**Route work by complexity across the model ladder** (`model-routing-by-complexity`; architecture: `docs/architecture/multi-runtime.md`): tiers are **vendor-agnostic**, mechanical → bulk (conscious downgrade, never the default) → build DEFAULT → **judgment, no exceptions** (QA, code review, second opinion, adversarial verify). Bind to the active runtime: Claude Code → Haiku / Sonnet / Opus / **Fable**; Cursor+xAI → `composer-2.5-fast` / mid-Grok-or-GPT / `grok-4.5*` / strongest independent ≥ builder. Octorato is for **all models and all editors**, new engines get a binding row, not a fork. The invariant behind the pin: the verifier must run on a model at least as strong as the builder, because a weaker reviewer approves what it cannot see. Never burn the build-tier engine on what a cheaper tier does, delegating *is* Q3 (who does it?), not optional. Identity in chat = the engine the harness selected (Grok, Claude, GPT, …); the OS is Octorato. These verdicts are meant to fire as **reflexes via hooks**, not depend on discipline, see `docs/architecture/hook-orchestration.md` (the Reactive Control Architecture: ECA atoms · Behavior-Tree priority · Statechart 4D · Spreading-Activation recall · Bandit tier-routing). **A gate that depends on the model remembering it WILL be skipped under load** (Q2/Q3 were "mental checks" for too long, so an MCP went unregistered and days were burned on manual scraping); when a rule is chronically ignored, the fix is never "try harder": give the arm a ganglion (a hook that fires on its own). Full HOW in `skills/reflexes-over-discipline/SKILL.md`. Report the 3-line summary in every response that involves work. Full detail in `skills/4d-paradigm-protocol/SKILL.md`.
+
+### Headroom cut (moved from CLAUDE.md)
+
+Cut from `CLAUDE.md` so the constitution has token headroom under its 12,000 ceiling. Each item is the removed text as written, with em-dashes normalised to commas. The rule it explained, with its trigger, script and hatch, stays in `CLAUDE.md`; line numbers refer to `CLAUDE.md` before the cut.
+
+- Route work by complexity across the model ladder (line 248): because a weaker reviewer approves what it cannot see.

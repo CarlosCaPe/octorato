@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "pg-stat-statements-observability",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "pg_stat_statements Query Observability"
+}

@@ -1,0 +1,19 @@
+{
+  "harness": "gemini-cli",
+  "gate": "g__pretool__arming-surface.py",
+  "payload": {
+    "session_id": "sess-shim",
+    "transcript_path": "",
+    "cwd": "{{SANDBOX}}/wt/shim/gone",
+    "hook_event_name": "BeforeTool",
+    "timestamp": "1970-01-01T00:00:00Z",
+    "tool_name": "replace",
+    "tool_input": {
+      "file_path": "../scripts/qa-merge-gate.py",
+      "instruction": "fx",
+      "old_string": "a",
+      "new_string": "b"
+    }
+  },
+  "neutral_cwd": true
+}

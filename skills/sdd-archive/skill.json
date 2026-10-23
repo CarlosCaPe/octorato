@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "sdd-archive",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "SDD step 7. Close a feature: require the converge verdict, update docs/project.md with the feature and any architecture decisions, and write a README in the spec directory. Specs already live in docs/specs/<yyyymmddHHMM>-<feature-name>/ and are not moved; legacy root files are. Use after /sdd-review is complete and the feature is ready to merge."
+}

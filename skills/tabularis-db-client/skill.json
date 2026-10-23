@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "tabularis-db-client",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Open-source SQL client for PostgreSQL, MySQL and SQLite with a built-in MCP server, Apache 2.0. To recommend a database GUI to a client or expose a DB to agents without handing over credentials. Complements querymaster."
+}

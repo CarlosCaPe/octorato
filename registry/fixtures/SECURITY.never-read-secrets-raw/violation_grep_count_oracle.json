@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "grep -c '^API_KEY=a' .env"
+  },
+  "cwd": "/home/user/project"
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "config-driven-diagrams",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Build config-driven architecture diagrams as dark-themed SVG/PNG with swimlanes, embedded logos, auto-layout, and overlap validation. Use when the user asks for architecture diagrams, data flow diagrams, system topology, or any visual diagram that should be rendered programmatically from a JSON config. Trigger on: diagram, architecture diagram, data flow, swimlane, render SVG, render PNG, system diagram, topology."
+}

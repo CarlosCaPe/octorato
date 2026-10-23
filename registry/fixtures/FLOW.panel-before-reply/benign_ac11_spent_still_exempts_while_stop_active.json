@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-rp-benign-ac11-spent-still-exempts-while-stop-active",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": true,
+  "last_assistant_message": "Panel running on the draft, the reply follows when it returns.",
+  "transcript_path": "benign_ac11_spent_still_exempts_while_stop_active_transcript.jsonl",
+  "_fixture": {
+    "spent": [
+      "toolu_p2"
+    ]
+  }
+}

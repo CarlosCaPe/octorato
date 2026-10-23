@@ -3,5 +3,6 @@
   "session_id": "selftest-benign_puente_viejo",
   "wa_guardia_dbs": {
     "prueba": "~/.wa-fixture/puente-sin-api-sends.db"
-  }
+  },
+  "transcript_path": "send_turn_transcript.jsonl"
 }

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "ddl-export-snapshot-management",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "DDL Export & Snapshot Management"
+}

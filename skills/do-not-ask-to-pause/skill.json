@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "do-not-ask-to-pause",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Canonical mandate — never ask the operator \"should we pause?\" or \"do we close the session?\" when there is queued work, an open PR waiting on the agent, or a clear next step. Continue working until either (a) genuine decision input is required, (b) all known work is done, or (c) the operator explicitly says to stop. Triggers — any time the agent is about to ask if it should pause / close / wrap up the session."
+}

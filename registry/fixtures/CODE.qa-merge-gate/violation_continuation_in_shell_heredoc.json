@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "bash <<'EOF'\ngh pr \\\n  merge 96 --squash\nEOF"}, "cwd": "/nonexistent/repo"}

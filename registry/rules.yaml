@@ -161,7 +161,7 @@ rules:
   category: FLOW
   source:
     file: CLAUDE.md
-    anchor: Do-it-today (no dejes para mañana lo que puedas hacer hoy)
+    anchor: Do-it-today (do not put off until tomorrow what you can do today)
   strength: GATE
   gateable: true
   enforcement: fail-closed
@@ -178,6 +178,31 @@ rules:
     expect: present
   - method: EXIT_CODE
     locator: scripts/g__stop__defer-today.py --selftest registry/fixtures/FLOW.do-it-today
+    expect: 0
+  liveness_required: FIRES
+- id: COMMS.no-menu-question
+  title: No menu questions — a reply never closes on a choice question the agent
+    could decide with /choice; only the irreducible operator step remains, as a step
+  category: COMMS
+  source:
+    file: CLAUDE.md
+    anchor: No menu questions
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__stop__no-menu-question.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|g__stop__no-menu-question.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__stop__no-menu-question.py --selftest registry/fixtures/COMMS.no-menu-question
     expect: 0
   liveness_required: FIRES
 - id: COMMS.paste-ready-raw-message
@@ -466,6 +491,36 @@ rules:
     locator: PreToolUse|Bash|delegate-gate.py
     expect: present
   liveness_required: FIRES
+- id: FLOW.self-verdict-live-source
+  title: A SELF verdict demands the live source before the answer
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: A SELF verdict is ~99% stale or hallucinated
+  strength: DETECTOR
+  firing_mode:
+  - cli
+  - hook
+  mechanism:
+  - kind: Detector
+    canonical_name: delegate-check
+    firing_event: null
+    firing_matcher: null
+  - kind: Reflex
+    canonical_name: connectome-heartbeat.py
+    firing_event: UserPromptSubmit
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: A SELF verdict is ~99% stale or hallucinated
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 scripts/delegate-check --selftest
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 scripts/connectome-heartbeat.py --selftest
+    expect: 0
+  liveness_required: PRESENT
 - id: FLOW.graph-before-grep
   title: Graph before grep; seek the lineage, do not scan
   category: FLOW
@@ -1375,7 +1430,7 @@ rules:
   title: FinOps budget caps halt expensive dispatch (fail-closed on hard_stop)
   category: FLOW
   source:
-    file: README.md
+    file: docs/ANATOMY.md
     anchor: FinOps roadmap
   strength: GATE
   gateable: true
@@ -1387,9 +1442,23 @@ rules:
     canonical_name: budget-check.py
     firing_event: PreToolUse
     firing_matcher: Agent
+  - kind: Reflex
+    canonical_name: budget-check.py
+    firing_event: SessionStart
+    firing_matcher: null
+  - kind: Reflex
+    canonical_name: budget-check.py
+    firing_event: PostToolUse
+    firing_matcher: Agent
   proof:
   - method: IN_HOOKS_JSON
     locator: PreToolUse|Agent|budget-check.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: SessionStart|*|budget-check.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: PostToolUse|Agent|budget-check.py
     expect: present
   - method: EXIT_CODE
     locator: scripts/budget-check.py --selftest registry/fixtures/FLOW.budget-halt
@@ -1746,9 +1815,195 @@ rules:
   - method: EXIT_CODE
     locator: scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/COMMS.outward-send-gate
     expect: 0
+  - method: FILE_EXISTS
+    locator: registry/send-ask.yaml
+    expect: present
   liveness_required: FIRES
   covers_memory:
   - feedback_no_direct_outbound_send.md
+- id: FLOW.panel-before-send
+  title: 'Panel before send: no message leaves without a PASS panel receipt for its exact digest'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Panel receipt
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__pretool-mcp__outward-send.py
+    firing_event: PreToolUse
+    firing_matcher: 'mcp__gmail__send_email|mcp__claude_ai_Gmail__send_message|mcp__claude_ai_Gmail__reply|mcp__claude_ai_Gmail__forward|mcp__whatsapp__send_message|mcp__whatsapp__send_file|mcp__whatsapp__send_audio_message|Bash'
+  - kind: Reflex
+    canonical_name: r__subagent-stop__qa-receipt.py
+    firing_event: SubagentStop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|mcp__gmail__send_email|mcp__claude_ai_Gmail__send_message|mcp__claude_ai_Gmail__reply|mcp__claude_ai_Gmail__forward|mcp__whatsapp__send_message|mcp__whatsapp__send_file|mcp__whatsapp__send_audio_message|Bash|g__pretool-mcp__outward-send.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: SubagentStop|*|r__subagent-stop__qa-receipt.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/FLOW.panel-before-send
+    expect: 0
+  liveness_required: FIRES
+- id: FLOW.panel-before-reply
+  title: 'Panel before reply: no reply to the operator ends a turn without a PASS panel receipt for its exact text'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Reply panel
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__stop__reply-panel.py
+    firing_event: Stop
+    firing_matcher: '*'
+  - kind: Reflex
+    canonical_name: r__subagent-stop__qa-receipt.py
+    firing_event: SubagentStop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|g__stop__reply-panel.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: SubagentStop|*|r__subagent-stop__qa-receipt.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__stop__reply-panel.py --selftest registry/fixtures/FLOW.panel-before-reply
+    expect: 0
+  liveness_required: FIRES
+- id: FLOW.external-review-receipt
+  title: 'External review receipt: a review on another engine counts only through a pinned, hook-written receipt, adds to a quorum and never clears a send'
+  category: FLOW
+  source:
+    file: docs/architecture/v11-reply-panel.md
+    anchor: '## External reviewers'
+  strength: REFLEX
+  gateable: false
+  enforcement: n/a
+  firing_mode:
+  - hook
+  - cli
+  mechanism:
+  - kind: Reflex
+    canonical_name: r__pretool-bash__external-review.py
+    firing_event: PreToolUse
+    firing_matcher: Bash
+  - kind: Reflex
+    canonical_name: r__posttool-bash__external-review.py
+    firing_event: PostToolUse
+    firing_matcher: Bash
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Bash|r__pretool-bash__external-review.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: PostToolUse|Bash|r__posttool-bash__external-review.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/external_review.py --selftest registry/fixtures/FLOW.external-review-receipt
+    expect: 0
+  - method: EXIT_CODE
+    locator: scripts/receipt_ledger.py --selftest-external
+    expect: 0
+  - method: FILE_EXISTS
+    locator: registry/reviewers.yaml
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '## External reviewers'
+    expect: present
+  liveness_required: FIRES
+- id: FLOW.sent-message-ledger
+  title: 'Sent-message ledger: every message that left is recorded with its channel id, digest and panel receipt'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Sent-message ledger
+  strength: REFLEX
+  gateable: false
+  enforcement: n/a
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Reflex
+    canonical_name: r__posttool__sent-ledger.py
+    firing_event: PostToolUse
+    firing_matcher: 'mcp__gmail__send_email|mcp__claude_ai_Gmail__send_message|mcp__claude_ai_Gmail__reply|mcp__claude_ai_Gmail__forward|mcp__whatsapp__send_message|mcp__whatsapp__send_file|mcp__whatsapp__send_audio_message|Bash'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PostToolUse|mcp__gmail__send_email|mcp__claude_ai_Gmail__send_message|mcp__claude_ai_Gmail__reply|mcp__claude_ai_Gmail__forward|mcp__whatsapp__send_message|mcp__whatsapp__send_file|mcp__whatsapp__send_audio_message|Bash|r__posttool__sent-ledger.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/r__posttool__sent-ledger.py --selftest registry/fixtures/FLOW.sent-message-ledger
+    expect: 0
+  liveness_required: FIRES
+- id: FLOW.friction-ledger
+  title: 'Friction ledger: every gate deny and Stop block the harness recorded is counted, digest only'
+  category: FLOW
+  source:
+    file: docs/architecture/v10-friction.md
+    anchor: '## Friction ledger'
+  strength: REFLEX
+  gateable: false
+  enforcement: n/a
+  firing_mode:
+  - hook
+  - cli
+  mechanism:
+  - kind: Reflex
+    canonical_name: r__stop__friction-ledger.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|r__stop__friction-ledger.py
+    expect: present
+  - method: FILE_EXISTS
+    locator: scripts/friction_ledger.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '## Friction ledger'
+    expect: present
+  liveness_required: FIRES
+- id: FLOW.friction-replay
+  title: 'Replay harness: a gate change is replayed on frozen real traffic and fails on a lost true positive'
+  category: FLOW
+  source:
+    file: docs/architecture/v10-friction.md
+    anchor: '## Replay harness'
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v10 phase 1 (2026-10-06): detector by design. The corpus is private and per machine, so a clone without it SKIPs; the replay is run by the builder of a gate change and its result is quoted in the PR, not forced at push.'
+  firing_mode:
+  - cli
+  mechanism:
+  - kind: Detector
+    canonical_name: replay_harness.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/replay_harness.py
+    expect: present
+  - method: FILE_EXISTS
+    locator: registry/friction-baseline.json
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '## Replay harness'
+    expect: present
+  liveness_required: PRESENT
 - id: FLOW.qa-receipt
   title: 'QA receipt: a subagent verdict is recorded by the harness, re-read from its transcript'
   category: FLOW
@@ -1881,6 +2136,59 @@ rules:
     expect: present
   - method: EXIT_CODE
     locator: scripts/g__pretool__arming-surface.py --selftest registry/fixtures/ARCHITECTURE.arming-surface
+    expect: 0
+  # v11 spec 202610141000, T03 [AC-17]: registry/runtimes.yaml joined the live
+  # set; its violation/benign pair is in the corpus the selftest above runs.
+  # registry/census/ is not armed: AC-17 names the registry only.
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/violation_surface_registry_runtimes_yaml.json
+    expect: present
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/benign_surface_registry_runtimes_yaml.json
+    expect: present
+  - method: EXIT_CODE
+    locator: grep -q '"registry/runtimes.yaml":' scripts/g__pretool__arming-surface.py
+    expect: 0
+  # v11 spec 202610141000, T05 [AC-17], registered in T11: the Hook_Shim joined
+  # the live set as `g__shim__*.py`; its pair is in the same selftest corpus.
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/violation_surface_shim_hook.json
+    expect: present
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/benign_surface_shim_hook.json
+    expect: present
+  - method: EXIT_CODE
+    locator: grep -q '"g__shim__\*.py"' scripts/g__pretool__arming-surface.py
+    expect: 0
+  # v11 spec 202610141000, T13 [AC-17], registered in T18: the Export_Guard
+  # joined the live set as `g__wrap__*.py`; its pair is in the same corpus.
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/violation_surface_export_guard.json
+    expect: present
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/benign_surface_export_guard.json
+    expect: present
+  - method: EXIT_CODE
+    locator: grep -q '"g__wrap__\*.py"' scripts/g__pretool__arming-surface.py
+    expect: 0
+  # v11 T15 [AC-17], registered in T18: the harness's plugins/ directory
+  # (registration files, installed trees, the signed Tracing_Wrapper). It is
+  # gitignored, so each benign twin writes the same relative path under the
+  # temporary HOME gate_selftest provides.
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/violation_surface_plugins_known_marketplaces.json
+    expect: present
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/benign_surface_plugins_known_marketplaces.json
+    expect: present
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/violation_surface_plugin_wrapper_tree.json
+    expect: present
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/benign_surface_plugin_wrapper_tree.json
+    expect: present
+  - method: EXIT_CODE
+    locator: grep -q '^    "plugins":$' scripts/g__pretool__arming-surface.py
     expect: 0
   liveness_required: FIRES
 - id: FLOW.kernel-journal
@@ -2052,3 +2360,660 @@ rules:
     locator: 'Kernel: packages'
     expect: present
   liveness_required: FIRES
+- id: FLOW.spec-contract
+  title: 'An ears-1 spec a script can read: EARS criteria, task grammar, coverage, checked at push'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Done is a verdict
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - cli
+  - git-hook
+  mechanism:
+  - kind: Gate
+    canonical_name: spec_lint.py
+    firing_event: PrePush
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/spec_lint.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/spec_lint.py --selftest registry/fixtures/FLOW.spec-contract
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -qE '^[ \t]*if[ \t]+![ \t]+"?\$\{?PYTHON\}?"?[ \t]+[^|;]*spec_lint\.py[^|;]*--push-range[^|;]*;[ \t]*then[ \t]*$'
+      .githooks/pre-push
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: Done is a verdict
+    expect: present
+  liveness_required: FIRES
+- id: FLOW.done-is-a-verdict
+  title: 'Done is a verdict: a spec reaches converged only with a fresh CONVERGED receipt from an independent verifier'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Done is a verdict
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - cli
+  - git-hook
+  mechanism:
+  - kind: Gate
+    canonical_name: spec_lint.py
+    firing_event: PrePush
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/spec_lint.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/spec_lint.py --selftest registry/fixtures/FLOW.done-is-a-verdict
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -qE '^[ \t]*if[ \t]+![ \t]+"?\$\{?PYTHON\}?"?[ \t]+[^|;]*spec_lint\.py[^|;]*--push-range[^|;]*;[ \t]*then[ \t]*$'
+      .githooks/pre-push
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: Done is a verdict
+    expect: present
+  liveness_required: FIRES
+- id: ARCHITECTURE.octo-dash
+  title: 'VISIBLE: octo dash writes one offline HTML page of specs, PRs, gate receipt, kernel and friction'
+  category: ARCHITECTURE
+  source:
+    file: docs/wiki/Getting-Started.md
+    anchor: How to see the whole brain at a glance
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v10 phase 4 (2026-10-06): a reader by design. The page blocks nothing; it renders state other mechanisms own (receipt ledger, kernel ptable, friction ledger). Its proof is a hermetic selftest that every section renders and that injected markup stays inert.'
+  firing_mode:
+  - cli
+  mechanism:
+  - kind: Detector
+    canonical_name: octo_dash.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/octo_dash.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/octo_dash.py --selftest
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -q 'add_parser("dash"' scripts/octo.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: How to see the whole brain at a glance
+    expect: present
+  liveness_required: PRESENT
+- id: ARCHITECTURE.status-line
+  title: 'VISIBLE: the Claude Code status line shows gate receipt, live process count and active spec'
+  category: ARCHITECTURE
+  source:
+    file: docs/wiki/Getting-Started.md
+    anchor: How to see the whole brain at a glance
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v10 phase 4 (2026-10-06): a reader by design. statusLine is a settings key, not a hook event, so it is registered by merge-hooks.py (ai-pull and SessionStart) and proven by that script''s selftest; the line itself is proven by its own hermetic selftest.'
+  firing_mode:
+  - runner
+  mechanism:
+  - kind: Detector
+    canonical_name: statusline.py
+    firing_event: null
+    firing_matcher: null
+  - kind: Reflex
+    canonical_name: merge-hooks.py
+    firing_event: SessionStart
+    firing_matcher: '*'
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/statusline.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/statusline.py --selftest
+    expect: 0
+  - method: EXIT_CODE
+    locator: scripts/merge-hooks.py --selftest
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -q 'scripts/statusline.py' scripts/merge-hooks.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: How to see the whole brain at a glance
+    expect: present
+  liveness_required: PRESENT
+- id: FLOW.requa-base-update
+  title: '/requa: a head that moved only by a merge of master keeps its QA PASS only on an identical normalized patch'
+  category: FLOW
+  source:
+    file: commands/requa.md
+    anchor: '# /requa <pr>: re-QA after a base update'
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v10 convergence 1 (2026-10-07): a verifier protocol by design, not a gate. A QA subagent runs it and writes the receipt lines; the merge gate keeps deciding on the newest receipt for the pinned head (AC-13). The decidable steps (parents, master membership, normalized patch compare) live in requa.py with every remote answer passed in, and test_requa_protocol.py pins them over a fixture repo in the CI suite.'
+  firing_mode:
+  - model
+  - cli
+  mechanism:
+  - kind: Detector
+    canonical_name: requa.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/requa.py
+    expect: present
+  - method: FILE_EXISTS
+    locator: scripts/tests/test_requa_protocol.py
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_requa_protocol.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: '# /requa <pr>: re-QA after a base update'
+    expect: present
+  liveness_required: PRESENT
+- id: META.constitution-budget
+  title: 'CLAUDE.md loads at most 12,000 tokens (per-piece bound) and has no section in a language other than English'
+  category: META
+  source:
+    file: docs/specs/202610061605-v10-low-friction-easy-entry/feature.md
+    anchor: 'AC-17: THE Constitution SHALL contain no section written in a language other than English'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - git-hook
+  - runner
+  mechanism:
+  - kind: Gate
+    canonical_name: brain_doctor.py
+    firing_event: PrePush
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/tests/test_claude_md_budget.py
+    expect: present
+  - method: EXIT_CODE
+    locator: grep -q 'check_claude_md_budget(args.fix)' scripts/brain_doctor.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: scripts/brain_doctor.py --selftest registry/fixtures/META.constitution-budget
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 scripts/brain_doctor.py --registry
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-17: THE Constitution SHALL contain no section written in a language other than English'
+    expect: present
+  liveness_required: FIRES
+# v11 spec 202610141000 (harness independence), T04 [AC-15]. Registry-only rules:
+# each anchors in the spec's own acceptance criterion, so CLAUDE.md (near its
+# 12,000-token budget) gains no prose and registry-coverage is unchanged. The
+# arming-surface change (T03, AC-17) is registered as proofs on the existing
+# ARCHITECTURE.arming-surface rule, whose selftest already runs its fixtures.
+- id: ARCHITECTURE.runtime-census
+  title: 'Runtime census: a harness is measured, record per harness, before the brain calls it supported'
+  category: ARCHITECTURE
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-02: WHEN the Runtime_Census runs for a harness'
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v11 T04: a measurement, not a gate. It writes registry/census/<harness>.json and never decides an allow or a deny; the decision is ARCHITECTURE.runtime-census-evidence, which reads its records at push time.'
+  firing_mode:
+  - cli
+  mechanism:
+  - kind: Detector
+    canonical_name: runtime_census.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/runtime_census.py
+    expect: present
+  - method: FILE_EXISTS
+    locator: scripts/tests/test_runtime_census.py
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_runtime_census.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-02: WHEN the Runtime_Census runs for a harness'
+    expect: present
+  liveness_required: PRESENT
+- id: ARCHITECTURE.runtime-registry
+  title: 'Runtime registry: one valid entry per harness, in agreement with the Runtimes table of multi-runtime.md'
+  category: ARCHITECTURE
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-01: THE Runtime_Registry SHALL hold one entry per row'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  # Two doctor checks, both FAIL (exit non-zero) and so block .githooks/pre-push:
+  # `runtime-registry` (registry/runtimes.yaml present, parses, every entry valid)
+  # and `runtime-doc-agreement` (same harness set and statuses as the doc table).
+  firing_mode:
+  - git-hook
+  - runner
+  mechanism:
+  - kind: Gate
+    canonical_name: brain_doctor.py
+    firing_event: PrePush
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: registry/runtimes.yaml
+    expect: present
+  - method: FILE_EXISTS
+    locator: scripts/tests/test_runtime_registry.py
+    expect: present
+  - method: EXIT_CODE
+    locator: grep -q '("runtime-registry", check_runtime_registry)' scripts/brain_doctor.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -q '("runtime-doc-agreement", check_runtime_doc_agreement)' scripts/brain_doctor.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_runtime_registry.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-01: THE Runtime_Registry SHALL hold one entry per row'
+    expect: present
+  # v11 T10 [AC-08], registered in T11: `runtime-registry` also fails a supported
+  # entry whose tiers do not map all four tiers to model slugs.
+  - method: EXIT_CODE
+    locator: grep -q 'problems.extend(runtime_tier_problems(rid, entry))' scripts/brain_doctor.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-08: WHERE a harness is `supported`, THE Runtime_Registry SHALL map the four tiers'
+    expect: present
+  liveness_required: FIRES
+- id: ARCHITECTURE.runtime-census-evidence
+  title: 'A census harness is supported only on a census record that shows it blocking'
+  category: ARCHITECTURE
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-03: THE Runtime_Registry SHALL mark Gemini CLI or Codex CLI `supported` only when'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  # Doctor check `runtime-census-evidence`: fails a supported Gemini/Codex entry
+  # without a blocking census record, a missing or unknown harness id, and a
+  # supported entry whose `evidence` check FAILs (plan.md Notes, T02 QA fix).
+  firing_mode:
+  - git-hook
+  - runner
+  mechanism:
+  - kind: Gate
+    canonical_name: brain_doctor.py
+    firing_event: PrePush
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: registry/census
+    expect: present
+  - method: EXIT_CODE
+    locator: grep -q '("runtime-census-evidence", check_runtime_census_evidence)' scripts/brain_doctor.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_runtime_registry.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-03: THE Runtime_Registry SHALL mark Gemini CLI or Codex CLI `supported` only when'
+    expect: present
+  liveness_required: FIRES
+# v11 spec 202610141000 (harness independence), T11 [AC-15]: phase 2 of the
+# spec. Same convention as T04: each rule anchors in the spec's own acceptance
+# criterion, so CLAUDE.md gains no prose and registry-coverage is unchanged.
+# The tier check (T10, AC-08) lives in the `runtime-registry` doctor check and
+# is proven on ARCHITECTURE.runtime-registry.
+- id: ARCHITECTURE.hook-shim
+  title: 'Hook shim: a gate runs under a second harness only through a translation that blocks when it cannot read'
+  category: ARCHITECTURE
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-05: WHEN a projected fail-closed gate denies, THE Hook_Shim SHALL make the harness block'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  # Fires as the hook command a projector writes into a SECOND harness's config
+  # (Gemini CLI BeforeTool, Codex CLI PreToolUse), never in hooks.json, so
+  # firing_event is null and the liveness proof is its fixture selftest, which
+  # gate-liveness runs: 65 block and 34 allow on registry/fixtures/ARCHITECTURE.hook-shim.
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__shim__hook.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/g__shim__hook.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__shim__hook.py --selftest registry/fixtures/ARCHITECTURE.hook-shim
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_hook_shim.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-05: WHEN a projected fail-closed gate denies, THE Hook_Shim SHALL make the harness block'
+    expect: present
+  liveness_required: FIRES
+- id: ARCHITECTURE.hook-projectors
+  title: 'Hook projectors: hooks.json reaches Gemini CLI and Codex CLI through the shim, unprojected tokens written to the registry'
+  category: ARCHITECTURE
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-04: WHERE a harness is `supported`, THE Hook_Projector SHALL write'
+  strength: REFLEX
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v11 T11: a projector writes a harness hook config and decides no allow or deny; the deny is the shim''s (ARCHITECTURE.hook-shim). It refuses to write for a `gap` harness (exit 2), and --check exits 1 when the registry unprojected lists drift from hooks.json.'
+  firing_mode:
+  - cli
+  mechanism:
+  - kind: Reflex
+    canonical_name: merge-hooks-gemini.py
+    firing_event: null
+    firing_matcher: null
+  - kind: Reflex
+    canonical_name: merge-hooks-codex.py
+    firing_event: null
+    firing_matcher: null
+  - kind: Reflex
+    canonical_name: hook_projector.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/tests/test_hook_projectors.py
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_hook_projectors.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 scripts/merge-hooks-gemini.py --check
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 scripts/merge-hooks-codex.py --check
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-04: WHERE a harness is `supported`, THE Hook_Projector SHALL write'
+    expect: present
+  liveness_required: PRESENT
+- id: ARCHITECTURE.runtime-census-gates
+  title: 'Census --gates: every projected fail-closed gate selftest run through the shim, recorded per harness'
+  category: ARCHITECTURE
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-06: WHEN the `--selftest` of a projected fail-closed gate runs through the Hook_Shim'
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v11 T11: evidence, not a gate. `runtime_census.py --gates` writes the `gates` and `live_block` sections of registry/census/<harness>.json; the decision on that evidence is ARCHITECTURE.runtime-census-evidence at push time, and the flip to `supported` is the operator''s.'
+  firing_mode:
+  - cli
+  mechanism:
+  - kind: Detector
+    canonical_name: runtime_census.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/tests/test_runtime_census_gates.py
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_runtime_census_gates.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: 'grep -q ''"shim_harness": "codex-cli"'' registry/census/codex.json'
+    expect: 0
+  - method: EXIT_CODE
+    locator: 'grep -q ''"shim_harness": "gemini-cli"'' registry/census/gemini.json'
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-06: WHEN the `--selftest` of a projected fail-closed gate runs through the Hook_Shim'
+    expect: present
+  liveness_required: PRESENT
+- id: ARCHITECTURE.instruction-sync
+  title: 'Instruction sync: each supported harness reads the arm instructions in its own file'
+  category: ARCHITECTURE
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-07: THE Instruction_Sync SHALL read the Runtime_Registry and write `AGENTS.md`'
+  strength: REFLEX
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v11 T11: a runner step (sync-ai-docs, run by ai-pull and ai-push) that mirrors a file; it decides no allow or deny. Only `supported` harnesses get a file, and an unchanged source rewrites nothing.'
+  firing_mode:
+  - runner
+  mechanism:
+  - kind: Reflex
+    canonical_name: ai_sync.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/tests/test_ai_sync_instruction_files.py
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_ai_sync_instruction_files.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -q 'def harness_instruction_files' scripts/ai_sync.py
+    expect: 0
+  # QA fix on T11: no mirror is written through a symlink, registry values are
+  # plain file names, and a stale mirror of a non-supported harness WARNs.
+  - method: EXIT_CODE
+    locator: grep -q 'def mirror_refusal' scripts/ai_sync.py
+    expect: 0
+  - method: FILE_EXISTS
+    locator: scripts/tests/test_doctor_sync_targets.py
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_doctor_sync_targets.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-07: THE Instruction_Sync SHALL read the Runtime_Registry and write `AGENTS.md`'
+    expect: present
+  liveness_required: PRESENT
+# v11 spec 202610141000 (opt-in tracing), T18 [AC-15]: phase 3 of the spec.
+# Same convention as T04 and T11: each rule anchors in the spec's own
+# acceptance criterion, so CLAUDE.md gains no prose. The arming-surface
+# additions (the guard, T13, and plugins/, T15) are proofs on
+# ARCHITECTURE.arming-surface above.
+- id: SECURITY.export-guard
+  title: 'Export_Guard: the upstream tracing hook starts only for an arm whose telemetry.export is allow'
+  category: SECURITY
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-10: IF the Arm_Resolution of the session finds no arm'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  # Fires as every hook command of the Tracing_Wrapper plugin (kind plugin,
+  # SECURITY.tracing-wrapper-package), never from hooks.json, so firing_event is
+  # null. Closed means NO EXPORT: every read or parse error is a silent deny and
+  # the upstream process is never started. Liveness is its fixture selftest,
+  # which gate-liveness runs: 45 not spawned and 19 spawned (benign legs on both
+  # spawn paths, plus the signal-disposition leg on each).
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__wrap__export-guard.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/g__wrap__export-guard.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__wrap__export-guard.py --selftest registry/fixtures/SECURITY.export-guard
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_export_guard.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-10: IF the Arm_Resolution of the session finds no arm'
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: 'AC-11: WHERE the session''s arm has Export_Policy `allow`'
+    expect: present
+  liveness_required: FIRES
+- id: SECURITY.export-flip
+  title: 'Export_Flip_Gate: an agent write never sets an arm''s telemetry.export to allow'
+  category: SECURITY
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-16: IF a write would set an arm''s `telemetry.export` to `allow`'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  # Structural for Write, Edit and MultiEdit (the file as it would be after the
+  # call, read with the guard's own strict reader); a speed bump for Bash, with
+  # its named residuals in the script header. Journals every refusal under this
+  # id (_KERNEL_RULE).
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__pretool__export-flip.py
+    firing_event: PreToolUse
+    firing_matcher: Write|Edit|MultiEdit|NotebookEdit|Bash
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Write|Edit|MultiEdit|NotebookEdit|Bash|g__pretool__export-flip.py
+    expect: present
+  - method: FILE_EXISTS
+    locator: scripts/g__pretool__export-flip.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool__export-flip.py --selftest registry/fixtures/SECURITY.export-flip
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_export_flip.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-16: IF a write would set an arm''s `telemetry.export` to `allow`'
+    expect: present
+  liveness_required: FIRES
+- id: SECURITY.tracing-wrapper-package
+  title: 'Tracing_Wrapper package: kind plugin, signed, every hook guarded, installed disabled, verified at push'
+  category: SECURITY
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-13: THE Package_Installer SHALL install the Tracing_Wrapper as kind `plugin`'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  # `octo_pkg.py install --kind plugin` refuses a package whose hooks are not
+  # exactly the guarded upstream list, an unsigned one, and any install inside a
+  # session; `verify --all` (run by .githooks/pre-push) FAILs on a tree or harness
+  # copy that does not hash to its lock row and on the upstream installed outside
+  # the wrapper. Doctor check `tracing-plugins` reports the same ladder by name.
+  firing_mode:
+  - git-hook
+  - cli
+  - runner
+  mechanism:
+  - kind: Gate
+    canonical_name: octo_pkg.py
+    firing_event: PrePush
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: registry/fixtures/META.kernel-package/plugin-upstream/hooks/hooks.json
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/octo_pkg.py --selftest registry/fixtures/META.kernel-package
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_octo_pkg_plugin.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -q '("tracing-plugins", check_tracing_plugins)' scripts/brain_doctor.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_doctor_tracing.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-13: THE Package_Installer SHALL install the Tracing_Wrapper as kind `plugin`'
+    expect: present
+  liveness_required: FIRES
+- id: SECURITY.tracing-switch
+  title: 'Doctor: the tracing switch is never on where an arm does not allow export'
+  category: SECURITY
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-12: THE Doctor SHALL fail when the tracing switch is set'
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v11 T18: a detector. Doctor check `tracing-switch` FAILs (exit 1) on TRACE_TO_LANGSMITH in a deny or absent arm''s project settings, or in the global settings while any arm is deny or absent; an arm''s own settings are not on the arming surface (plan.md, Risks), so nothing can refuse the write itself. The guard keeps the switch inert for a deny arm (SECURITY.export-guard).'
+  firing_mode:
+  - runner
+  mechanism:
+  - kind: Detector
+    canonical_name: brain_doctor.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: EXIT_CODE
+    locator: grep -q '("tracing-switch", check_tracing_switch)' scripts/brain_doctor.py
+    expect: 0
+  - method: FILE_EXISTS
+    locator: scripts/tests/test_doctor_tracing.py
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_doctor_tracing.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-12: THE Doctor SHALL fail when the tracing switch is set'
+    expect: present
+  liveness_required: PRESENT
+- id: ARCHITECTURE.tracing-latency-bench
+  title: 'Tracing latency bench: what the wrapper adds to each hook event, measured against the upstream alone'
+  category: ARCHITECTURE
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-14: WHEN LangSmith is unreachable'
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v11 T18: a measurement, not a gate. `g__wrap__export-guard.py --bench` records median and p95 per event and exits 1 when a bound is exceeded; the record lives in the spec directory and the verdict on it is the converge pass.'
+  firing_mode:
+  - cli
+  mechanism:
+  - kind: Detector
+    canonical_name: g__wrap__export-guard.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/bench-tracing-wrapper.json
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_export_guard_bench.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-14: WHEN LangSmith is unreachable'
+    expect: present
+  liveness_required: PRESENT

@@ -1,0 +1,9 @@
+# fixture: one hard_stop arm scoped to a path, NO spend_json, so spend comes
+# from the cache (~/.claude/.cache/budget/spend.json), which the selftest
+# writes fresh at run time from spend.json in this directory.
+budgets:
+  - arm: cache-hot
+    path: /nonexistent/cache-hot
+    monthly_usd_cap: 10.00
+    action_on_breach: hard_stop
+    grace_pct: 100

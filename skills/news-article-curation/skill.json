@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "news-article-curation",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Daily loop over AI RSS feeds (Willison, OpenAI, DeepMind, arXiv cs.AI): filters the articles that teach something the brain does not know yet. Promotes a keeper to a real skill with /news-promote."
+}

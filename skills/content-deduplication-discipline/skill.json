@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "content-deduplication-discipline",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Content Deduplication Discipline"
+}

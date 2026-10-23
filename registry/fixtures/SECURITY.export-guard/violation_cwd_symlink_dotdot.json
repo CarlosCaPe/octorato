@@ -1,0 +1,46 @@
+{
+  "arms_paths": {
+    "open": "arms/open",
+    "closed": "arms/closed"
+  },
+  "files": {
+    "arms/open/arm.json": {
+      "kind": "arm",
+      "name": "open",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    },
+    "arms/closed/arm.json": {
+      "kind": "arm",
+      "name": "closed",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "deny"
+      }
+    }
+  },
+  "dirs": [
+    "arms/open/src",
+    "arms/closed/src",
+    "elsewhere"
+  ],
+  "symlinks": [
+    [
+      "arms/open/ln",
+      "arms/closed/src"
+    ]
+  ],
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/open/ln/.."
+  },
+  "_comment": "open/ln/.. where ln points into closed/src: the kernel resolves ln first, so the real path is closed.",
+  "_setup": {
+    "expect_reason": "Export_Policy of the arm"
+  }
+}

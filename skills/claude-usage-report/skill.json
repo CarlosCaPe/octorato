@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "claude-usage-report",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Aggregate Claude Code usage (tokens, sessions, API-equivalent cost) by day, week, month, model, and project from local JSONL session logs. Use when the user asks about their Claude Code usage, consumption, costs, \"cuánto he usado\", \"uso diario/semanal/mensual\", or wants to audit which projects/models are eating the most tokens."
+}

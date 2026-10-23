@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-post-api-send-short-host",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl -s -X POST http://127.1:8081/api/send -H 'Content-Type: application/json' --data-binary @m.json"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_post_api_send_short_host_transcript.jsonl"
+}

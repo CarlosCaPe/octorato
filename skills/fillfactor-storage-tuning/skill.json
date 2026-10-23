@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "fillfactor-storage-tuning",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Fillfactor & Storage Parameter Tuning"
+}

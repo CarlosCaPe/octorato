@@ -28,9 +28,25 @@ refreshes every 5 min, so a stamp from 40 seconds ago could never show up), and
 the cure started the binary here. Result: a guaranteed FAIL every 10 minutes and
 a second WhatsApp session cloned on every pass.
 
+REJECTED CLIENT. WhatsApp retires old client versions: the bridge then logs
+"Client outdated (405)" once and never reconnects, while its process stays up
+and its account stays linked. A bridge with no own number (no send probe) read
+"link OK" for hours in that state. So every bridge whose systemd unit is known
+is also read for its CURRENT run (its InvocationID): if the last line that is a
+405 or a successful login is a 405, the bridge is down, and a restart does not
+cure it (the same binary is rejected again); it needs a rebuild.
+
+AUTO-UPDATE NOTICES. A remote bridge may run an auto-update on its host that
+rebuilds it after a 405 and records each attempt in a state file there. The
+host can only notify over WhatsApp, which is what is down when it acts, so this
+script reads that state file and hands each new result to a local notifier.
+
 CONFIGURATION. The channel data (numbers, paths) lives in
 company/config/wa-puentes.json, which is gitignored. This script is public and
-must not contain any client identifier.
+must not contain any client identifier. Optional keys used here: `unidad` (the
+systemd --user unit of a local bridge), and under `remoto`, `autoupdate` with
+`estado` (path of the state file on the host) and `aviso` (the notifier argv,
+where "{reason}" and "{detail}" are replaced).
 
 Usage:
     wa-latido.py                 check, and cure if needed
@@ -54,6 +70,7 @@ from datetime import datetime
 
 CONFIG = os.path.expanduser("~/.claude/company/config/wa-puentes.json")
 ESTADO = os.path.expanduser("~/.cache/wa-latido.json")
+AVISOS_VISTOS = os.path.expanduser("~/.cache/wa-latido-autoupdate.json")
 LOCK = os.path.expanduser("~/.cache/wa-latido.lock")
 
 ESPERA_MAX_S = 40      # se sondea hasta aqui, no se duerme a ciegas
@@ -65,6 +82,16 @@ SSM_SONDEO_S = 2
 # Gancho de inyeccion para el selftest: una funcion (cfg, comando) -> str que
 # sustituye a AWS. En produccion vale None y manda el SSM de verdad.
 EJECUTOR_SSM = None
+# Same idea for a LOCAL bridge's journal: a function (cfg) -> str returning the
+# current run's log, newest first. None in production.
+EJECUTOR_JOURNAL = None
+
+REJECTED = "Client outdated (405)"
+LOGGED_IN = "Successfully authenticated"
+# An in_progress auto-update older than this is reported as stuck.
+AUTOUPDATE_ATORADO_S = 1800
+# Results older than this are not announced on a first run (no seen file yet).
+AUTOUPDATE_VIGENCIA_S = 86400
 
 
 class SondaRota(Exception):
@@ -270,6 +297,55 @@ def vinculado(cfg):
     return n > 0, f"{n} dispositivo(s) enlazado(s)"
 
 
+def _corrida_actual(cfg):
+    """The current run of the bridge's systemd unit, newest line first, or None
+    when the unit is not known. Raises SondaRota when it cannot be read."""
+    if cfg.get("remoto"):
+        unidad = shlex.quote(cfg["remoto"]["unidad"])
+        # The trailing `true` matters: an inactive unit or a run with neither
+        # line yet makes the pipeline exit 1, SSM then reports Failed, and
+        # ssm() would raise SondaRota for a state that is merely "not yet".
+        return ssm(cfg, f"inv=$(systemctl show {unidad} -p InvocationID --value); "
+                        f"[ -n \"$inv\" ] && journalctl _SYSTEMD_INVOCATION_ID=$inv "
+                        f"-r -o cat --no-pager | grep -m 1 -F -e "
+                        f"{shlex.quote(REJECTED)} -e {shlex.quote(LOGGED_IN)}; true")
+    if not cfg.get("unidad"):
+        return None
+    if EJECUTOR_JOURNAL is not None:
+        return EJECUTOR_JOURNAL(cfg)
+    try:
+        inv = subprocess.run(["systemctl", "--user", "show", cfg["unidad"], "-p",
+                              "InvocationID", "--value"], capture_output=True,
+                             text=True, timeout=15).stdout.strip()
+        if not inv:
+            return ""
+        r = subprocess.run(["journalctl", "--user", f"_SYSTEMD_INVOCATION_ID={inv}",
+                            "-r", "-o", "cat", "--no-pager"], capture_output=True,
+                           text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise SondaRota(f"no pude leer el journal de {cfg['unidad']}: {e}") from e
+    return r.stdout
+
+
+def rechazado(cfg):
+    """(state, detail). state True: the current run's last 405-or-login line is
+    a 405, so WhatsApp rejected this client version. False: it is a login, or
+    neither appears yet. None: the unit is not configured or could not be read,
+    which is NOT the same as not rejected."""
+    try:
+        salida = _corrida_actual(cfg)
+    except SondaRota as e:
+        return None, str(e)
+    if salida is None:
+        return None, "sin unidad configurada: no se lee el rechazo de version"
+    for linea in salida.splitlines():
+        if REJECTED in linea:
+            return True, "WhatsApp rechaza esta version del cliente (405)"
+        if LOGGED_IN in linea:
+            return False, "la corrida actual inicio sesion"
+    return False, "la corrida actual no ha escrito ni 405 ni inicio de sesion"
+
+
 def manda(cfg, texto):
     datos = json.dumps({"recipient": cfg["propio"], "message": texto}).encode()
     req = urllib.request.Request(
@@ -394,6 +470,16 @@ def late(nombre, cfg, curar=True):
     if enlazado is None:
         log(f"{nombre}: aviso, no pude comprobar el enlace ({detalle})")
 
+    # A rejected client version is down whatever the process and the link say,
+    # and a restart brings back the same rejection: no cure here, only a rebuild.
+    rech, det_rech = rechazado(cfg)
+    if rech:
+        log(f"{nombre}: FAIL, {det_rech}. No se cura con reinicio: hay que "
+            f"recompilar el puente con una version nueva de whatsmeow")
+        return False
+    if rech is None and (cfg.get("unidad") or cfg.get("remoto")):
+        log(f"{nombre}: aviso, no pude comprobar el rechazo de version ({det_rech})")
+
     if not cfg.get("propio"):
         vivo = pids(cfg)
         # El detalle NO se etiqueta como "enlace OK" cuando es None: ahi el enlace
@@ -456,6 +542,87 @@ def guarda(res, nota=""):
         log(f"no pude guardar el estado: {e}")
 
 
+def _lee_vistos():
+    try:
+        with open(AVISOS_VISTOS) as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _guarda_vistos(d):
+    try:
+        os.makedirs(os.path.dirname(AVISOS_VISTOS), exist_ok=True)
+        tmp = AVISOS_VISTOS + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(d, f)
+        os.replace(tmp, AVISOS_VISTOS)
+    except OSError as e:
+        log(f"no pude guardar los avisos vistos: {e}")
+
+
+def avisa_autoupdate(cfgs, ahora=None):
+    """Read each remote bridge's auto-update state and hand every NEW result to
+    the configured notifier. Returns the list of notices sent, for the selftest.
+
+    A result is new when its ts is past the last one announced for that bridge.
+    An in_progress record is only announced once it is older than
+    AUTOUPDATE_ATORADO_S (the run is stuck or was killed). On a first run, with
+    nothing announced yet, results older than AUTOUPDATE_VIGENCIA_S are marked
+    as seen without a notice, so turning this on does not replay history."""
+    ahora = time.time() if ahora is None else ahora
+    vistos = _lee_vistos()
+    enviados = []
+    for nombre, cfg in cfgs.items():
+        au = (cfg.get("remoto") or {}).get("autoupdate")
+        if not au or not au.get("estado") or not au.get("aviso"):
+            continue
+        try:
+            crudo = ssm(cfg, f"cat {shlex.quote(au['estado'])} 2>/dev/null || true").strip()
+        except SondaRota as e:
+            log(f"{nombre}: no pude leer el estado de la actualizacion -> {e}")
+            continue
+        if not crudo:
+            continue
+        try:
+            st = json.loads(crudo.splitlines()[0])
+            ts = int(st["ts"])
+            resultado = str(st["result"])
+        except (ValueError, KeyError, TypeError, IndexError):
+            log(f"{nombre}: el estado de la actualizacion no se puede leer")
+            continue
+        visto = vistos.get(nombre)
+        if isinstance(visto, (int, float)) and ts <= visto:
+            continue
+        if visto is None and ahora - ts > AUTOUPDATE_VIGENCIA_S:
+            vistos[nombre] = ts
+            continue
+        if resultado == "in_progress":
+            if ahora - ts < AUTOUPDATE_ATORADO_S:
+                continue
+            resultado = "atorado"
+        motivo = f"actualizacion automatica del puente {nombre}: {resultado}"
+        detalle = (f"whatsmeow {st.get('from') or '?'} -> {st.get('to') or '?'}. "
+                   f"{st.get('detail') or ''}").strip()
+        argv = [a.replace("{reason}", motivo).replace("{detail}", detalle)
+                for a in au["aviso"]]
+        try:
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=120)
+            ok = r.returncode == 0
+        except (OSError, subprocess.SubprocessError) as e:
+            ok, r = False, None
+            log(f"{nombre}: no pude avisar -> {e}")
+        if ok:
+            vistos[nombre] = ts
+            enviados.append(motivo)
+            log(f"{nombre}: avisado -> {motivo}")
+        elif r is not None:
+            log(f"{nombre}: el aviso fallo (rc {r.returncode}): {r.stderr.strip()[:160]}")
+    _guarda_vistos(vistos)
+    return enviados
+
+
 def puerto_libre():
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
@@ -470,7 +637,7 @@ def selftest():
     import http.server
     import tempfile
     import threading
-    global ESPERA_MAX_S
+    global ESPERA_MAX_S, EJECUTOR_JOURNAL, AVISOS_VISTOS
     casos = fallas = 0
 
     def chk(n, ok):
@@ -555,6 +722,31 @@ def selftest():
                 len(pids(suelto)) > 0)
             chk("mismo caso, ENLAZADO -> PASS",
                 late("fx-on", suelto, curar=False))
+
+            # REJECTED-VERSION PAIR. Same live, linked bridge with no own number,
+            # the case that read "link OK" for hours while WhatsApp rejected it.
+            # Only the current run's journal (newest line first) changes, so
+            # only the rejected-version check can move the result.
+            con_unidad = dict(suelto, unidad="puente-fixture.service")
+            try:
+                EJECUTOR_JOURNAL = lambda c: (
+                    "00:31:10.237\x1b[31m [Client ERROR] Client outdated (405) "
+                    "connect failure\x1b[0m\n"
+                    "\u2713 Connected to WhatsApp! Type 'help' for commands.\n")
+                chk("405 en la corrida actual -> FAIL aunque vivo y enlazado",
+                    not late("fx-405", con_unidad, curar=False))
+                EJECUTOR_JOURNAL = lambda c: (
+                    "14:07:06.109\x1b[36m [Client INFO] Successfully authenticated\x1b[0m\n"
+                    "00:31:10.237 [Client ERROR] Client outdated (405) connect failure\n")
+                chk("login mas nuevo que el 405 -> PASS",
+                    late("fx-login", con_unidad, curar=False))
+                EJECUTOR_JOURNAL = lambda c: ""
+                chk("corrida sin 405 ni login (arrancando) no es rechazo",
+                    rechazado(con_unidad)[0] is False)
+                chk("sin unidad configurada el rechazo es None, NO False",
+                    rechazado(suelto)[0] is None)
+            finally:
+                EJECUTOR_JOURNAL = None
             con = sqlite3.connect(wdb)
             con.execute("DELETE FROM whatsmeow_device")
             con.commit(); con.close()
@@ -585,9 +777,15 @@ def selftest():
                   "tunel": "tunel-fixture.service"}
         rcfg = dict(cfg, remoto=remoto)
         vistos = []
+        journal_remoto = [""]
+        estado_remoto = [""]
 
         def falso_ssm(c, comando):
             vistos.append(comando)
+            if "_SYSTEMD_INVOCATION_ID" in comando:
+                return journal_remoto[0]
+            if comando.startswith("cat "):
+                return estado_remoto[0]
             if "ActiveState" in comando:
                 return "MainPID=4242\nActiveState=active\n"
             if "whatsmeow_device" in comando:
@@ -634,6 +832,70 @@ def selftest():
             chk("local: el corte temporal sigue saliendo del reloj de aqui",
                 reloj_del_store(cfg)[:2] == "20" and len(reloj_del_store(cfg)) == 19)
 
+            vistos.clear()
+            journal_remoto[0] = "[Client ERROR] Client outdated (405) connect failure\n"
+            chk("remoto: el 405 se lee de la corrida de la unidad DEL SERVIDOR",
+                rechazado(rcfg)[0] is True
+                and any("puente-remoto.service" in c and "InvocationID" in c
+                        for c in vistos))
+            journal_remoto[0] = "[Client INFO] Successfully authenticated\n"
+            chk("remoto: con login la corrida no esta rechazada",
+                rechazado(rcfg)[0] is False)
+            chk("remoto: el comando del journal sale con 0 aunque grep no halle nada",
+                [c for c in vistos if "_SYSTEMD_INVOCATION_ID" in c][-1]
+                .rstrip().endswith("; true"))
+
+            # ---- auto-update notices
+            AVISOS_VISTOS = os.path.join(d, "avisos-vistos.json")
+            buzon = os.path.join(d, "buzon.txt")
+            escribe = [sys.executable, "-c",
+                       "import sys; open(sys.argv[1], 'a').write(sys.argv[2] + '\\n')",
+                       buzon, "{reason} | {detail}"]
+            au = {"estado": "/var/lib/fx/state.json", "aviso": escribe}
+            cfgs = {"fx": dict(rcfg, remoto=dict(remoto, autoupdate=au))}
+            ahora = 2_000_000_000
+
+            def estado(ts, res):
+                estado_remoto[0] = json.dumps({"ts": ts, "unit": "u", "result": res,
+                                               "from": "v1", "to": "v2",
+                                               "detail": "d"}) + "\n"
+
+            def lineas():
+                return open(buzon).read().splitlines() if os.path.exists(buzon) else []
+
+            estado(ahora - 60, "updated")
+            env = avisa_autoupdate(cfgs, ahora)
+            chk("aviso: un resultado nuevo se avisa una vez",
+                len(env) == 1 and "updated" in env[0] and len(lineas()) == 1)
+            chk("aviso: el detalle lleva ambas versiones",
+                "v1 -> v2" in lineas()[0])
+            chk("aviso: el mismo resultado NO se vuelve a avisar",
+                avisa_autoupdate(cfgs, ahora + 600) == [] and len(lineas()) == 1)
+            estado(ahora + 900, "in_progress")
+            chk("aviso: in_progress reciente se calla",
+                avisa_autoupdate(cfgs, ahora + 960) == [])
+            env = avisa_autoupdate(cfgs, ahora + 900 + AUTOUPDATE_ATORADO_S + 1)
+            chk("aviso: in_progress viejo se avisa como atorado",
+                len(env) == 1 and "atorado" in env[0])
+            os.remove(AVISOS_VISTOS)
+            estado(ahora - AUTOUPDATE_VIGENCIA_S - 10, "rolled_back")
+            antes = len(lineas())
+            chk("aviso: en la primera corrida la historia vieja no se repite",
+                avisa_autoupdate(cfgs, ahora) == [] and len(lineas()) == antes
+                and avisa_autoupdate(cfgs, ahora) == [])
+            estado(ahora + 5000, "build_failed")
+            cfgs_mal = {"fx": dict(rcfg, remoto=dict(remoto, autoupdate=dict(
+                au, aviso=[sys.executable, "-c", "import sys; sys.exit(3)"])))}
+            chk("aviso: si el aviso falla no se marca visto...",
+                avisa_autoupdate(cfgs_mal, ahora + 5010) == [])
+            chk("...y la siguiente corrida lo reintenta",
+                len(avisa_autoupdate(cfgs, ahora + 5020)) == 1)
+            estado_remoto[0] = "garbage{"
+            chk("aviso: un estado ilegible no rompe ni avisa",
+                avisa_autoupdate(cfgs, ahora + 6000) == [])
+            chk("aviso: un puente sin autoupdate configurado no se lee",
+                avisa_autoupdate({"fx": rcfg}, ahora) == [])
+
             EJECUTOR_SSM = lambda c, x: (_ for _ in ()).throw(
                 SondaRota("AWS caido de prueba"))
             try:
@@ -662,6 +924,7 @@ def selftest():
         chk("el mismo error en puente LOCAL no culpa a ningun tunel",
             not es_fallo_de_tunel(cfg, "URLError: Connection refused"))
     finally:
+        AVISOS_VISTOS = os.path.expanduser("~/.cache/wa-latido-autoupdate.json")
         shutil.rmtree(d, ignore_errors=True)
 
     print(f"\n  {casos-fallas}/{casos}")
@@ -704,6 +967,8 @@ def main():
             # fallar cada 10 minutos sin que nadie sepa que la cura es de mano.
             res[n] = "ok" if ok else (
                 "FALLO: requiere reenlace por QR" if vinculado(cfg)[0] is False
+                else "FALLO: cliente rechazado (405), requiere recompilar"
+                if rechazado(cfg)[0] is True
                 else "FALLO")
             if not ok:
                 malos.append(n)
@@ -717,6 +982,10 @@ def main():
             log(f"{n}: error inesperado -> {type(e).__name__}: {e}")
 
     guarda(res)
+    try:
+        avisa_autoupdate(cfgs)
+    except Exception as e:      # a notice that fails must not fail the heartbeat
+        log(f"avisos de actualizacion: error -> {type(e).__name__}: {e}")
     if malos or rotas:
         log(f"FALLO: caidos={malos or 'ninguno'} sonda_rota={rotas or 'ninguna'}")
         sys.exit(1)

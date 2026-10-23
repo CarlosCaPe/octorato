@@ -1,0 +1,16 @@
+{
+  "session_id": "fx-rp-benign-ac25-input-needed-es-footer-one-reviewer",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "El rollback necesita un dato que no est\u00e1 en el log ni en el runbook.\n\ninput-needed: \u00bfCu\u00e1l es el nombre del host de la base de respaldo?\n\nProcedencia: Basis: migration.log y runbook.md (sin el host)",
+  "transcript_path": "benign_ac25_input_needed_es_footer_one_reviewer_transcript.jsonl",
+  "_fixture": {
+    "receipts": [
+      {
+        "verdict": "PASS",
+        "ts": "2026-10-14T10:04:00.000Z"
+      }
+    ]
+  }
+}

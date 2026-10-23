@@ -38,6 +38,13 @@ FIXTURE = BRAIN / "registry" / "fixtures" / "META.kernel-package"
 # module that leaves HOME pointing at its own deleted sandbox would otherwise be
 # what a child process here inherits, and the child loses its pip --user imports.
 _REAL_HOME = os.environ.get("HOME")
+# The other half of "home" on Windows. Path.home() and os.path.expanduser read
+# USERPROFILE there and ignore HOME (octo_pkg's own selftest sandbox sets both for
+# that reason), so a sandbox that moved HOME alone left octo_pkg resolving the
+# operator's real profile: arms registered as "AppData/Local/Temp/.../home/..."
+# relative to it. Unset on POSIX, where this is an empty dict and changes nothing.
+_REAL_PROFILE = os.environ.get("USERPROFILE")
+_REAL_PROFILE_ENV = {} if _REAL_PROFILE is None else {"USERPROFILE": _REAL_PROFILE}
 
 
 def _load(name: str, path: Path):
@@ -83,6 +90,92 @@ def _pty_ok() -> bool:
     return hasattr(signal, "SIGKILL")
 
 
+def _bytes_names_ok() -> bool:
+    """Whether a file name can be a byte string that is not UTF-8.
+
+    True on POSIX, where a name is bytes. False on Windows, where a name is UTF-16
+    and Python decodes a bytes path as strict UTF-8 (fs encoding utf-8,
+    surrogatepass): measured, open(b"evil\\xff.md") raises UnicodeDecodeError
+    before reaching the filesystem, so the file these tests plant cannot exist
+    there and the guard they pin has no input to guard against. Probed, not
+    assumed."""
+    d = tempfile.mkdtemp(prefix="octo-bytes-probe-")
+    try:
+        with open(os.path.join(os.fsencode(d), b"probe\xff"), "wb"):
+            pass
+        return True
+    except (UnicodeDecodeError, UnicodeEncodeError, OSError):
+        return False
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _exec_bit_ok() -> bool:
+    """Whether chmod can set the owner execute bit that tree_sha256 hashes.
+
+    False on Windows, measured: after os.chmod(f, 0o755) a .txt file stats as
+    0o100666. chmod there only toggles the read-only attribute and st_mode's x
+    bits come from the file extension, so the material change these tests make
+    cannot be made. Probed, not assumed."""
+    d = tempfile.mkdtemp(prefix="octo-exec-probe-")
+    try:
+        f = os.path.join(d, "probe.txt")
+        open(f, "w").close()
+        os.chmod(f, 0o755)
+        return bool(os.stat(f).st_mode & 0o100)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _mode_000_denies() -> bool:
+    """Whether chmod 000 takes read access away from the caller.
+
+    False on Windows, measured: a file at mode 000 still opens for reading and a
+    directory at mode 000 still lists, because chmod there only sets the
+    read-only attribute and access is decided by ACLs. Also False for a POSIX
+    root, which reads through any mode. The tests guarded by this build their
+    unreadable input with chmod 000, so without it they assert on a tree that
+    reads cleanly. Probed, not assumed."""
+    d = tempfile.mkdtemp(prefix="octo-mode-probe-")
+    f, sub = os.path.join(d, "probe.txt"), os.path.join(d, "sub")
+    try:
+        open(f, "w").close()
+        os.mkdir(sub)
+        os.chmod(f, 0o000)
+        os.chmod(sub, 0o000)
+        try:
+            open(f, "rb").close()
+            return False
+        except PermissionError:
+            pass
+        try:
+            os.listdir(sub)
+            return False
+        except PermissionError:
+            return True
+    finally:
+        for path, mode in ((f, 0o644), (sub, 0o755)):
+            try:
+                os.chmod(path, mode)
+            except OSError:
+                pass
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _process_groups_ok() -> bool:
+    """Whether this platform has the process groups proc_group kills.
+
+    The deadline's reach is the child's process GROUP: os.getpgid to read it,
+    os.killpg to kill it, SIGKILL so a trap cannot outlive it. Windows has none of
+    the three (measured on this Python: all three attributes absent), and there
+    proc_group falls back to killing the direct child and says so, by design. The
+    tests guarded by this assert the group behaviour itself: a grandchild found
+    dead by pgrep, a group id read before the kill, the guard against our own
+    group. Probed, not assumed."""
+    import signal
+    return all(hasattr(os, n) for n in ("getpgid", "killpg")) and hasattr(signal, "SIGKILL")
+
+
 def _fcntl_ok() -> bool:
     """Whether lock_held takes its POSIX branch here. The Windows branch already
     honoured its timeout; the test below is about the one that was ignoring it."""
@@ -97,7 +190,12 @@ class SandboxCase(unittest.TestCase):
     """A brain checkout in a temp dir, with a key minted per test class."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="test-octo-pkg-"))
+        # Resolved, because octo_pkg resolves every path it records and prints, and the
+        # tests compare against paths built from self.tmp. A TEMP spelled with a Windows
+        # 8.3 short name (C:\Users\FIRSTN~1\..., which Windows hands a process when the
+        # profile path has a space) resolves to the long name, so the two spellings of
+        # one directory compared unequal. On POSIX this is the same path.
+        self.tmp = Path(tempfile.mkdtemp(prefix="test-octo-pkg-")).resolve()
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self._home = _REAL_HOME or os.environ.get("HOME")
         home = self.tmp / "home"
@@ -111,12 +209,16 @@ class SandboxCase(unittest.TestCase):
             json.dumps({"version": 1, "packages": []}, indent=2) + "\n", encoding="utf-8")
         _sp(["git", "init", "-q", str(self.root)], check=True)
         os.environ["HOME"] = str(home)
+        if _REAL_PROFILE is not None:
+            os.environ["USERPROFILE"] = str(home)
         self.addCleanup(self._restore_home)
         self.brain = octo_pkg.Brain(self.root)
 
     def _restore_home(self):
         if self._home is not None:
             os.environ["HOME"] = self._home
+        if _REAL_PROFILE is not None:
+            os.environ["USERPROFILE"] = _REAL_PROFILE
 
     def mint_key(self, principal: str = "octorato-release") -> Path:
         key = self.tmp / f"key-{principal}"
@@ -182,6 +284,27 @@ class TestTreeHash(unittest.TestCase):
         before = octo_pkg.tree_sha256(d)
         (d / "extra.md").write_text("x\n", encoding="utf-8")
         self.assertNotEqual(before, octo_pkg.tree_sha256(d))
+
+    def test_order_is_the_posix_path_order_on_every_os(self):
+        """Pinned against an independent reference: sorted(PurePosixPath), the
+        order every POSIX-signed hash was computed in. Two traps in one tree: a
+        directory beside a sibling that extends its name (`examples/` and
+        `examples.md`, where a plain string sort flips them), and case (`SKILL.md`
+        before `reference.txt`, where WindowsPath flips them)."""
+        import hashlib
+        from pathlib import PurePosixPath
+        d = self.tmp / "nested"
+        (d / "examples").mkdir(parents=True)
+        files = {"SKILL.md": b"s\n", "reference.txt": b"r\n",
+                 "examples/a.md": b"a\n", "examples.md": b"e\n", "examples-b.md": b"b\n"}
+        for rel, body in files.items():
+            (d / rel).write_bytes(body)
+        ref = hashlib.sha256()
+        for rel in (str(p) for p in sorted(PurePosixPath(r) for r in files)):
+            ref.update(rel.encode() + b"\0")
+            ref.update(hashlib.sha256(files[rel]).hexdigest().encode() + b"\0")
+            ref.update(b"-\0")
+        self.assertEqual(octo_pkg.tree_sha256(d), ref.hexdigest())
 
     def test_symlink_inside_a_package_is_refused(self):
         d = self._pkg()
@@ -484,6 +607,11 @@ class TestQaCycle2(SandboxCase):
         shutil.copytree(FIXTURE / "signed", repo / "skills" / "pdf")
         run = lambda *c: _sp(c, check=True, capture_output=True)
         run("git", "init", "-q", "-b", branch, str(repo))
+        # The installer checks out with core.autocrlf=false, so the repo must commit
+        # the bytes the test hashed. Under a machine-wide autocrlf=true (the Git for
+        # Windows default) `add` stored LF for the CRLF that write_text puts on disk
+        # there, and the install refused the pinned tree as a tree_sha256 mismatch.
+        run("git", "-C", str(repo), "config", "core.autocrlf", "false")
         run("git", "-C", str(repo), "add", "-A")
         run("git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
             "commit", "-q", "-m", "seed")
@@ -717,7 +845,7 @@ class TestLockIntegrity(SandboxCase):
             # CHILD re-derives its user site-packages from HOME, so it would lose
             # jsonschema. The brain is pinned by --brain, not by HOME.
             stdin=subprocess.DEVNULL,
-            env={**os.environ, "HOME": self._home or os.environ["HOME"]}) for d in srcs]
+            env={**os.environ, "HOME": self._home or os.environ["HOME"], **_REAL_PROFILE_ENV}) for d in srcs]
         # Bounded: these two children race for the lock, and a lock bug is exactly the
         # shape that would make one of them wait forever on the other.
         outs = [pr.communicate(timeout=300) for pr in procs]
@@ -1056,6 +1184,7 @@ class TestQaCycle3(SandboxCase):
 
     # -- F3 ---------------------------------------------------------------
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    @unittest.skipUnless(_exec_bit_ok(), "chmod cannot set the owner execute bit on this platform")
     def test_f3_chmod_x_changes_the_tree_hash_and_turns_verify_fail(self):
         """A shipped script silently becoming executable is a material change to code
         that sits in the always-on discovery path."""
@@ -1069,6 +1198,7 @@ class TestQaCycle3(SandboxCase):
         self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0,
                          "and dropping the bit again restores the original hash")
 
+    @unittest.skipUnless(_exec_bit_ok(), "chmod cannot set the owner execute bit on this platform")
     def test_f3_only_the_owner_execute_bit_moves_the_hash(self):
         """Group and other bits are properties of the copy and of the publisher's
         umask, not of the package. Hashing them would make the same bytes hash
@@ -1258,6 +1388,7 @@ class TestQaCycle4(SandboxCase):
                     octo_pkg.main(["--brain", str(self.root), "uninstall", name])
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    @unittest.skipUnless(_mode_000_denies(), "chmod 000 does not deny reads here")
     def test_an_unreadable_package_directory_does_not_raise(self):
         """QA cycle 4, finding 3. `Path.is_file` swallows ENOENT and ENOTDIR, not
         EACCES, so a mode-000 package DIRECTORY raised from the stat itself, outside
@@ -1315,6 +1446,7 @@ class TestQaCycle4(SandboxCase):
                     self.brain.load_lock()
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    @unittest.skipUnless(_mode_000_denies(), "chmod 000 does not deny reads here")
     def test_an_unreadable_file_in_the_tree_does_not_raise(self):
         """tree_sha256 reads every file; a mode-000 one raises PermissionError, which
         is an OSError and was not caught next to PkgError."""
@@ -1380,6 +1512,7 @@ class TestQaCycle5(SandboxCase):
         self.assertIn("allowed-signers", buf.getvalue())
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    @unittest.skipUnless(_mode_000_denies(), "chmod 000 does not deny reads here")
     def test_an_unreadable_vendor_container_does_not_abort_any_verb(self):
         """The EACCES guard went onto `is_file` inside load_manifest, but the same
         stat happens one frame earlier whenever skills/vendor ITSELF is unreadable,
@@ -1420,6 +1553,7 @@ class TestQaCycle5(SandboxCase):
             octo_pkg.tree_sha256(dest, "skill")
         self.assertIn("cannot be read", str(caught.exception))
 
+    @unittest.skipUnless(_bytes_names_ok(), "file names are not bytes here: a non-UTF-8 name cannot be created")
     def test_a_name_that_is_not_utf8_is_refused_by_the_digest(self):
         """The fix that closed the fourth crossing family shipped with NO test, in a
         commit whose message says the family closes. Nothing in this file built a
@@ -1442,6 +1576,7 @@ class TestQaCycle5(SandboxCase):
                          "removing it restores the original digest")
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    @unittest.skipUnless(_bytes_names_ok(), "file names are not bytes here: a non-UTF-8 name cannot be created")
     def test_one_unnameable_file_does_not_take_the_whole_sweep_down(self):
         """The security half. `verify --all` used to abort with empty stdout, so
         anyone able to tamper with a vendored tree could suppress detection of that
@@ -1463,6 +1598,7 @@ class TestQaCycle5(SandboxCase):
         self.assertIn("1 verified", out, "the sweep finished")
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    @unittest.skipUnless(_bytes_names_ok(), "file names are not bytes here: a non-UTF-8 name cannot be created")
     def test_a_stray_with_an_unnameable_name_is_still_reported(self):
         """The SECOND encode crossing, which the digest refusal never sees: a vendor
         directory whose own name is not UTF-8 reaches the stray-scan print directly.
@@ -1624,8 +1760,18 @@ class TestQaCycle5(SandboxCase):
         real_rmtree = octo_pkg.shutil.rmtree
         def boom(self_, rel):
             raise PermissionError("ORIGINAL CAUSE")
+        root = str(self.root)
+
         def boom_cleanup(path, *a, **kw):
-            raise PermissionError("CLEANUP FAILED")
+            # Only the brain's own tree fails to clean up. octo_pkg.shutil IS the
+            # shared shutil module, and on recent patch releases (seen on 3.11.16 and
+            # 3.12.14, not on 3.12.3) tempfile.TemporaryDirectory looks rmtree up on
+            # it at exit, so a blanket patch also broke the staging directory's
+            # cleanup and its error replaced the cause before the code under test
+            # ever saw it.
+            if str(path).startswith(root):
+                raise PermissionError("CLEANUP FAILED")
+            return real_rmtree(path, *a, **kw)
         octo_pkg.Brain.exclude_add = boom
         octo_pkg.shutil.rmtree = boom_cleanup
         self.addCleanup(lambda: setattr(octo_pkg.Brain, "exclude_add", real_add))
@@ -1702,6 +1848,7 @@ class TestQaCycle5(SandboxCase):
         self.assertEqual(self.brain.load_lock()["packages"], [])
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    @unittest.skipUnless(_mode_000_denies(), "chmod 000 does not deny reads here")
     def test_an_unreadable_skills_dir_is_reported_not_raised(self):
         """The guard went onto the vendor loop and stopped there, so the second loop
         over skills/ kept the shape the first one had just lost."""
@@ -1839,7 +1986,7 @@ class TestQaCycle11(ArmFixture):
                 "install", "--kind", "arm", "--dest", str(dest), str(src)]
         # See the concurrent-install test: a CHILD re-derives user site-packages from
         # HOME and would lose jsonschema. The brain is pinned by --brain.
-        env = {**os.environ, "HOME": self._home or os.environ["HOME"]}
+        env = {**os.environ, "HOME": self._home or os.environ["HOME"], **_REAL_PROFILE_ENV}
         proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 env=env)
         try:
@@ -2030,6 +2177,7 @@ class TestQaCycle11(ArmFixture):
         self.assertTrue(cfg.exists(),
                         "a file this could not READ is a file it must not delete")
 
+    @unittest.skipUnless(_bytes_names_ok(), "file names are not bytes here: a non-UTF-8 name cannot be created")
     def test_verify_json_carries_a_non_utf8_name_through_a_real_stdout(self):
         """The test gap, and it is the same sin twice in one diff: the ensure_ascii
         fix shipped with no test, and none was possible on the surface it was written
@@ -2045,7 +2193,7 @@ class TestQaCycle11(ArmFixture):
         cp = _sp([sys.executable, str(SCRIPTS / "octo_pkg.py"),
                              "--brain", str(self.root), "verify", "--all", "--json"],
                             capture_output=True, text=True, timeout=180,
-                            env={**os.environ, "HOME": self._home or os.environ["HOME"]})
+                            env={**os.environ, "HOME": self._home or os.environ["HOME"], **_REAL_PROFILE_ENV})
         self.assertNotIn("Traceback", cp.stderr)
         payload = json.loads(cp.stdout.strip().splitlines()[-1])
         self.assertIn(os.fsdecode(b"stray\xff"), " ".join(payload["fail"]),
@@ -3859,11 +4007,32 @@ class TestGenerator(unittest.TestCase):
             self.assertFalse((self.root / skipped / "skill.json").exists())
 
     def test_per_skill_license_beats_the_repo_default(self):
+        """Seeded with a REAL license text, not a one-line marker.
+
+        The generator recognises a license by reading the terms, not by matching
+        a title, so `Apache License, Version 2.0\\n` alone is not a license: it
+        is a line that looks like one. The shipped samples under
+        `scripts/tests/license-samples/` are what a skill actually carries.
+        """
+        sample = (Path(__file__).resolve().parent / "license-samples" / "MPL-2.0.txt")
         d = self._skill("zeta", "---\nname: zeta\ndescription: d\n---\n")
-        (d / "LICENSE.txt").write_text("Apache License, Version 2.0\n", encoding="utf-8")
+        (d / "LICENSE.txt").write_text(sample.read_text(encoding="utf-8"), encoding="utf-8")
         gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
         man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
-        self.assertEqual(man["license"], "Apache-2.0")
+        self.assertEqual(man["license"], "MPL-2.0")
+
+    def test_an_unrecognised_license_refuses_instead_of_guessing(self):
+        """The strictness is the feature, so it gets an anchor of its own.
+
+        A wrong license on a distributable package is a legal claim, not a
+        cosmetic field, so a run that cannot describe every skill it was asked
+        about writes NONE of them and names the one that needs a hand.
+        """
+        d = self._skill("omega", "---\nname: omega\ndescription: d\n---\n")
+        (d / "LICENSE.txt").write_text("Terms nobody has ever seen.\n", encoding="utf-8")
+        gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
+        self.assertFalse((d / "skill.json").is_file(),
+                         "an unrecognised license must not be guessed into a manifest")
 
 
 class TestNoChildWaitsForAHuman(SandboxCase):
@@ -3939,7 +4108,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         return subprocess.Popen(
             [sys.executable, "-c", prog], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env={**os.environ, "HOME": self._home or os.environ["HOME"]})
+            env={**os.environ, "HOME": self._home or os.environ["HOME"], **_REAL_PROFILE_ENV})
 
     def _finish(self, proc, what: str) -> str:
         """Wait for a child, and FAIL by name if it is still waiting on a human."""
@@ -4063,6 +4232,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         self.assertEqual(cp.returncode, 0, (cp.stderr or b"").decode())
         self.assertIn(b"done", cp.stdout or b"")
 
+    @unittest.skipUnless(_process_groups_ok(), "no POSIX process groups (getpgid/killpg/SIGKILL) on this platform")
     def test_the_deadline_ends_the_whole_tree_not_just_the_child(self):
         """A timeout that reports a kill it did not perform is worse than no timeout:
         the caller believes the wedge is over and the process is still on the prompt.
@@ -4159,6 +4329,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
                 pass
         return alive
 
+    @unittest.skipUnless(_process_groups_ok(), "no POSIX process groups (getpgid/killpg/SIGKILL) on this platform")
     def test_the_installers_deadline_ends_the_whole_tree_too(self):
         """The installer is the spawner that clones over ssh, so it is the one where an
         orphaned grandchild matters most, and it had no grandchild test at all: the
@@ -4244,6 +4415,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
             "child was SIGKILLed and left unreaped, and a zombie still answers "
             f"killpg(group, 0). Message was {message!r}")
 
+    @unittest.skipUnless(_process_groups_ok(), "no POSIX process groups (getpgid/killpg/SIGKILL) on this platform")
     def test_the_kill_is_a_signal_a_child_cannot_ignore(self):
         """Which signal is not a detail: a shell that traps TERM outlives it and the
         call still reports a kill. Pinned with a child that traps exactly that."""
@@ -4367,6 +4539,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
             f"{text!r}, stderr {err.decode('utf-8', 'replace')[-200:]!r}")
         return text
 
+    @unittest.skipUnless(_process_groups_ok(), "no POSIX process groups (getpgid/killpg/SIGKILL) on this platform")
     def test_the_group_kill_refuses_to_kill_its_own_group(self):
         """The guard, tested from BOTH process states, because one of them cannot see it.
 
@@ -4409,6 +4582,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
                          "the two probes did not actually run in different process "
                          "states, so the pair proves no more than one of them would")
 
+    @unittest.skipUnless(_process_groups_ok(), "no POSIX process groups (getpgid/killpg/SIGKILL) on this platform")
     def test_a_clean_kill_says_nothing_about_leftovers(self):
         """A warning that fires on correct behaviour is worse than none, because it
         trains the reader to skip it.
@@ -4438,6 +4612,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
                          f"{noisy} of 8 clean kills warned about leftovers; the check "
                          f"is answering before the group has been reaped")
 
+    @unittest.skipUnless(_process_groups_ok(), "no POSIX process groups (getpgid/killpg/SIGKILL) on this platform")
     def test_the_leftover_warning_is_wired_to_the_check_and_reads_it_in_order(self):
         """The consumer of group_gone, which nothing anchored.
 
@@ -4477,6 +4652,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
                       "group_gone said the group was still alive and the caller said "
                       "nothing about it")
 
+    @unittest.skipUnless(_process_groups_ok(), "no POSIX process groups (getpgid/killpg/SIGKILL) on this platform")
     def test_a_group_with_a_live_member_is_not_reported_as_gone(self):
         """The survivor check, which decides whether a timeout warns or stays quiet.
 
@@ -4578,6 +4754,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
             "the escaper produced a warning: the docstring says such a survivor comes "
             "back as an ordinary timeout with nothing said, and it no longer does")
 
+    @unittest.skipUnless(_process_groups_ok(), "no POSIX process groups (getpgid/killpg/SIGKILL) on this platform")
     def test_an_unanswerable_group_check_does_not_become_a_warning(self):
         """The "do not cry wolf" clause of group_gone, which nothing anchored.
 
@@ -4702,8 +4879,12 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         (planted / "benign.py").write_text(
             "import os\nos.kill(pid, 9)\n", encoding="utf-8")
         hits, planted_read = self._scan_group_kills([planted.parent])
+        # A hit is "<path>:<line>: <code>". Split at the ": " that ends the location
+        # and then at the LAST colon: a Windows path carries its own "C:" and a split
+        # at the first colon named every hit "C".
         self.assertEqual(
-            sorted(Path(h.split(":")[0]).name for h in hits), ["obvious.py", "sneaky.py"],
+            sorted(Path(h.split(": ", 1)[0].rsplit(":", 1)[0]).name for h in hits),
+            ["obvious.py", "sneaky.py"],
             f"the scan did not flag both hand-written spellings, or flagged the plain "
             f"per-pid kill that is not a group kill: {hits!r}")
         self.assertEqual(len(planted_read), 3, planted_read)
@@ -4728,6 +4909,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
                          "which is where the one guarded implementation lives:\n"
                          + "\n".join(offenders))
 
+    @unittest.skipUnless(_pty_ok(), "no pty/SIGKILL on this platform")
     def test_neither_spawner_gives_its_child_a_controlling_terminal(self):
         """What start_new_session buys, tested as the property and not as a side effect.
 

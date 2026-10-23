@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "notion-meeting-intelligence",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Prepare meeting materials with Notion context and Codex research; use when gathering context, drafting agendas/pre-reads, and tailoring materials to attendees."
+}

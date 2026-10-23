@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "graphify-code-graph",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Deterministic, queryable knowledge graph over a codebase with graphify (tree-sitter, 25+ languages, no LLM cost). Use it for code-level impact analysis inside a client repo, where grep answers poorly."
+}

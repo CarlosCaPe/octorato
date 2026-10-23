@@ -1,0 +1,109 @@
+name: Fresh Clone
+
+# Proves the install path a newcomer follows (v10, AC-16): clone the brain into a
+# brand-new HOME inside a clean container, run the ONE documented command
+# (`python3 ~/.claude/scripts/quickstart.py`), and fail when the result is not
+# wired or the run took longer than 5 minutes.
+#
+# Why this exists: until v10, quickstart never ran merge-hooks.py and never set
+# core.hooksPath, so on a clean clone (reproduced 2026-10-06) settings.json did
+# not exist and the push guard was off until the first `ai-pull`. Nothing caught
+# it because every machine that ran quickstart already had a wired brain. A clean
+# container has none, which is the point.
+#
+# What "wired" means here, each checked from the files, not from quickstart's
+# own output: ~/.claude/settings.json carries every hook event hooks.json
+# declares; `git config core.hooksPath` is `.githooks`; the first spec exists and
+# spec_lint.py accepts it; and the clone is still clean (the example spec and
+# settings.json are gitignored, so the public brain was not dirtied).
+#
+# No `pip install`: the README does not ask a newcomer to install anything, so
+# neither does this job. The doctor's findings about optional deps are reported
+# by quickstart and do not fail it; wiring failures do.
+
+on:
+  pull_request:
+    branches: [ master, main ]
+    paths:
+      - 'scripts/quickstart.py'
+      - 'scripts/merge-hooks.py'
+      - 'scripts/brain_doctor.py'
+      - 'scripts/install-runners.py'
+      - 'scripts/generate_neural_map.py'
+      - 'scripts/spec_lint.py'
+      - 'hooks.json'
+      - '.githooks/**'
+      - 'templates/spec/**'
+      - '.gitignore'
+      - 'requirements.txt'
+      - 'README.md'
+      - 'docs/wiki/Getting-Started.md'
+      - '.github/workflows/fresh-clone.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  quickstart:
+    name: quickstart wires a clean clone in under 5 minutes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      # The official image ships python3 and git and nothing of this brain.
+      image: python:3.11-bookworm
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: src
+          persist-credentials: false
+
+      - name: Clone into a brand-new HOME and run quickstart
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The checkout is owned by the runner user, the container runs as root.
+          git config --system --add safe.directory '*'
+          export HOME="$(mktemp -d)"
+          # A real clone of the PR head, not the workspace: only committed files,
+          # with their modes, exactly what `git clone` gives a newcomer.
+          git clone --quiet "$GITHUB_WORKSPACE/src" "$HOME/.claude"
+          start=$(date +%s)
+          rc=0
+          timeout 300 python3 "$HOME/.claude/scripts/quickstart.py" </dev/null || rc=$?
+          elapsed=$(( $(date +%s) - start ))
+          echo "quickstart exit=$rc elapsed=${elapsed}s"
+          if [ "$rc" = 124 ] || [ "$elapsed" -gt 300 ]; then
+            echo "::error::quickstart took ${elapsed}s on a clean clone; the budget is 300s"
+            exit 1
+          fi
+          if [ "$rc" != 0 ]; then
+            echo "::error::quickstart exited $rc on a clean clone"
+            exit 1
+          fi
+          python3 - "$HOME/.claude" <<'PY'
+          import json, subprocess, sys
+          from pathlib import Path
+          brain = Path(sys.argv[1])
+          want = {k for k in json.loads((brain / "hooks.json").read_text()) if not k.startswith("$")}
+          settings = brain / "settings.json"
+          if not settings.is_file():
+              sys.exit("::error::settings.json was not written: Claude Code hooks are not wired")
+          have = set(json.loads(settings.read_text()).get("hooks") or {})
+          if want - have:
+              sys.exit(f"::error::hook events not wired: {sorted(want - have)}")
+          hp = subprocess.run(["git", "-C", str(brain), "config", "--get", "core.hooksPath"],
+                              capture_output=True, text=True).stdout.strip()
+          if hp != ".githooks":
+              sys.exit(f"::error::core.hooksPath is {hp or '(unset)'}, expected .githooks")
+          specs = sorted((brain / "company" / "docs" / "specs").glob("*-first-spec"))
+          if len(specs) != 1:
+              sys.exit(f"::error::expected one first spec, found {len(specs)}")
+          lint = subprocess.run([sys.executable, str(brain / "scripts" / "spec_lint.py"), str(specs[0])])
+          if lint.returncode != 0:
+              sys.exit("::error::spec_lint.py rejected the first spec")
+          dirty = subprocess.run(["git", "-C", str(brain), "status", "--porcelain"],
+                                 capture_output=True, text=True).stdout.strip()
+          if dirty:
+              sys.exit(f"::error::quickstart dirtied the brain repo:\n{dirty}")
+          print(f"wired: {len(have)} hook events, core.hooksPath=.githooks, first spec {specs[0].name}")
+          PY

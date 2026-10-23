@@ -1,0 +1,8 @@
+{
+  "session_id": "fx-rp-violation-ac11-block-not-to-operator",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Panel running on the draft, the reply follows when it returns.",
+  "transcript_path": "benign_ac24_pending_reviewer_block_not_to_operator_transcript.jsonl"
+}

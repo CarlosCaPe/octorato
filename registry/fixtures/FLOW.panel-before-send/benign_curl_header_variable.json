@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-benign-curl-header-variable",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl -s -H \"Authorization: Bearer ${TOKEN}\" https://example.test/v1/items"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_curl_header_variable_transcript.jsonl"
+}

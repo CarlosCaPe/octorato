@@ -1,0 +1,10 @@
+# Implementation Plan: Hello Script
+
+> **Spec:** `feature.md` in this directory
+
+## Implementation Steps
+
+Each task names the criteria it serves, the files it touches, and what it does.
+
+- [ ] T01 [AC-01, AC-02] hello.py: read an optional name from the command line and print the greeting.
+- [ ] T02 [AC-01, AC-02] test_hello.py: test both cases, with a name and without one.

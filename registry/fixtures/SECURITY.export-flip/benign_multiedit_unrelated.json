@@ -1,0 +1,14 @@
+{
+  "session_id": "sess-flip",
+  "tool_name": "MultiEdit",
+  "tool_use_id": "toolu_flip",
+  "tool_input": {
+    "file_path": "arms/closed/arm.json",
+    "edits": [
+      {
+        "old_string": "\"version\": \"1.0.0\"",
+        "new_string": "\"version\": \"1.1.0\""
+      }
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-benign-python-requests-remote",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "python3 -c \"import requests; print(requests.get('https://example.test/v1/items').status_code)\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_python_requests_remote_transcript.jsonl"
+}

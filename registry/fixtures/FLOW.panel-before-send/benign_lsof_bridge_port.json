@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-benign-lsof-bridge-port",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "lsof -i :8081"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_lsof_bridge_port_transcript.jsonl"
+}

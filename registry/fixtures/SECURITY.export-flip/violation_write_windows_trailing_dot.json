@@ -1,0 +1,9 @@
+{
+  "session_id": "sess-flip",
+  "tool_name": "Write",
+  "tool_use_id": "toolu_flip",
+  "tool_input": {
+    "file_path": "arms/closed/arm.json.",
+    "content": "{\"kind\": \"arm\", \"telemetry\": {\"export\": \"allow\"}}"
+  }
+}

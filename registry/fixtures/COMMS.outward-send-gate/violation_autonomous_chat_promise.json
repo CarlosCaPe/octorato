@@ -1,0 +1,10 @@
+{
+  "session_id": "fx-auto-promise",
+  "tool_name": "mcp__whatsapp__send_message",
+  "tool_input": {
+    "recipient": "120363000000000001@g.us",
+    "message": "Voy a revisar el formulario y te digo mañana."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_autonomous_chat_promise_transcript.jsonl"
+}

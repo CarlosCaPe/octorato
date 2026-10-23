@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-rp-violation-ac22-panel-call-before-summary-status-line",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Panel running on the draft, the reply follows when it returns.",
+  "transcript_path": "violation_ac22_panel_call_before_summary_status_line_transcript.jsonl",
+  "_fixture": {
+    "stderr_lacks": [
+      "cannot decide"
+    ]
+  }
+}

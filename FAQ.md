@@ -4,7 +4,15 @@ Plain answers to the questions people (and the AI agents that read this repo) ac
 
 ## What is Octorato?
 
-Octorato is an **open-source AI agent operating system**: one file-native "brain" — rules, 230+ skills (HOW), 160+ specialist agents (WHO), and memory, all plain markdown under git — that a single operator runs across many sealed client "arms." It adds per-client token attribution and hard budget halts (FinOps), so a consultant or small agency can bill many clients fairly from one brain. Licensed MIT.
+A folder of plain-text files that gives your AI coding assistant a lasting memory, house rules, and a receipt for everything it does. In its own vocabulary: an **open-source AI agent operating system**, one file-native "brain" (rules, 240+ skills, 160+ specialist agents, memory, all markdown under git) that one operator runs across many sealed client "arms", with per-client cost attribution (an estimate from local logs at list price) and budget halts that arm once you write a `budgets.yaml`. MIT licensed.
+
+## Are the agents people?
+
+No. An "agent" in Octorato is a text file that describes a role (a code reviewer, a data engineer, a copywriter), the way a job description does. The AI assistant reads the card and works in that role. There are no humans inside the system, and Octorato itself is a tool that never pretends to be a person: it answers from sources and signs every answer with a receipt.
+
+## Do I need to be a programmer to use it?
+
+No. If you can edit a text file and run three commands in a terminal, you can install it and write your own rules. Programming helps if you want to add hooks (automatic checks) or contribute scripts.
 
 ## What is an "AI agent operating system"?
 
@@ -40,10 +48,20 @@ Every action follows four phases: **Describe** (state what and why), **Delegate*
 
 The same principle extends to the whole capability set. A generated manifest, [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md), lists every skill, agent, script, rule, and hook the brain holds. It is produced by `scripts/capability_manifest.py` and regenerated on every push. The pre-push gate blocks a push whose manifest is stale, so a capability cannot be silently dropped from the offering by a later change. Architecture: [`docs/architecture/v5-capability-manifest.md`](docs/architecture/v5-capability-manifest.md).
 
+## What is v10, "Low Friction, Easy Entry"?
+
+The October 2026 release, <!--canon:v10.release.version-->v10.0.0<!--/canon-->. It keeps every check from v7 to v9 and makes them cheaper to live with. Install is the clone plus one command, `python3 ~/.claude/scripts/quickstart.py`, which wires the checks, turns on the push guard and writes a first spec (one run on a clean clone took <!--canon:v10.quickstart.measured-->21 s<!--/canon-->; a CI job fails past <!--canon:v10.quickstart.ci_budget-->5 minutes<!--/canon-->). The checks now count their own refusals: `octo friction` shows per check how often it said no and how long it took, and a replay of <!--canon:v10.replay.cases-->1,841<!--/canon--> real past cases blocks a change that drops a refusal that was right. `octo dash` writes one offline HTML page of specs, reviews, the gate receipt and live runs, and a status line shows the short form. The house rules (`CLAUDE.md`) went from <!--canon:v10.constitution.tokens_before-->25,506<!--/canon--> to <!--canon:v10.constitution.tokens_after-->11,551<!--/canon--> tokens by the health check's own estimator, which fails them above <!--canon:v10.constitution.ceiling-->12,000<!--/canon-->.
+
+What the release measured. The goal-anchor Stop check had to block at most <!--canon:v10.goal_anchor.target-->25%<!--/canon--> of its old count (AC-10). On a like-for-like replay, the gate before v10 against the released one over the same <!--canon:v10.goal_anchor.stops-->2,974<!--/canon--> Stops of <!--canon:v10.goal_anchor.sessions-->35<!--/canon--> recorded sessions, blocks went from <!--canon:v10.goal_anchor.raw-->220 to 38<!--/canon--> (<!--canon:v10.goal_anchor.measured-->17.3%<!--/canon-->); counted per case it is <!--canon:v10.goal_anchor.per_case-->51 to 7 (13.7%)<!--/canon-->. The replay reproduces <!--canon:v10.goal_anchor.receipt_fidelity-->99.3%<!--/canon--> of the <!--canon:v10.goal_anchor.receipt_stops-->146<!--/canon--> Stops the check recorded a read receipt for, so the figure stands on its own, and the live count `octo friction` prints carries it forward. The budget check answers in <!--canon:v10.budget.spawn_after-->85 to 254 ms<!--/canon--> at the median from a warm spend cache. A cache up to <!--canon:v10.budget.stale_window-->15 minutes<!--/canon--> old is fresh; one from this month up to <!--canon:v10.budget.stale_max-->24 hours<!--/canon--> old answers at once and starts one background refresh; only a missing, foreign-month, future-stamped, torn or older cache is recomputed before the answer. One part of the release criterion is read after the cut: over the first 7 days of friction data after release, the send check's false-positive rate on its labelled sample must stay under <!--canon:v10.release.send_ask_fp_target-->15%<!--/canon-->, and `octo friction` prints that rate per check. Measurement method: [`docs/architecture/v10-friction.md`](docs/architecture/v10-friction.md).
+
+## What is v8, "The Kernel"?
+
+The September 2026 release. Until then the brain could say what the assistant should do; v8 adds the part that watches each run. Every process gets a record and an append-only journal you can replay line by line, a cap on how many calls or minutes it may take, and one-writer-per-file isolation so two runs cannot overwrite each other. A skill installed with `octo pkg` is checked (manifest, tree hash, signature) before it lands; a folder copied by hand is outside that check. On Cursor the kernel records the main session only. Contract: [`docs/architecture/v8-kernel.md`](docs/architecture/v8-kernel.md).
+
 ## Who maintains Octorato?
 
 Carlos Carrillo (Guadalajara, Mexico), through dataqbs. The productized "AI Agent OS" runs at [dataqbs.com](https://dataqbs.com), built and operated on this brain.
 
 ## Where do I start?
 
-Read the [README](README.md) for the architecture, the [white paper](WHITEPAPER.md) for the model, and [CONTRIBUTING](CONTRIBUTING.md) to add a skill or agent. Newcomers are welcome and every contributor is credited.
+Read the [README](README.md) for the plain-words overview, [the long tour](docs/ANATOMY.md) for the architecture, the [white paper](WHITEPAPER.md) for the model, and [CONTRIBUTING](CONTRIBUTING.md) to add a skill or agent. Newcomers are welcome and every contributor is credited.

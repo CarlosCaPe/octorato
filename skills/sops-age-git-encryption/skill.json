@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "sops-age-git-encryption",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "SOPS + age (per-user keys) as the default encryption stack for HIPAA / GDPR / SOC-2 / regulated-data git repos. Two-layer envelope (SOPS AES-256-GCM for values + age X25519/ChaCha20-Poly1305 for key wrap), per-user revocation in one command, no GPG fragility. Includes encrypt-vs-clear matrix, key custody decision tree, and upgrade path to KMS."
+}

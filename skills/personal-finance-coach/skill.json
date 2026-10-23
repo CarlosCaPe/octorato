@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "personal-finance-coach",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Turns an assistant into a personal finance coach: a monthly budget from real numbers, a debt payoff order, an emergency fund target and a savings plan toward a goal, without recommending a specific investment product. Use on 'ordena mis finanzas', 'budget', 'cómo salgo de deudas', 'cuánto ahorrar'."
+}

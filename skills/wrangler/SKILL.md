@@ -1,6 +1,9 @@
 ---
 name: wrangler
 description: Cloudflare Workers CLI for deploying, developing, and managing Workers, KV, R2, D1, Vectorize, Hyperdrive, Workers AI, Containers, Queues, Workflows, Pipelines, and Secrets Store. Load before running wrangler commands to ensure correct syntax and best practices. Biases towards retrieval from Cloudflare docs over pre-trained knowledge.
+license: Apache-2.0
+metadata:
+  origin: "https://github.com/cloudflare/skills (Apache-2.0). Installed by wrangler on first run and committed here as 6c78520 on 2026-05-23; upstream ships no NOTICE file, and its LICENSE appendix carries the unfilled \"[name of copyright owner]\" placeholder, so no copyright holder string is asserted here that was not read from a file."
 ---
 
 # Wrangler CLI

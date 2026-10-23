@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "4d-spec",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Orchestrator that merges the 4D Paradigm with Spec-Driven Development (SDD). Classifies task complexity and activates SDD phases only when warranted. Use at the START of any implementation task to determine the right workflow depth."
+}

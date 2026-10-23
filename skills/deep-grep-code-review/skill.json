@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "deep-grep-code-review",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Deep Grep Code Review"
+}

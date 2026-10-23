@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "schema-separation-orm-control",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Schema Separation for ORM/Scaffolding Control"
+}

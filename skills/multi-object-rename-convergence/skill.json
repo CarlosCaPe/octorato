@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "multi-object-rename-convergence",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Multi-Object Rename Convergence"
+}

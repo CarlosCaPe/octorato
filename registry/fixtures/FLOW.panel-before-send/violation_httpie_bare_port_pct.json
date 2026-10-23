@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-httpie-bare-port-pct",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "http :8081/api/sen%64 k=v"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_httpie_bare_port_pct_transcript.jsonl"
+}

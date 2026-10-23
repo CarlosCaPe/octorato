@@ -747,6 +747,26 @@ def norm_path(path) -> str:
     return os.path.normpath(os.path.abspath(os.path.expanduser(str(path))))
 
 
+_MSYS_DRIVE = re.compile(r"^/([A-Za-z])(?=/|$)")
+
+
+def msys_to_native(path: str) -> str:
+    """A Git Bash (MSYS) drive path in its Windows spelling: `/c/Users/x` is
+    `C:/Users/x`. The Bash tool on Windows runs Git Bash, so a command that
+    names `/c/Users/<me>/.claude/settings.json` reaches the live file, while
+    native Python reads the same string as `<cwd drive>:\\c\\Users\\...`, a path
+    that exists nowhere, and every gate comparing it allowed the write.
+    Identity off Windows, and for any path that is not `/<one letter>` or
+    `/<one letter>/...` (`/tmp`, `/usr` stay what they are)."""
+    if os.name != "nt" or not path:
+        return path
+    m = _MSYS_DRIVE.match(path)
+    if not m:
+        return path
+    rest = path[m.end():]
+    return m.group(1).upper() + ":" + (rest or "/")
+
+
 def paths_conflict(a: str, b: str) -> bool:
     """True when two normalized paths name the same thing or one contains the
     other. The separator check is what keeps `/w/tree-b` out of `/w/tree`."""

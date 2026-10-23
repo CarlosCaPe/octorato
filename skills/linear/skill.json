@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "linear",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "description": "Manage issues, projects & team workflows in Linear. Use when the user wants to read, create or updates tickets in Linear."
+}

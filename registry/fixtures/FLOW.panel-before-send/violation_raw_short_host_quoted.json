@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-raw-short-host-quoted",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl -s -X POST http://127.1:8081/api/'send'"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_raw_short_host_quoted_transcript.jsonl"
+}

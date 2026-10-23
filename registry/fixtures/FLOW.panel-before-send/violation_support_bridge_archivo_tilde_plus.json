@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-support-bridge-archivo-tilde-plus",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "~/.claude/scripts/wa-soporte.sh 120360000000000000@g.us \"the report is attached\" --archivo ~+/attach/doc.txt"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_support_bridge_archivo_tilde_plus_transcript.jsonl"
+}

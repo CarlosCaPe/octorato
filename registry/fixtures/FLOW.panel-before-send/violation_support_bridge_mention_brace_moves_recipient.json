@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-support-bridge-mention-brace-moves-recipient",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "~/.claude/scripts/wa-soporte.sh --menciones {5210000000001@lid,120360000000000000@g.us} 5210000000002 \"@5210000000001 the report is ready and the numbers match the invoice.\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_support_bridge_mention_brace_moves_recipient_transcript.jsonl"
+}

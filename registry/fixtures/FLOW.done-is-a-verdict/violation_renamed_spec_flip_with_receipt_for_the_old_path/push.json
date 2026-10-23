@@ -1,0 +1,10 @@
+{
+  "code_change": true,
+  "rename_spec_to": "docs/specs/202609300001-renamed",
+  "receipts": [
+    {
+      "verdict": "CONVERGED",
+      "ts": "2026-09-30T12:30:00+00:00"
+    }
+  ]
+}

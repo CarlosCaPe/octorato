@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-benign-bash-grep-api-send",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "grep -rn /api/send scripts/"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_bash_grep_api_send_transcript.jsonl"
+}

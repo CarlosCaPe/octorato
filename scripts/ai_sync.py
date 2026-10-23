@@ -19,7 +19,10 @@ Verbs:
                            branch protection requiring PR), auto-creates a feature
                            branch, opens a PR via gh, waits for required checks,
                            squash-merges, and returns to the protected branch.
-  sync   [arm…]            project CLAUDE.md -> copilot-instructions.md + .cursorrules
+  sync   [arm…]            project CLAUDE.md -> copilot-instructions.md + .cursorrules,
+                           plus the instruction file of every `supported` harness in
+                           registry/runtimes.yaml (AGENTS.md, GEMINI.md); unchanged
+                           files are not rewritten
   status                   alias for `pull --status`
   cycle  ["msg"]           ai-sync: integrate (pull --rebase --autostash) THEN publish
                            (push), retrying the loop when a sibling machine pushes
@@ -55,6 +58,12 @@ CLAUDE = Path(__file__).resolve().parent.parent
 HOME = Path.home()
 ARMS_CFG = CLAUDE / "company" / "config" / "arms-paths.json"
 POLICY = CLAUDE / ".githooks" / "push-policy.txt"
+RUNTIMES = CLAUDE / "registry" / "runtimes.yaml"
+
+# The two mirrors every arm gets whatever the Runtime_Registry says. Each harness
+# entry's `instruction_file` adds one more mirror only while that harness is
+# `supported` (v11 spec 202610141000, AC-07, T09).
+BASE_MIRRORS = (".github/copilot-instructions.md", ".cursorrules")
 
 # Staged on push — allowlist, never `git add -A`, so personal files never slip in.
 # Top-level governance docs (CHANGELOG, SUPPORT, etc.) must be listed explicitly;
@@ -254,30 +263,229 @@ def scan_staged_secrets() -> bool:
 
 # ── sync ──────────────────────────────────────────────────────────────────────
 
+_PLAIN_FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def plain_filename(rel) -> bool:
+    """A registry `instruction_file` an arm may receive: one file name at the arm
+    root. No `/` or `\\`, no leading dot (so never `.git/...`, `./AGENTS.md`,
+    `.` or `..`), no home or drive prefix."""
+    return isinstance(rel, str) and bool(_PLAIN_FILENAME.fullmatch(rel))
+
+
+def harness_instruction_files(registry: Path | None = None, *, supported: bool = True,
+                              quiet: bool = False) -> list[str]:
+    """Arm-root instruction files named by registry/runtimes.yaml, beyond
+    BASE_MIRRORS (AC-07). `supported=True` (what sync writes): the harnesses whose
+    status is `supported`. `supported=False`: every other harness, whose file in an
+    arm is a stale mirror sync no longer updates (brain_doctor sync-targets WARNs).
+
+    Only a plain file name is accepted (`AGENTS.md`, `GEMINI.md`, see
+    plain_filename); Claude Code's `~/.claude/CLAUDE.md` (it reads the arm's
+    `.claude/CLAUDE.md` natively) and Cursor's `.cursorrules` (a base mirror) add
+    nothing, and any other value is refused with a warning. A registry that is
+    absent or unreadable adds nothing and says so, so a broken registry can only
+    ever write FEWER files into an arm, never other ones."""
+    say = (lambda _m: None) if quiet else warn
+    path = registry or RUNTIMES
+    try:
+        import yaml  # type: ignore[import-not-found]
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        runtimes = data.get("runtimes") or {}
+        if not isinstance(runtimes, dict):
+            raise ValueError("`runtimes` is not a mapping")
+    except Exception as e:  # ImportError, OSError, YAML error, shape error
+        say(f"  ⚠ {path.name} unreadable ({type(e).__name__}: {e}); "
+            "only the base mirrors are written")
+        return []
+    out: list[str] = []
+    for rid, entry in runtimes.items():
+        if not isinstance(entry, dict) or (entry.get("status") == "supported") != supported:
+            continue
+        rel = entry.get("instruction_file")
+        if not isinstance(rel, str) or rel in BASE_MIRRORS or rel.startswith("~/"):
+            continue
+        if not plain_filename(rel):
+            say(f"  ⚠ {rid}: instruction_file {rel!r} is not a plain file name; not written")
+            continue
+        if rel not in out:
+            out.append(rel)
+    return out
+
+
+def mirror_refusal(repo: Path, rel: str) -> str | None:
+    """Why `rel` must not be written in `repo`, or None when it may.
+
+    A mirror is written by a plain process the arming-surface gate never sees,
+    and the arm controls both the link and the content, so a mirror that is a
+    symlink (or sits under a symlinked directory) could aim the write at
+    ~/.claude/hooks.json or ~/.bashrc. Refused, even when the link points inside
+    the arm: the simplest rule leaves nothing to reason about. Also refused: a
+    path whose resolution leaves the arm."""
+    cur = repo
+    for part in rel.split("/"):
+        cur = cur / part
+        if cur.is_symlink():
+            return f"{cur.relative_to(repo).as_posix()} is a symlink"
+    try:
+        cur.resolve().relative_to(repo.resolve())
+    except ValueError:
+        return f"{rel} resolves outside the arm"
+    except OSError as e:
+        return f"{rel} cannot be resolved: {e}"
+    return None
+
+
+def _read_nofollow(path: Path) -> bytes | None:
+    """The file's bytes without following a final symlink (O_NOFOLLOW where the
+    OS has it; elsewhere mirror_refusal's is_symlink check stands in)."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as fh:
+        return fh.read()
+
+
+def _read_source(path: Path) -> tuple[bytes | None, str | None]:
+    """(bytes, None) for a regular single-link file, else (None, why). A hard
+    link has no symlink to see: the open file's link count is the only trace
+    that `.claude/CLAUDE.md` is another name for a file outside the arm (a key,
+    a token), so a count above 1 is refused like a symlink."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+    except OSError as e:
+        return None, f".claude/CLAUDE.md is unreadable: {e}"
+    with os.fdopen(fd, "rb") as fh:
+        st = os.fstat(fh.fileno())
+        if st.st_nlink > 1:
+            return None, f".claude/CLAUDE.md has {st.st_nlink} hard links"
+        return fh.read(), None
+
+
+def _write_if_changed(repo: Path, rel: str, content: bytes) -> bool:
+    """Write `content` to repo/rel only when it is absent or differs, so a second
+    sync with no source change touches nothing (same bytes, same mtime).
+
+    Never through a link: mirror_refusal is checked before and after creating
+    the parent directories, the bytes go to a fresh file made with O_EXCL in the
+    same directory (mkstemp, which cannot open an existing link), and os.replace
+    renames it over the target, which replaces a directory entry and never
+    follows one. A refused mirror raises PermissionError with the reason."""
+    import tempfile
+    why = mirror_refusal(repo, rel)
+    if why:
+        raise PermissionError(why)
+    path = repo / rel
+    if _read_nofollow(path) == content:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    why = mirror_refusal(repo, rel)
+    if why:
+        raise PermissionError(why)
+    try:
+        mode = path.lstat().st_mode & 0o777
+    except OSError:
+        umask = os.umask(0)
+        os.umask(umask)
+        mode = 0o666 & ~umask
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(content)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return True
+
+
 def sync(names=None) -> int:
     arms = load_arms()
     if not arms:
         warn("  no arms registered (company/config/arms-paths.json absent) — nothing to sync")
         return 0
     targets = names or list(arms)
-    print("=== Syncing .claude/CLAUDE.md → copilot-instructions.md + .cursorrules ===")
+    mirrors = [*BASE_MIRRORS, *harness_instruction_files()]
+    print(f"=== Syncing .claude/CLAUDE.md → {' + '.join(mirrors)} ===")
     synced = skipped = 0
     for name in targets:
         repo = arms.get(name)
         src = repo / ".claude" / "CLAUDE.md" if repo else None
-        if not src or not src.exists():
+        if not src or not os.path.lexists(src):
             print(f"  SKIP {name} — no .claude/CLAUDE.md")
             skipped += 1
             continue
-        content = src.read_bytes()
-        copilot = repo / ".github" / "copilot-instructions.md"
-        copilot.parent.mkdir(parents=True, exist_ok=True)
-        copilot.write_bytes(content)
-        (repo / ".cursorrules").write_bytes(content)
-        info(f"  ✓ {name}: CLAUDE.md → copilot + cursor")
+        # Read side of the same guard: a linked source (to ~/.ssh/id_rsa, a
+        # brain secret) would be copied into mirrors the arm commits and pushes.
+        why = mirror_refusal(repo, ".claude/CLAUDE.md")
+        content = None
+        if not why:
+            content, why = _read_source(src)
+        if content is None:
+            warn(f"  ⚠ {name}: SKIPPED, source not read: {why} (the source must be a "
+                 "regular, single-link file inside the arm)")
+            skipped += 1
+            continue
+        written, refused = [], []
+        for rel in mirrors:
+            try:
+                if _write_if_changed(repo, rel, content):
+                    written.append(rel)
+            except PermissionError as e:
+                refused.append(rel)
+                warn(f"  ⚠ {name}: {rel} NOT written, {e} (a mirror is never written "
+                     "through a link); replace it with a regular file")
+        info(f"  ✓ {name}: CLAUDE.md → {len(mirrors) - len(refused)} mirror(s), "
+             f"{len(written)} rewritten{': ' + ', '.join(written) if written else ''}")
+        stale = [rel for rel in harness_instruction_files(supported=False, quiet=True)
+                 if os.path.lexists(repo / rel)]
+        for rel in stale:
+            warn(f"  ⚠ {name}: {rel} is a stale mirror: its harness is not `supported` in "
+                 "registry/runtimes.yaml, so sync no longer updates it (left in place)")
         synced += 1
     print(f"\nDone. Synced: {synced} | Skipped: {skipped}")
     return 0
+
+
+PULL_DOCTOR_NOTE = ("  full doctor profile runs with `python3 scripts/brain_doctor.py`; "
+                    "pre-push runs --registry and --gate-receipt")
+
+
+def gate_receipt_current() -> str:
+    """The gate tree hash when an existing gate receipt still covers this brain,
+    else "". It mirrors what the outward-send gate accepts: the tree of scripts/,
+    registry/ and hooks.json at HEAD has a gate-liveness receipt, and nothing
+    under those surfaces differs from HEAD. It only READS receipts the selftests
+    already wrote; any doubt (import or git failure) answers "" so pull re-proves."""
+    try:
+        sys.path.insert(0, str(CLAUDE / "scripts"))
+        import receipt_ledger
+        gates = receipt_ledger.gate_tree_hash(CLAUDE)
+        if (gates and not receipt_ledger.gate_surfaces_dirty(CLAUDE)
+                and receipt_ledger.gate_receipt_ok(gates)):
+            return gates
+    except Exception:
+        pass
+    return ""
+
+
+def gate_receipt_step() -> None:
+    """Run gate-liveness (brain_doctor --gate-receipt, ~150 s) only when the gate
+    surfaces changed since the last receipt. Most pulls leave scripts/, registry/
+    and hooks.json alone, and then the receipt already written for that exact
+    tree is still the one the outward-send gate will accept."""
+    gates = gate_receipt_current()
+    if gates:
+        info(f"\n=== Brain doctor (gate receipt) ===\n  gate receipt still valid for tree "
+             f"{gates[:12]}, skipped")
+        return
+    info("\n=== Brain doctor (gate receipt) ===\n  gate surfaces changed, re-proving")
+    script_step("scripts/brain_doctor.py", "--gate-receipt")
 
 
 # ── pull ────────────────────────────────────────────────────────────────────
@@ -299,6 +507,8 @@ def pull(args) -> int:
                 warn("⚠ Changes available — run 'ai-pull'")
                 print(git("--no-pager", "log", "--oneline", "HEAD..@{u}")[1])
             return 0
+        if not _guard_live_root("ai-pull"):
+            return 1
         _, pre, _ = git("rev-parse", "HEAD")
         print("=== Pulling ~/.claude/ ===")
         code, out, e = git("pull")
@@ -312,6 +522,20 @@ def pull(args) -> int:
         else:
             info("✓ Already up to date")
 
+    post_integrate(args.arms or None)
+    post_integrate_doctor()
+    return 0
+
+
+def post_integrate(arms=None, *, sync_arms=True) -> None:
+    """Project what an integrate just brought in onto this machine.
+
+    Shared by `pull` and `cycle`. A pull that lands a hooks.json change and stops
+    there leaves the harness running the OLD hook set while the sync reports
+    success, and the doctor then fails hooks-runtime-sync. `cycle` used to skip
+    all of this, which is exactly that failure. `sync_arms=False` is for cycle,
+    whose push() already projects CLAUDE.md into every arm on every exit path.
+    """
     script_step("scripts/merge-hooks.py", label="=== Merging shared hooks ===")
     script_step("scripts/merge-hooks-cursor.py", label="=== Projecting hooks → Cursor ===")
     ensure_hooks_path()
@@ -323,8 +547,9 @@ def pull(args) -> int:
         script_step("scripts/generate_memory_map.py",
                     label="🧠 Memory index stale — regenerating")
 
-    print()
-    sync(args.arms or None)
+    if sync_arms:
+        print()
+        sync(arms)
 
     # Packages before the doctor: a machine that just pulled a new lock entry has
     # the entry and not the tree, and the doctor's packages-verified would report a
@@ -333,8 +558,19 @@ def pull(args) -> int:
     # install-runners.py has run, and pull is the command that runs first.
     script_step("scripts/octo_pkg.py", "sync", label="\n=== Packages (octo pkg sync) ===")
 
-    script_step("scripts/brain_doctor.py", label="\n=== Brain doctor ===")
-    return 0
+
+def post_integrate_doctor() -> None:
+    """The doctor that closes an integrate. Split from post_integrate so cycle can
+    run it AFTER its push: pre-push writes the gate receipt for the new tree, and
+    gate_receipt_step then finds it valid instead of re-proving it a second time."""
+    # The fast profile, not the full one: the full doctor took ~220 s on a populated
+    # machine (most of it enforcement-floor re-running every gate selftest) and a
+    # pull is a read path the operator waits on. --fast skips gate-liveness, the
+    # ONLY writer of the gate receipt, and the outward-send gate denies every send
+    # without a receipt for the current gate tree, so pull keeps that receipt valid.
+    script_step("scripts/brain_doctor.py", "--fast", label="\n=== Brain doctor (fast) ===")
+    gate_receipt_step()
+    info(PULL_DOCTOR_NOTE)
 
 
 # ── push ──────────────────────────────────────────────────────────────────────
@@ -515,6 +751,41 @@ def es_tronco(rama: str) -> bool:
     return rama in TRONCOS
 
 
+def live_root_off_trunk(rama: str, linked_worktree: bool) -> bool:
+    """True when the MAIN checkout sits on a branch that is not the trunk.
+
+    The main checkout is the live brain the harness loads; dimension worktrees are
+    where branches live. A live root parked on a feature branch that tracks the
+    trunk rebases onto the trunk on every pull and then pushes to its own remote
+    branch, which is non-fast-forward after each rebase: a sync that can never land.
+    """
+    return not linked_worktree and not es_tronco(rama)
+
+
+def _is_linked_worktree() -> bool:
+    """A linked worktree's `.git` is a file; the main checkout's is a directory.
+
+    Read from the filesystem rather than `rev-parse --path-format`, which git
+    older than 2.31 echoes back as output instead of rejecting.
+    """
+    return (Path(_this_tree()) / ".git").is_file()
+
+
+def _guard_live_root(verb: str) -> bool:
+    """Refuse to sync a live root that is off the trunk. True = go ahead."""
+    _, rama, _ = git("rev-parse", "--abbrev-ref", "HEAD", quiet=True)
+    if not live_root_off_trunk(rama, _is_linked_worktree()):
+        return True
+    trunk = tronco_remoto()
+    where = "a detached HEAD" if rama == "HEAD" else f"branch '{rama}'"
+    err(f"✗ {verb} aborted: the live brain {_this_tree()} is on {where}, "
+        f"not on '{trunk}'.")
+    err("   Branch work belongs in a dimension worktree; the live root follows the trunk.")
+    err("   Its switch is the operator's terminal step (the arming-surface gate denies it here):")
+    err(f"     cd {_this_tree()} && git switch {trunk} && git merge --ff-only origin/{trunk}")
+    return False
+
+
 def _is_repo() -> bool:
     """Hay repo aqui, sea checkout principal o worktree enlazado.
 
@@ -599,7 +870,21 @@ def _cotenants_on_tree(ttl: int, tree: str) -> list:
         return []  # fail-open: unreadable registry → no guard, never brick ai-push
 
 
+def hooks_drift_ok(verb: str) -> bool:
+    """FATAL hooks-drift guard shared by push and cycle. False (with the
+    adopt/discard message) when settings.json hooks diverged from hooks.json,
+    i.e. a hook authored in settings.json that nobody adopted yet."""
+    if script_step("scripts/check-hooks-drift.py", fatal=True):
+        return True
+    err(f"⚠ {verb} aborted: settings.json hooks diverged from hooks.json.")
+    err("   Run merge-hooks.py (discard) or check-hooks-drift.py --adopt (publish), then retry.")
+    return False
+
+
 def push(args) -> int:
+    if not _guard_live_root("ai-push"):
+        return 1
+
     # Co-tenancy guard: never commit in a tree another session shares. ai-push stages
     # whole BRAIN_PATHS dirs and then commits the entire index, so a second writer's
     # uncommitted work gets swallowed into the wrong commit (CLAUDE.md Core Principle
@@ -691,9 +976,7 @@ def push(args) -> int:
             return 1
 
     # Hooks drift guard (FATAL) — the recurring "brain never sticks" bug
-    if not script_step("scripts/check-hooks-drift.py", fatal=True):
-        err("⚠ ai-push aborted: settings.json hooks diverged from hooks.json.")
-        err("   Run merge-hooks.py (discard) or check-hooks-drift.py --adopt (publish), then retry.")
+    if not hooks_drift_ok("ai-push"):
         return 1
 
     # In-script secret scan (E) — fail-closed even if core.hooksPath isn't set / --no-verify
@@ -817,11 +1100,15 @@ def cycle(args) -> int:
 
     Per attempt:
       pull --rebase --autostash   integrate remote, keep local (committed + uncommitted)
-      push(args)                  commit dirty + publish (direct or PR flow), all guards
+      post_integrate()            HEAD moved: re-project hooks, regen, packages (as pull)
+      push(args)                 commit dirty + publish (direct or PR flow), all guards
       still-unpushed?             a race or the pre-committed-skip case → re-integrate, retry
     """
     if not _is_repo():
         err("✗ ~/.claude is not a git repo — cannot sync")
+        return 1
+
+    if not _guard_live_root("ai-sync"):
         return 1
 
     self_heal_origin()
@@ -845,12 +1132,20 @@ def cycle(args) -> int:
         return 1
 
     attempts = 3
+    integrated = False   # did any attempt bring remote commits in?
     for attempt in range(1, attempts + 1):
         print(f"━━ ai-sync: reconcile ~/.claude (attempt {attempt}/{attempts}) ━━")
 
         # 1. INTEGRATE — bring the remote in and replay local work on top.
         #    --autostash protects uncommitted edits across the rebase; --rebase keeps
         #    history linear so the publish below is a clean fast-forward.
+        # 0. GUARD unadopted hooks against the PRE-pull hooks.json. post_integrate
+        #    runs merge-hooks.py, which REPLACES settings.json hooks wholesale; a
+        #    hook authored in settings.json and not yet adopted would vanish
+        #    silently. push() refuses that case, so cycle refuses it first.
+        if not hooks_drift_ok("ai-sync"):
+            return 1
+        _, pre, _ = git("rev-parse", "HEAD")
         code, out, e = git("pull", "--rebase", "--autostash")
         # --autostash has TWO failure modes with DIFFERENT exit codes:
         #   (a) the rebase itself conflicts (a local commit vs the remote on the same
@@ -878,6 +1173,16 @@ def cycle(args) -> int:
             if tail:
                 err(f"   {tail[-1]}")
             return 1
+
+        # 1b. PROJECT what the integrate brought in, the same steps `pull` runs.
+        #     Without it a cycle that pulled a hooks.json change exits 0 while the
+        #     harness keeps the old hook set. It runs BEFORE push on purpose: push's
+        #     FATAL hooks-drift guard would otherwise abort on the drift the pull
+        #     itself created. Arm sync is left to push(), which always runs it.
+        _, post, _ = git("rev-parse", "HEAD")
+        if pre != post:
+            integrated = True
+            post_integrate(sync_arms=False)
 
         # 2. PUBLISH — commit any local changes and push (direct, or via the PR flow
         #    for a protected master). push() carries every guard: generic, secrets,
@@ -917,6 +1222,11 @@ def cycle(args) -> int:
     else:
         err(f"✗ ai-sync: still racing after {attempts} attempts — try again in a moment.")
         return 1
+
+    # The doctor closes an integrate, as in `pull`, and runs after the publish so a
+    # gate receipt pre-push just wrote for this tree is reused, not re-proven.
+    if integrated:
+        post_integrate_doctor()
 
     info("\n✓ ai-sync complete — brain reconciled (pull --rebase + push).")
     return 0
@@ -1001,6 +1311,13 @@ def selftest() -> int:
         chk("una rama auto/ NO es tronco", not es_tronco("auto/fix-algo"))
         chk("un nombre que CONTIENE master no basta",
             not es_tronco("feature/master-cleanup"))
+
+        # ---- a live root parked on a feature branch can never sync.
+        chk("live root on master syncs", not live_root_off_trunk("master", False))
+        chk("live root on a feature branch is refused",
+            live_root_off_trunk("chore/t28-1012", False))
+        chk("a dimension worktree on its branch syncs",
+            not live_root_off_trunk("dim/3fdefe390adb", True))
     finally:
         globals()["SESSIONS_REGISTRY"] = original
 

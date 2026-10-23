@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "idempotent-sql-design",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Idempotent SQL Design"
+}

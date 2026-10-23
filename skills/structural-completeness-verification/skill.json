@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "structural-completeness-verification",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Structural Completeness Verification"
+}

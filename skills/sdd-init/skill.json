@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "sdd-init",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "SDD step 0. Analyse the project codebase and create docs/project.md with tech stack, architecture, and conventions. Run once before starting SDD in a new project. If docs/project.md already exists, asks whether to regenerate it."
+}

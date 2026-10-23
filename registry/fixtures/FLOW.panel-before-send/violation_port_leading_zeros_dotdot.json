@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-port-leading-zeros-dotdot",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl -s -X POST http://localhost:08081/api/x/../send --data-binary @m.json"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_port_leading_zeros_dotdot_transcript.jsonl"
+}

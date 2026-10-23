@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-rp-benign-ac24-status-footer-path-digits",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Esperando a los revisores.\n\nProcedencia: Basis /tmp/claude-1000/scratch/panel_block.txt",
+  "transcript_path": "benign_ac24_status_footer_path_digits_transcript.jsonl",
+  "_fixture": {}
+}

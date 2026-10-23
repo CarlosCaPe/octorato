@@ -1,0 +1,8 @@
+{
+  "session_id": "fx-rp-benign-ac10-empty-message",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "",
+  "transcript_path": "benign_ac10_empty_message_transcript.jsonl"
+}

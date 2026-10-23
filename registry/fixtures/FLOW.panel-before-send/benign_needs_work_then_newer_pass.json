@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-p-benign-needs-work-then-newer-pass",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "someone@example.test"
+    ],
+    "subject": "Monthly report",
+    "body": "Hi, the report is attached and the numbers match the invoice."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_needs_work_then_newer_pass_transcript.jsonl"
+}

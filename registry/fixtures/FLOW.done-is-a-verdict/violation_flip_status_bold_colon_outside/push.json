@@ -1,0 +1,10 @@
+{
+  "code_change": true,
+  "receipts": [
+    {
+      "verdict": "CONVERGED",
+      "ts": "2026-09-30T11:30:00+00:00"
+    }
+  ],
+  "status_line": "> **Status**: converged"
+}

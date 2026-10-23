@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "post-check-verification",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Post-Check Verification"
+}

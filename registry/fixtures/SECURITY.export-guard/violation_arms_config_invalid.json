@@ -1,0 +1,23 @@
+{
+  "arms_paths_raw": "{\"open\": \"arms/open\"",
+  "files": {
+    "arms/open/arm.json": {
+      "kind": "arm",
+      "name": "open",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    }
+  },
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/open"
+  },
+  "_comment": "arms-paths.json that is not JSON.",
+  "_setup": {
+    "expect_reason": "arms-paths.json is not valid JSON"
+  }
+}
