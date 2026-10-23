@@ -1924,6 +1924,76 @@ rules:
     locator: '## External reviewers'
     expect: present
   liveness_required: FIRES
+- id: FLOW.review-replay
+  title: 'Review replay: an external engine and model are measured three times on a synthetic panel set against the Fable baseline, with a run receipt'
+  category: FLOW
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-33: WHEN the Replay_Harness runs for an engine and model'
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v11 T20: a measurement, not a gate. The runner calls live engines on the operator''s accounts, so it is started in a terminal and never at push; the decision on its records is ARCHITECTURE.reviewer-qualification.'
+  firing_mode:
+  - cli
+  mechanism:
+  - kind: Detector
+    canonical_name: review_replay.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/review_replay.py
+    expect: present
+  - method: FILE_EXISTS
+    locator: registry/replay/fixtures
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/review_replay.py --selftest
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-33: WHEN the Replay_Harness runs for an engine and model'
+    expect: present
+  liveness_required: FIRES
+- id: ARCHITECTURE.reviewer-qualification
+  title: 'An external reviewer pair is allowed only on a replay record that the doctor recomputes against the current baseline'
+  category: ARCHITECTURE
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-36: THE Doctor SHALL recompute every `allowed` entry of the Reviewer_Registry'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  # Doctor checks `reviewer-registry` (AC-35, AC-36: every `allowed` pair
+  # recomputed from its record and the baseline record, fixture tree hash,
+  # baseline model, run receipts tied to a committed runner) and
+  # `review-replay` (AC-30, AC-32: the fixture set's minimum shape, no machine
+  # path, no check-generic hit in fixtures or records).
+  firing_mode:
+  - git-hook
+  - runner
+  mechanism:
+  - kind: Gate
+    canonical_name: brain_doctor.py
+    firing_event: PrePush
+    firing_matcher: null
+  proof:
+  - method: EXIT_CODE
+    locator: grep -q '("reviewer-registry", check_reviewer_registry)' scripts/brain_doctor.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -q '("review-replay", check_review_replay)' scripts/brain_doctor.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -q 'rr.allowed_pair_problems(pr, root, tree, history)' scripts/brain_doctor.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_review_replay.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-36: THE Doctor SHALL recompute every `allowed` entry of the Reviewer_Registry'
+    expect: present
+  liveness_required: FIRES
 - id: FLOW.sent-message-ledger
   title: 'Sent-message ledger: every message that left is recorded with its channel id, digest and panel receipt'
   category: FLOW

@@ -1,0 +1,11 @@
+{
+  "id": "pass-017",
+  "expected": "PASS",
+  "reply": "Migration 0042 adds invoices.currency as char(3), NOT NULL, default 'EUR'.",
+  "excerpts": [
+    {
+      "source": "migrations/0042.sql",
+      "text": "ALTER TABLE invoices ADD COLUMN currency char(3) NOT NULL DEFAULT 'EUR';"
+    }
+  ]
+}

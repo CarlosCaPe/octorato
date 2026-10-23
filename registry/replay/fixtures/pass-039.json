@@ -1,0 +1,11 @@
+{
+  "id": "pass-039",
+  "expected": "PASS",
+  "reply": "The scan covers 212 third-party packages.\nMIT 140, Apache-2.0 51, BSD-3 19 and 2 with an unknown license.",
+  "excerpts": [
+    {
+      "source": "legal/license-scan.txt",
+      "text": "Third-party packages: 212. Licenses: MIT 140, Apache-2.0 51, BSD-3 19, unknown 2."
+    }
+  ]
+}

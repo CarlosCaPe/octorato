@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-012",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "The committed-use discount covers the whole bill, egress included.",
+  "reply": "The committed-use discount covers the whole bill, egress included.",
+  "excerpts": [
+    {
+      "source": "billing/usage-sept.txt",
+      "text": "Committed-use discount applied to compute only. Egress billed at list price."
+    }
+  ]
+}

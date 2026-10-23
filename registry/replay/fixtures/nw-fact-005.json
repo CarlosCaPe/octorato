@@ -1,0 +1,13 @@
+{
+  "id": "nw-fact-005",
+  "expected": "NEEDS-WORK",
+  "defect_class": "wrong-fact",
+  "defect_line": "The rate limit is 600 requests per hour per token.",
+  "reply": "GET /v2/orders pages at 50 by default, up to 200.\nThe rate limit is 600 requests per hour per token.",
+  "excerpts": [
+    {
+      "source": "api/openapi-excerpt.yaml",
+      "text": "GET /v2/orders: paginated, page size default 50, max 200. Rate limit 600 requests per minute per token."
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "id": "pass-018",
+  "expected": "PASS",
+  "reply": "Migration 0043 builds idx_invoices_customer on invoices(customer_id) concurrently.",
+  "excerpts": [
+    {
+      "source": "migrations/0043.sql",
+      "text": "CREATE INDEX CONCURRENTLY idx_invoices_customer ON invoices (customer_id);"
+    }
+  ]
+}

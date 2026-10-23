@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-004",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "The rotation job ran on 2026-06-01 and permanently solved the disk pressure on cache-1.",
+  "reply": "cache-1 is at 92% on /data, above the 90% alert threshold.\nThe rotation job ran on 2026-06-01 and permanently solved the disk pressure on cache-1.",
+  "excerpts": [
+    {
+      "source": "ops/disk-report.txt",
+      "text": "Host cache-1: /data 92% used. Alert threshold 90%. Rotation job last ran 2026-06-01 and freed 4 GB."
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "id": "pass-036",
+  "expected": "PASS",
+  "reply": "There were 11 pages last week; 9 auto-resolved within 5 minutes.",
+  "excerpts": [
+    {
+      "source": "hr/oncall-rota.txt",
+      "text": "Pages last week: 11, of which 9 were auto-resolved within 5 minutes."
+    }
+  ]
+}

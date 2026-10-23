@@ -3176,25 +3176,36 @@ def _strings(obj):
             yield from _strings(v)
 
 
-def check_reviewer_registry(fix: bool, path: Path | None = None) -> Result:
-    """v11 phase 4 (FR-06, FR-07, AC-29). registry/reviewers.yaml parses with
-    the reader receipt_ledger uses (scripts/external_review.py), carries no
-    machine path (those live in the gitignored Reviewer_Pins), and holds no
-    `allowed` pair: an `allowed` pair rests on a Replay_Record that the AC-36
-    recompute (task T20) checks, and until that recompute exists this check
-    fails closed on any. It never reads or changes a runtime status: Codex CLI
-    and Gemini CLI stay census-only (runtime-census-evidence)."""
+def _load_script(name: str, mod: str):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(mod, Path(__file__).resolve().parent / name)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def check_reviewer_registry(fix: bool, path: Path | None = None,
+                            root: Path | None = None) -> Result:
+    """v11 phase 4 (FR-06, FR-07, AC-29, AC-36). registry/reviewers.yaml parses
+    with the reader receipt_ledger uses (scripts/external_review.py), carries
+    no machine path (those live in the gitignored Reviewer_Pins), and every
+    `allowed` pair is RECOMPUTED from its Replay_Record and the current
+    baseline record (scripts/review_replay.py, allowed_pair_problems): both on
+    the tracked fixture tree hash, the baseline model the pair names equal to
+    the current baseline's, both run receipts' runner hash equal to a
+    committed scripts/review_replay.py, and the AC-35 bound holding on the
+    worst of three runs. An `allowed` pair without a valid record FAILs. It
+    never reads or changes a runtime status: Codex CLI and Gemini CLI stay
+    census-only (runtime-census-evidence)."""
     key = "reviewer-registry"
     p = path or REVIEWERS_PATH
+    root = root or CLAUDE_DIR
     try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "_external_review_doctor", Path(__file__).resolve().parent / "external_review.py")
-        er = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(er)
+        er = _load_script("external_review.py", "_external_review_doctor")
+        rr = _load_script("review_replay.py", "_review_replay_doctor")
     except Exception as e:
-        return Result(key, FAIL, f"external_review.py unloadable: {e}",
-                      "restore scripts/external_review.py")
+        return Result(key, FAIL, f"external_review.py or review_replay.py unloadable: {e}",
+                      "restore scripts/external_review.py and scripts/review_replay.py")
     data, problems = er.load_reviewer_registry(p)
     if data is None or problems:
         return Result(key, FAIL, "; ".join(problems[:4]),
@@ -3204,12 +3215,52 @@ def check_reviewer_registry(fix: bool, path: Path | None = None) -> Result:
         return Result(key, FAIL, f"machine path in the tracked registry: {leaks[0][:80]!r}",
                       "keep machine paths in company/config/reviewer-pins.json only")
     pairs = data.get("pairs") or []
-    allowed = [f"{x.get('engine')}/{x.get('model')}" for x in pairs if x.get("status") == "allowed"]
+    allowed = [x for x in pairs if x.get("status") == "allowed"]
     if allowed:
-        return Result(key, FAIL, f"`allowed` without the AC-36 replay recompute: {', '.join(allowed)}",
-                      "mark the pair `not-allowed` until its Replay_Record is recomputed (T20)")
-    return Result(key, PASS, f"{len(pairs)} engine/model pair(s), none allowed; runtime status "
-                  "stays census-only (FR-07)")
+        tree = rr.git_tree_hash(root / rr.FIXTURES_REL)
+        history = rr.runner_history_hashes(root)
+        bad = []
+        for pr in allowed:
+            bad.extend(rr.allowed_pair_problems(pr, root, tree, history))
+        if bad:
+            return Result(key, FAIL, f"`allowed` pair fails the AC-36 recompute: {'; '.join(bad[:3])}",
+                          "rerun `review_replay.py run` then `review_replay.py qualify --write`, "
+                          "or mark the pair `not-allowed`")
+    return Result(key, PASS, f"{len(pairs)} engine/model pair(s), {len(allowed)} allowed and "
+                  "recomputed from their replay records; runtime status stays census-only (FR-07)")
+
+
+def check_review_replay(fix: bool, root: Path | None = None, pattern=None) -> Result:
+    """v11 phase 4 (AC-30, AC-32). The Replay_Fixture_Set holds its minimum
+    shape (at least 40 NEEDS-WORK cases, 15 of each named defect class, 40
+    PASS cases, every case complete), and no file of the fixture set or of the
+    records holds an absolute user path, a `$HOME` path or a hit of
+    scripts/check-generic.py's private blocklist (skipped, and said so, when
+    the blocklist is absent on this machine)."""
+    key = "review-replay"
+    root = root or CLAUDE_DIR
+    try:
+        rr = _load_script("review_replay.py", "_review_replay_doctor")
+    except Exception as e:
+        return Result(key, FAIL, f"review_replay.py unloadable: {e}", "restore scripts/review_replay.py")
+    cases, probs = rr.load_cases(root / rr.FIXTURES_REL)
+    probs += rr.fixture_problems(cases)
+    note = ""
+    if pattern is None:
+        try:
+            cg = _load_script("check-generic.py", "_check_generic_doctor")
+            tokens, _ = cg.load_blocklist()
+            pattern = cg.build_pattern(tokens) if tokens else None
+        except Exception:
+            pattern = None
+        if pattern is None:
+            note = "; no private blocklist here, generic scan skipped"
+    probs += rr.hygiene_problems([root / rr.FIXTURES_REL, root / rr.RECORDS_REL], pattern)
+    if probs:
+        return Result(key, FAIL, "; ".join(probs[:4]),
+                      "fix registry/replay/ (synthetic, generic cases only), then rerun every record")
+    nw = sum(1 for c in cases if c.get("expected") == "NEEDS-WORK")
+    return Result(key, PASS, f"{len(cases)} replay cases ({nw} NEEDS-WORK), no machine path{note}")
 
 
 # Results of the run in progress, by CHECKS key, so an `evidence` check named by
@@ -3552,6 +3603,7 @@ CHECKS = [
     ("runtime-doc-agreement", check_runtime_doc_agreement),
     ("runtime-census-evidence", check_runtime_census_evidence),
     ("reviewer-registry", check_reviewer_registry),
+    ("review-replay", check_review_replay),
     ("leak-guard", check_leak_guard),
     ("connectome-fresh", check_connectome_fresh),
     ("arms-config", check_arms_config),

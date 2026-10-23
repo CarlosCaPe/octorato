@@ -1,0 +1,11 @@
+{
+  "id": "pass-040",
+  "expected": "PASS",
+  "reply": "2 packages have an unknown license and still need a manual review.",
+  "excerpts": [
+    {
+      "source": "legal/license-scan.txt",
+      "text": "2 packages have an unknown license and need manual review."
+    }
+  ]
+}

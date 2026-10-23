@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-019",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "The 41 ms figure will hold in production as well.",
+  "reply": "The 41 ms figure will hold in production as well.\nProduction has 4x the rows and a different autovacuum setting.",
+  "excerpts": [
+    {
+      "source": "perf/query-plan.txt",
+      "text": "Measured on staging only. Production has 4x the rows and a different autovacuum setting."
+    }
+  ]
+}

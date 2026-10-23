@@ -1,0 +1,11 @@
+{
+  "id": "pass-006",
+  "expected": "PASS",
+  "reply": "4.3.0 (2026-05-11) changed import to stream rows instead of loading the whole file in memory.",
+  "excerpts": [
+    {
+      "source": "CHANGELOG.md",
+      "text": "## 4.3.0 - 2026-05-11\n- Changed: import now streams rows instead of loading the file in memory."
+    }
+  ]
+}

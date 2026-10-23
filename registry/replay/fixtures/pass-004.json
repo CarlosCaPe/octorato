@@ -1,0 +1,11 @@
+{
+  "id": "pass-004",
+  "expected": "PASS",
+  "reply": "statement_timeout defaults to 0, which disables it.\nThe doc recommends 30s for interactive roles and allows batch roles to keep it off.",
+  "excerpts": [
+    {
+      "source": "docs/config-reference.md",
+      "text": "statement_timeout: default 0 (disabled). Recommended 30s for interactive roles; batch roles may keep it disabled."
+    }
+  ]
+}

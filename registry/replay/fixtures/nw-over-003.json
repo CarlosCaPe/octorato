@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-003",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "4.3.0 (2026-05-11) made import stream rows, which removes every memory limit on imports of any size.",
+  "reply": "4.3.0 (2026-05-11) made import stream rows, which removes every memory limit on imports of any size.",
+  "excerpts": [
+    {
+      "source": "CHANGELOG.md",
+      "text": "## 4.3.0 - 2026-05-11\n- Changed: import now streams rows instead of loading the file in memory."
+    }
+  ]
+}

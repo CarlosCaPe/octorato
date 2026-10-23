@@ -1,0 +1,13 @@
+{
+  "id": "nw-fact-018",
+  "expected": "NEEDS-WORK",
+  "defect_class": "wrong-fact",
+  "defect_line": "Week 32 on-call: engineer-b primary, engineer-a secondary.",
+  "reply": "Week 32 on-call: engineer-b primary, engineer-a secondary.\nHandover is Monday at 09:00 CET.",
+  "excerpts": [
+    {
+      "source": "hr/oncall-rota.txt",
+      "text": "On-call week 32: primary engineer-a, secondary engineer-b. Handover Monday 09:00 CET."
+    }
+  ]
+}
