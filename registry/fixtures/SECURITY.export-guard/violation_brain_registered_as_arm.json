@@ -1,0 +1,28 @@
+{
+  "arms_paths": {
+    "brain": ".claude"
+  },
+  "files": {
+    ".claude/arm.json": {
+      "kind": "arm",
+      "name": "brain",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    }
+  },
+  "dirs": [
+    ".claude/scripts"
+  ],
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/.claude/scripts"
+  },
+  "_comment": "The brain registered as an arm with allow: a brain session resolves to no arm.",
+  "_setup": {
+    "expect_reason": "brain session"
+  }
+}

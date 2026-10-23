@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "sudo -n git push origin main"}, "cwd": "/nonexistent/repo"}

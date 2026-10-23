@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "El servidor quedó parchado. ¿Apago hoy o mañana?\n\nProvenance: Basis: scripts/g__stop__defer-today.py · Engine: build · Touched: none · Verified: selftest"}]}}

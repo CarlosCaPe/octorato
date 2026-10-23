@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "reviewers": {},
+  "pairs": [
+    {
+      "engine": "codex",
+      "model": "fx-review-model",
+      "status": "allowed",
+      "replay_record": null,
+      "baseline_model": null
+    }
+  ]
+}

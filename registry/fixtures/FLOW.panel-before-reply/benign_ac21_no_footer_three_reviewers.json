@@ -1,0 +1,24 @@
+{
+  "session_id": "fx-rp-benign-ac21-no-footer-three-reviewers",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "The migration ran on the staging copy and the row counts match the source table. Two warnings remain, both about deprecated flags, and neither blocks the release. The rollback script is untested.",
+  "transcript_path": "benign_ac21_no_footer_three_reviewers_transcript.jsonl",
+  "_fixture": {
+    "receipts": [
+      {
+        "verdict": "PASS",
+        "ts": "2026-10-14T10:02:00.000Z"
+      },
+      {
+        "verdict": "PASS",
+        "ts": "2026-10-14T10:03:00.000Z"
+      },
+      {
+        "verdict": "PASS",
+        "ts": "2026-10-14T10:04:00.000Z"
+      }
+    ]
+  }
+}

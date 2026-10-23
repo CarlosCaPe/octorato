@@ -87,7 +87,7 @@ from pathlib import Path
 # survive on Windows shells defaulting to cp1252. Without this, a script
 # can do its work correctly and still crash with UnicodeEncodeError when
 # printing success. Applied repo-wide by _apply-utf8-reconfigure.py.
-for _stream in (sys.stdout, sys.stderr):
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
@@ -316,7 +316,14 @@ def _effective_cwds(cmd: str, matched_sub: str, session_cwd: str) -> list:
         for raw in reading:
             if raw == matched_sub:
                 break
-            cwd = _apply_dir_change(_strip_leading(raw).strip(), raw, cwd)
+            notes = set()
+            moved = _apply_dir_change(_strip_leading(raw, notes).strip(), raw, cwd)
+            # A wrapper runs its command in a child process (or fails, for a
+            # builtin like `cd`), so a directory change behind one, or a
+            # wrapper's own `-D`/`--chdir`, is not read: unknown.
+            if notes and (moved != cwd or notes & {"cd", "args"}):
+                moved = None
+            cwd = moved
         if cwd not in out:
             out.append(cwd)
     return out
@@ -532,7 +539,7 @@ def _env_with_option(matched_sub: str) -> bool:
 
 def _scope_current(cmd: str, matched_sub: str, session_cwd: str):
     """The current scope reader (see _is_protected_target)."""
-    if _env_with_option(matched_sub):
+    if _env_with_option(matched_sub) or _wrapper_hides_target(matched_sub):
         return None
     sub = _strip_leading(matched_sub)
 
@@ -711,12 +718,15 @@ def _remote_slugs(repo_root: Path) -> set:
 
 # Strip leading wrapper tokens from an already-split sub-command before pattern
 # matching. Applied PER sub-command so it never crosses a real separator boundary.
-# Covers: grouping openers, env-assignments (VAR=val), redirections, the `env`
-# wrapper (with its own -flags and VAR=val args), and the `command` builtin.
-# SECURITY: without the env/command peel, `env A=1 gh pr merge` or `command gh pr
-# merge` evade the ^gh/^git anchor and bypass the approval gate. Iterative so the
-# wrappers may interleave (`env A=1 command git push origin main`). The real
-# approval channels stay the agent-proof env/file, never an inline token.
+# Covers: grouping openers, env-assignments (VAR=val), redirections, reserved
+# words, case labels, and EVERY command-taking wrapper, `env` and `command`
+# among them, through the per-wrapper spec (`_wrapper_specs`, `_peel_wrapper`).
+# SECURITY: without the peel, `env A=1 gh pr merge`, `command gh pr merge` or
+# `timeout 300 gh pr merge` evade the ^gh/^git anchor and bypass the approval
+# gate. The last one was not hypothetical: it merged #307 on 2026-09-15 under
+# the previous gate.
+# Iterative so the wrappers may interleave (`env A=1 sudo nohup timeout 300 ...`).
+# The real approval channels stay the agent-proof env/file, never an inline token.
 _W_GROUP = re.compile(r"^[({]\s*")
 _W_ASSIGN = re.compile(r"^[A-Za-z_]\w*=\S*\s+")
 _W_REDIR = re.compile(r"^\d*[<>]+\S*\s+")
@@ -736,13 +746,228 @@ _W_WRAP = re.compile(
 _W_LABEL = re.compile(r"^\(?[^\s()|;&]+(?:\|[^\s()|;&]+)*\)\s*")
 
 
-def _strip_leading(s: str) -> str:
+# Wrapper programs that take a COMMAND as their argument, peeled for exactly the
+# reason `env` and `command` already were: every pattern below anchors at the
+# START of a sub-command, so a prefix left in place is a prefix that disarms the
+# gate. Measured 2026-09-15: `timeout 300 gh pr merge 307 --squash` ALLOWED
+# while the bare form DENIED, and that form merged a PR without the operator's
+# approval.
+#
+# The spec is PER WRAPPER and that is the whole correctness of it. A first cut
+# flattened every wrapper's option list into one set, and QA measured what the
+# flattening costs: `-E` takes a value for `xargs`, so `sudo -E gh pr merge 9`
+# ate `gh` and the remainder `pr merge 9` matched nothing. Six spellings became
+# NEW bypasses, `sudo -E` and `sudo -n` among them, which are the two most
+# common sudo spellings in scripts. A peel that eats the command is worse than
+# no peel, because it looks like coverage.
+#
+# So the shared parser's table is the source for every wrapper it knows, read
+# lazily and only when a sub-command actually starts with a wrapper name. The
+# import costs about 10 ms in a fresh process, which is how a hook pays it, and
+# 0.3 ms once a process has already loaded it. Two earlier figures in this file
+# were wrong in opposite directions: ~30 ms differenced two subprocesses and
+# charged interpreter start to the import, and 14 ms sat between the warm and
+# cold numbers. Small either way, but it is per Bash call and the unwrapped 99%
+# should not pay it.
+#
+# The peel of the nine SHARED wrappers it uses (all but `env`, see
+# _PEEL_EXCLUDED) depends on that module importing `kernel_proc` from its own
+# directory. Where it cannot, the fallback leaves only the five local extras
+# and says nothing: every `timeout` and `sudo` spelling quietly stops being
+# peeled. That is the safe direction (the gate
+# returns to where it was) and it is silent, which is the part worth knowing.
+_SHARED_PARSER = Path(__file__).resolve().parent / "g__pretool-bash__tree-owner.py"
+
+# Wrappers the shared parser does not carry, in ITS shape so the two compose.
+# `arg` is how many POSITIONALS the wrapper eats before the command starts:
+# `flock /tmp/x cmd` and `chrt 50 cmd` eat one, the rest eat none.
+_EXTRA_WRAPPERS = {
+    "setsid": {"valued": (), "cd": (), "arg": 0},
+    "ionice": {"valued": ("-c", "--class", "-n", "--classdata", "-p", "--pid"),
+               "cd": (), "arg": 0},
+    "doas": {"valued": ("-u", "-C"), "cd": (), "arg": 0},
+    "flock": {"valued": ("-w", "--wait", "--timeout", "-E", "--conflict-exit-code"),
+              "cd": (), "arg": 1},
+    "chrt": {"valued": ("-p", "--pid", "-T", "--sched-runtime", "-P", "--sched-period",
+                        "-D", "--sched-deadline"), "cd": (), "arg": 1},
+}
+# Names only, so the cheap test that decides whether to import costs a set hit.
+# `env` is deliberately NOT here. Its flags change what the command is: the
+# value of `-S`/`--split-string` IS the command line, so a table that reads it
+# as a plain value discards the merge (`timeout 5 env -S gh pr merge 1` went
+# through). env stays on the _W_ENV/_W_ENVARG path below, exactly as before
+# this peel existed, so no env spelling can be read more loosely than that.
+_PEEL_EXCLUDED = frozenset({"env"})
+_WRAPPER_NAMES = frozenset({
+    "sudo", "command", "nohup", "exec", "time", "nice", "timeout",
+    "stdbuf", "xargs", "setsid", "ionice", "doas", "flock", "chrt",
+})
+_WRAPPER_SPECS = None
+
+
+def _wrapper_specs() -> dict:
+    """Per-wrapper {valued, cd, arg}, the shared parser's table plus the extras.
+
+    Falls back to the extras alone if the import fails. That direction is safe:
+    an unknown wrapper is simply not peeled, which leaves the gate where it was
+    before this change rather than eating a command it cannot parse."""
+    global _WRAPPER_SPECS
+    if _WRAPPER_SPECS is not None:
+        return _WRAPPER_SPECS
+    specs = dict(_EXTRA_WRAPPERS)
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_qmg_shared_parser", str(_SHARED_PARSER))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        for name, entry in mod._WRAPPERS.items():
+            # Validated, not trusted. An entry that is not a mapping made
+            # `_peel_wrapper` raise, the exception escaped the finder, and the
+            # gate failed OPEN for the WHOLE command, the bare publish in a
+            # later sub-command included. A table this gate does not own is
+            # untrusted input like any other.
+            if isinstance(entry, dict) and name not in _PEEL_EXCLUDED:
+                specs[name] = entry
+    except Exception:
+        pass
+    _WRAPPER_SPECS = specs
+    return specs
+
+
+_ENV_ASSIGN_TOKEN = re.compile(r"^[A-Za-z_]\w*=")
+_WRAPPER_HEAD = re.compile(r"^([^\s;&|]+)(\s+)")
+# A token is a run of quoted segments and unquoted non-space characters, so
+# `-u "car los"` is TWO tokens and not four. `\S+` split it at the space and
+# the second half stopped the peel, which QA measured as a live bypass: the
+# quoted spelling ALLOWED while the unquoted one denied. The shell reads the
+# quotes; so must anything that counts tokens.
+_WRAPPER_TOKEN = re.compile(r"""^((?:"[^"]*"|'[^']*'|[^\s"'])+)(\s*)""")
+
+
+# Flags that move the directory WITHOUT taking a value: `sudo -i` runs a login
+# shell, which starts in the target user's home, not in the session cwd.
+_DIR_MOVING_FLAGS = {"sudo": ("-i", "--login")}
+# Wrappers that append arguments the gate cannot see (stdin, `-a file`), so
+# `printf -- '-R o/r' | xargs gh pr merge 1` can name any repo.
+_ARG_ADDING_WRAPPERS = frozenset({"xargs"})
+
+
+def _long_option_matches(name: str, options) -> bool:
+    """True when the long option *name* is one of *options* or an abbreviation
+    getopt_long would accept for one (`--chd` for `--chdir`)."""
+    return any(o.startswith("--") and (o == name or (len(name) > 3 and o.startswith(name)))
+               for o in options)
+
+
+def _peel_wrapper(s: str, notes=None):
+    """*s* with ONE leading wrapper (its flags, their values, its positionals)
+    removed, or None when it does not start with one. Basename-matched, so
+    `/usr/bin/timeout` peels exactly as `timeout` does.
+
+    *notes*, when given, is a set that records what the peel saw: "wrapper"
+    for any peel, and "cd" when an option of the wrapper's `cd` class (`sudo
+    -D`, `--chdir`, in any spelling: bare, attached, clustered, abbreviated)
+    was consumed. That option moves the directory the command runs in, so the
+    scope reader must not judge the session cwd for it; dropping it silently
+    made `sudo -D <protected> gh pr merge` read as the unprotected cwd."""
+    head = _WRAPPER_HEAD.match(s)
+    if not head:
+        return None
+    name = os.path.basename(head.group(1))
+    if name not in _WRAPPER_NAMES:
+        return None
+    spec = _wrapper_specs().get(name)
+    if not isinstance(spec, dict):
+        return None          # unknown or unusable: leave the sub-command alone
+    cd_opts = set(spec.get("cd", ()))
+    takes_value = set(spec.get("valued", ())) | cd_opts
+    if notes is not None:
+        notes.add("wrapper")
+        if name in _ARG_ADDING_WRAPPERS:
+            notes.add("args")
+    moves = _DIR_MOVING_FLAGS.get(name, ())
+
+    def note_cd():
+        if notes is not None:
+            notes.add("cd")
+
+    rest = s[head.end():]
+    eat = spec.get("arg", 0)
+    while rest:
+        tok = _WRAPPER_TOKEN.match(rest)
+        if not tok:
+            break
+        word = tok.group(1)
+        if word == "--":
+            rest = rest[tok.end():]
+            continue
+        if word.startswith("--"):
+            rest = rest[tok.end():]
+            # `--flag=value` carries its own value; only the bare spelling of a
+            # value-taking flag reaches for the next token.
+            opt = word.split("=", 1)[0]
+            if _long_option_matches(opt, cd_opts) or _long_option_matches(opt, moves):
+                note_cd()
+            if "=" not in word and _long_option_matches(opt, takes_value):
+                nxt = _WRAPPER_TOKEN.match(rest)
+                if nxt:
+                    rest = rest[nxt.end():]
+            continue
+        if word.startswith("-"):
+            rest = rest[tok.end():]
+            if word in moves:
+                note_cd()
+            if word in takes_value:
+                if word in cd_opts:
+                    note_cd()
+                nxt = _WRAPPER_TOKEN.match(rest)
+                if nxt:
+                    rest = rest[nxt.end():]
+            elif len(word) > 1:
+                # A short cluster is read the way getopt reads it: the first
+                # value-taking letter takes the rest of the word, or the next
+                # word when it is the last letter. `env -iu X cmd` and
+                # `sudo -nu root cmd` end on `-u`, so `X`/`root` is its value,
+                # not the command; matching the whole word only (`-iu`) made
+                # the value the command and lost the publish verb behind it.
+                # An attached value (`-D/tmp`) is the same rule.
+                for k in range(1, len(word)):
+                    if "-" + word[k] in moves:
+                        note_cd()
+                    if "-" + word[k] in takes_value:
+                        if "-" + word[k] in cd_opts:
+                            note_cd()
+                        if k == len(word) - 1:
+                            nxt = _WRAPPER_TOKEN.match(rest)
+                            if nxt:
+                                rest = rest[nxt.end():]
+                        break
+            continue
+        if _ENV_ASSIGN_TOKEN.match(word):
+            rest = rest[tok.end():]          # `env A=1 B=2 cmd`
+            continue
+        if eat:
+            eat -= 1
+            rest = rest[tok.end():]
+            continue
+        break
+    return rest
+
+
+def _strip_leading(s: str, notes=None) -> str:
     """Return *s* with leading grouping / env-assignments / redirections / the
-    `env` wrapper (and its flags+assigns) / the `command` builtin removed."""
+    `env` wrapper (and its flags+assigns) / the `command` builtin / reserved
+    words / any command-taking wrapper (`timeout`, `sudo`, `flock`, ...) removed.
+    *notes* is passed to `_peel_wrapper` (see there)."""
     s = s.lstrip()
     prev = None
     while s != prev:
         prev = s
+        peeled = _peel_wrapper(s, notes)
+        if peeled is not None:
+            s = peeled
+            continue
         for pat in (_W_GROUP, _W_ASSIGN, _W_REDIR, _W_COMMAND, _W_RESERVED, _W_CASE, _W_LABEL, _W_WRAP):
             m = pat.match(s)
             if m:
@@ -758,6 +983,17 @@ def _strip_leading(s: str) -> str:
                         break
                     s = s[m2.end():]
     return s
+
+
+def _wrapper_hides_target(sub: str) -> bool:
+    """True when a wrapper in front of *sub* changes what the target is in a
+    way the gate does not read: a directory option (`sudo -D <dir>`,
+    `--chdir=<dir>`, clustered or abbreviated), a flag that moves the
+    directory (`sudo -i`), or a wrapper that appends arguments the gate cannot
+    see (`xargs`). Like `env -C`, it makes the target unreadable."""
+    notes = set()
+    _strip_leading(sub, notes)
+    return bool(notes & {"cd", "args"})
 
 
 def _split_master(cmd: str) -> list[str]:

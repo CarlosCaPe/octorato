@@ -1,0 +1,8 @@
+{
+  "session_id": "sess-flip",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_flip",
+  "tool_input": {
+    "command": "python3 -c \"import json;p='arms/closed/arm.json';d=json.load(open(p));d['telemetry']={'export':'allow'};json.dump(d,open(p,'w'))\""
+  }
+}

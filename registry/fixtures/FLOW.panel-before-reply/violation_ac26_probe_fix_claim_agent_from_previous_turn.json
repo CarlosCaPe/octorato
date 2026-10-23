@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-rp-violation-ac26-probe-fix-claim-agent-from-previous-turn",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "El bug era el parser; ya lo arregl\u00e9 en la rama.",
+  "transcript_path": "violation_ac26_probe_fix_claim_agent_from_previous_turn_transcript.jsonl",
+  "_fixture": {
+    "stderr_lacks": [
+      "cannot decide"
+    ]
+  }
+}

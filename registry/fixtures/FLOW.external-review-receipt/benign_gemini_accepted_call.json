@@ -1,0 +1,9 @@
+{
+  "command": "{{NODE}} {{GEMINI}} -m review-model -p 'Review this block and end with the panel lines.'",
+  "expect_complete": 1,
+  "expect_fields": {
+    "engine": "gemini",
+    "requested_model": "review-model"
+  },
+  "output": "Reviewed.\nPANEL-VERDICT: PASS\nPANEL-SHA256: 0000000000000000000000000000000000000000000000000000000000000000\n"
+}

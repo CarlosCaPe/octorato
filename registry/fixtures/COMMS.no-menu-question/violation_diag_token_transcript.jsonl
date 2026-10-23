@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "La llamada da 401. ¿El token expiró o lo revoco?\n\nProvenance: Basis: scripts/g__stop__defer-today.py · Engine: build · Touched: none · Verified: selftest"}]}}

@@ -520,6 +520,7 @@ edges:
       - registry/rules.yaml                              # FLOW.receipt-ledger, COMMS.outward-send-gate, FLOW.qa-receipt, FLOW.panel-before-send, FLOW.sent-message-ledger
       - registry/fixtures/COMMS.outward-send-gate        # liveness proof of the send gate
       - scripts/panel_digest.py                          # panel digest shared by the gate and the main loop
+      - scripts/panel_preflight.py                       # runs the reply-text Stop gates on a draft before its panel (SKIP names Stop gates by file name)
       - scripts/panel_fixture_seed.py                    # seeds PASS panel receipts into send fixtures
       - scripts/r__posttool__sent-ledger.py              # sent-message ledger writer
       - registry/fixtures/FLOW.panel-before-send         # liveness proof of the panel check
@@ -535,6 +536,50 @@ edges:
       file name, so renaming g__stop__unsourced-absence.py,
       g__stop__unsourced-attribute.py or g__stop__draft-promise.py breaks it.
 
+
+  - id: reply-panel-v11
+    concept: "reply panel: no reply to the operator ends a turn without a PASS panel receipt for its exact text; quorum by source class (SELF 3, SOURCED 1, INPUT 1), status-line exemption, preflight"
+    appears_in:
+      - CLAUDE.md                                        # anchor "Reply panel"
+      - docs/architecture/v11-reply-panel.md             # contract, cost controls, residuals
+      - scripts/g__stop__reply-panel.py                  # the gate (source_class, input_needed, pending_agents, status_claim)
+      - scripts/panel_preflight.py                       # runs the reply-text Stop gates on the draft
+      - scripts/panel_digest.py                          # --panel-request / --preflight
+      - scripts/g__stop__no-menu-question.py             # loaded by file name for the INPUT class; reads past `input-needed:`
+      - registry/rules.yaml                              # FLOW.panel-before-reply
+      - registry/fixtures/FLOW.panel-before-reply        # liveness proof
+      - scripts/tests/test_reply_panel_source_class.py
+      - scripts/tests/test_reply_panel_status_line.py
+      - scripts/tests/test_panel_preflight.py
+    kind: appears_in
+    note: >-
+      The reply gate imports the no-menu gate's is_choice_question and
+      _irreducible_object by file name, and the preflight names Stop gates
+      by file name in its SKIP list: renaming either gate touches this edge.
+  - id: external-review-v11
+    concept: "external reviewer receipt: a review on another engine counts only through a hook-written receipt around a pinned call; it adds to a reply quorum, never forms one, never clears a send"
+    appears_in:
+      - docs/architecture/v11-reply-panel.md             # "External reviewers" section and R-05
+      - scripts/external_review.py                       # parser, pin checks, hook bodies, pin CLI, selftest
+      - scripts/r__pretool-bash__external-review.py      # pending receipt (PreToolUse Bash)
+      - scripts/r__posttool-bash__external-review.py     # complete receipt (PostToolUse Bash)
+      - scripts/receipt_ledger.py                        # external_panel_view, panel_pass_for drops external PASS, --selftest-external
+      - scripts/g__stop__reply-panel.py                  # quorum needs one harness PASS
+      - scripts/r__subagent-stop__qa-receipt.py          # external_reviewers from REVIEW-EXTERNAL lines
+      - scripts/panel_fixture_seed.py                    # seed_external_receipt, seed_reviewer_pair, seed_arm
+      - scripts/g__pretool__arming-surface.py            # pins, reviewers.yaml, registry/replay, external_review.py
+      - scripts/brain_doctor.py                          # reviewer-registry check
+      - registry/reviewers.yaml                          # Reviewer_Registry
+      - registry/rules.yaml                              # FLOW.external-review-receipt
+      - registry/fixtures/FLOW.external-review-receipt   # AC-21 fixtures
+      - templates/company/config/reviewer-pins.json.template
+      - scripts/tests/test_external_review.py
+      - hooks.json                                       # PreToolUse / PostToolUse Bash wiring
+    kind: appears_in
+    note: >-
+      The ledger re-parses the transcript's Bash command with the same parser
+      the hooks use (external_review.parse_call), so a change to the allowlist
+      or the raw-text deny list changes both what is written and what counts.
   - id: unsourced-absence-gate
     concept: "an absence claim (no origin / not recognized / never contracted) never ships outward without a seek receipt in the same turn"
     appears_in:
@@ -572,6 +617,26 @@ edges:
       the same commit: a fixture that does not mirror the real shape of the
       artifact proves nothing. Edge added 2026-08-18 when the blind spot was
       found and closed.
+
+  - id: no-menu-question-gate
+    concept: "no-menu-question / a reply never closes on a choice question the agent could decide with /choice"
+    appears_in:
+      - CLAUDE.md                                       # anchor "No menu questions"
+      - commands/choice.md                              # the method that replaces the menu
+      - scripts/g__stop__no-menu-question.py            # the Stop gate (the mechanism)
+      - registry/no-menu-question.yaml                  # openers + irreducible operator steps (config-first)
+      - registry/rules.yaml                             # COMMS.no-menu-question
+      - registry/fixtures/COMMS.no-menu-question        # the liveness proof (violation/benign twins)
+      - hooks.json                                      # the Stop wiring
+      - docs/architecture/v7-nothing-ships-unverified.md # full text under "The draft gates in full"
+      - skills/ask-with-recommendation/SKILL.md         # the one remaining question still carries its recommendation
+    kind: appears_in
+    note: >-
+      The gate reads the SHAPE of the closing sentence (a trailing question
+      with alternatives or a go-ahead opener), so it is coupled to the config
+      lists: add an opener or an irreducible step in the YAML and add the
+      fixture twin in the same commit, or the selftest proves nothing about
+      the new entry. Edge added 2026-10-15 with the operator directive.
 
   - id: wa-guardia-gate
     concept: "guardia armada al cerrar un turno esperando respuesta de un tercero"
@@ -671,3 +736,31 @@ edges:
       the schema doc says nothing consumes it. Integrity, not interpretation:
       the value is protected and unread, and what makes a wrong one matter is
       the public claim it makes, not a code path that would break.
+
+  - id: friction-baseline-generated
+    from: scripts/replay_harness.py
+    to:
+      - registry/friction-baseline.json
+    kind: generated_by
+    note: >-
+      The baseline is written by `replay_harness.py baseline` (and refreshed by
+      `label`); never hand-edit it. A harness change that alters what the
+      baseline records (a new gate stat, a fidelity rule) means regenerate.
+
+  - id: friction-baseline-facts
+    from: registry/friction-baseline.json
+    to:
+      - content/canon.facts.yaml
+      - README.md
+      - FAQ.md
+      - docs/ANATOMY.md
+      - ROADMAP.md
+      - scripts/octo.py
+      - docs/architecture/v10-friction.md
+      - docs/specs/202610061605-v10-low-friction-easy-entry/plan.md
+    kind: appears_in
+    note: >-
+      The goal-anchor figures (v10.goal_anchor.* in canon.facts.yaml, rendered
+      into FAQ, ANATOMY and ROADMAP by scripts/canon-render.py) and the table in
+      v10-friction.md are read from this file. A new baseline means refreshing
+      the canon keys, re-rendering, and updating the friction doc's table.

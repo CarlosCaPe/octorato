@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "CI is green and QA passed. Good to merge.\n\nProvenance: Basis: scripts/g__stop__defer-today.py · Engine: build · Touched: none · Verified: selftest"}]}}

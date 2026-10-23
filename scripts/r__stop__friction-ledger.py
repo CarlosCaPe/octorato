@@ -24,6 +24,13 @@ import json
 import os
 import sys
 
+# Hook payloads are UTF-8 JSON; the Windows default (cp1252) mangles any
+# non-ASCII character before it is read.
+try:
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
+
 # A session that predates the ledger is caught up in chunks, one per Stop, so
 # no single Stop pays for the whole history. Measured 2026-10-06 on a 76 MB
 # session with its subagent transcripts, subprocess wall incl. interpreter,

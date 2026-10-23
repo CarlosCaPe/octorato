@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "env -C /tmp gh pr merge 287 --squash"}, "cwd": "/nonexistent/repo"}

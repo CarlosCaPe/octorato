@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-close-residual",
+  "transcript_path": "benign_four_word_goal_after_close_residual_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

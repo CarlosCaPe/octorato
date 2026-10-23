@@ -1,0 +1,27 @@
+{
+  "_comment": "An arm.json that is not JSON between the cwd and the allow arm root reads as deny.",
+  "_setup": {
+    "expect_reason": "Export_Policy of the arm.json at"
+  },
+  "arms_paths": {
+    "open": "arms/open"
+  },
+  "files": {
+    "arms/open/arm.json": {
+      "kind": "arm",
+      "name": "open",
+      "telemetry": {
+        "export": "allow"
+      }
+    },
+    "arms/open/mid/arm.json": "{\"telemetry\": {\"export\": \"allow\""
+  },
+  "dirs": [
+    "arms/open/mid/src"
+  ],
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/open/mid/src"
+  }
+}

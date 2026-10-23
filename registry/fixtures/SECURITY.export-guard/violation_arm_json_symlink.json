@@ -1,0 +1,34 @@
+{
+  "arms_paths": {
+    "closed": "arms/closed"
+  },
+  "files": {
+    "donor/arm.json": {
+      "kind": "arm",
+      "name": "donor",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    }
+  },
+  "dirs": [
+    "arms/closed"
+  ],
+  "symlinks": [
+    [
+      "arms/closed/arm.json",
+      "donor/arm.json"
+    ]
+  ],
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/closed"
+  },
+  "_comment": "A deny arm whose arm.json is a symlink to an allow arm's file: O_NOFOLLOW refuses it.",
+  "_setup": {
+    "expect_reason": "Export_Policy of the arm"
+  }
+}

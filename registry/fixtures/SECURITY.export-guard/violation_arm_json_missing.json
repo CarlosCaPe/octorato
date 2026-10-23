@@ -1,0 +1,17 @@
+{
+  "arms_paths": {
+    "a": "arms/a"
+  },
+  "dirs": [
+    "arms/a"
+  ],
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/a"
+  },
+  "_comment": "An arm root with no arm.json reads as deny.",
+  "_setup": {
+    "expect_reason": "Export_Policy of the arm"
+  }
+}

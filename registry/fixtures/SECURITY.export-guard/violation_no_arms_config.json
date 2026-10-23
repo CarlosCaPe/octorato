@@ -1,0 +1,22 @@
+{
+  "files": {
+    "arms/open/arm.json": {
+      "kind": "arm",
+      "name": "open",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    }
+  },
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/open"
+  },
+  "_comment": "No arms-paths.json: no arm is registered.",
+  "_setup": {
+    "expect_reason": "no arm registered"
+  }
+}

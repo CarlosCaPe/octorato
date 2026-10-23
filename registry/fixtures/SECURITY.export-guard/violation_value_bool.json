@@ -1,0 +1,25 @@
+{
+  "arms_paths": {
+    "a": "arms/a"
+  },
+  "files": {
+    "arms/a/arm.json": {
+      "kind": "arm",
+      "name": "a",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": true
+      }
+    }
+  },
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/a"
+  },
+  "_comment": "true is not the string allow.",
+  "_setup": {
+    "expect_reason": "Export_Policy of the arm"
+  }
+}

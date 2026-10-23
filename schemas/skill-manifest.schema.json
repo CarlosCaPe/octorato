@@ -6,11 +6,19 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["name", "version", "license"],
+  "$comment": "telemetry is an arm field: when kind is not arm (a skill, or no kind, which means skill), telemetry is refused by the else branch.",
+  "if": {
+    "properties": { "kind": { "const": "arm" } },
+    "required": ["kind"]
+  },
+  "else": {
+    "properties": { "telemetry": false }
+  },
   "properties": {
     "kind": {
-      "description": "What this manifest describes. 'skill' is signed, vendored under skills/vendor/<name> and symlinked into the discovery path. 'arm' is a client repo: validated and registered, never signed (an arm is the operator's own repo, so a signature would be the operator signing to himself). Absent means skill.",
+      "description": "What this manifest describes. 'skill' is signed, vendored under skills/vendor/<name> and symlinked into the discovery path. 'arm' is a client repo: validated and registered, never signed (an arm is the operator's own repo, so a signature would be the operator signing to himself). 'plugin' (v11 AC-13) is a signed Claude Code plugin installed under plugins/octorato-local/<name> whose every hook command runs through scripts/g__wrap__export-guard.py; installed disabled, by the operator, from a terminal outside any session. Absent means skill.",
       "type": "string",
-      "enum": ["skill", "arm"]
+      "enum": ["skill", "arm", "plugin"]
     },
     "tree_sha256": {
       "description": "sha256 over every file in the package except this manifest and its detached signature, feeding '<posix relpath>\\u0000<sha256 of the bytes>\\u0000' per file in sorted path order. Computed and checked by scripts/octo_pkg.py. Required for an installable skill package; absent on an in-repo manifest, whose tree changes on every edit.",
@@ -37,6 +45,18 @@
           "description": "Relative path of the detached signature. Always skill.json.sig.",
           "type": "string",
           "const": "skill.json.sig"
+        }
+      }
+    },
+    "telemetry": {
+      "description": "Arm only: what this arm allows to leave it as telemetry. Absent, or present without `export`, means the same as `export: deny`.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "export": {
+          "description": "Export_Policy of the arm (v11 tracing spec, AC-09 and AC-16). `deny` (the template default): no trace of a session in this arm is started for a third-party trace service; scripts/g__wrap__export-guard.py never spawns the upstream tracing hook. `allow`: the upstream tracing hook runs for sessions in this arm, with its redaction on. Exactly these two strings; any other value is read by the guard as deny. Only the operator flips it to allow: scripts/g__pretool__export-flip.py denies an agent write that does.",
+          "type": "string",
+          "enum": ["deny", "allow"]
         }
       }
     },

@@ -1,0 +1,21 @@
+{
+  "harness": "codex-cli",
+  "gate": "g__pretool__arming-surface.py",
+  "payload": {
+    "session_id": "sess-shim",
+    "transcript_path": null,
+    "cwd": "{{SANDBOX}}/wt/shim",
+    "hook_event_name": "PreToolUse",
+    "model": "fixture",
+    "permission_mode": "default",
+    "turn_id": "fixture",
+    "tool_use_id": "toolu_shim",
+    "tool_name": "apply_patch",
+    "tool_input": {
+      "command": "diff --git a/x b/x\n"
+    }
+  },
+  "_setup": {
+    "expect_reason": "Begin/End Patch"
+  }
+}

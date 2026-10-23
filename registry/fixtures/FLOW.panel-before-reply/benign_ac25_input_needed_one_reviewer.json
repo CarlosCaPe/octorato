@@ -1,0 +1,16 @@
+{
+  "session_id": "fx-rp-benign-ac25-input-needed-one-reviewer",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "The rollback needs one value that is not in the migration log or the runbook.\n\ninput-needed: What is the name of the standby database host?",
+  "transcript_path": "benign_ac25_input_needed_one_reviewer_transcript.jsonl",
+  "_fixture": {
+    "receipts": [
+      {
+        "verdict": "PASS",
+        "ts": "2026-10-14T10:04:00.000Z"
+      }
+    ]
+  }
+}

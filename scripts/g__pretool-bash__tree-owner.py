@@ -89,6 +89,13 @@ import os
 import re
 import sys
 
+# Hook payloads are UTF-8 JSON; the Windows default (cp1252) mangles any
+# non-ASCII character before it is read.
+try:
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import kernel_proc  # noqa: E402  (stdlib-only, hot-path budgeted)

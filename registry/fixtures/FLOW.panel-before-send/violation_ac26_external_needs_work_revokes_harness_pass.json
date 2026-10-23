@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-p-violation-ac26-external-needs-work-revokes-harness-pass",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "someone@example.test"
+    ],
+    "subject": "Monthly report",
+    "body": "Hi, the report is attached and the numbers match the invoice."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_ac26_external_needs_work_revokes_harness_pass_transcript.jsonl"
+}

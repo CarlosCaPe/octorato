@@ -329,7 +329,7 @@ v8.0.0 (2026-09-17) adds the kernel, four primitives that close those gaps:
 | **Quota** | Each run carries a ceiling on tool calls and minutes. The defaults are unlimited; the operator's caps live in a private config. A call over the cap is refused and still journaled. | `registry/kernel.yaml`, `company/config/kernel.json` |
 | **Package** | A skill installed from outside is a signed package, not a copied folder: manifest, tree hash and signature are checked in a staging area before anything lands. | `scripts/octo_pkg.py`, `packages.lock.json` |
 
-What the kernel does **not** do, stated plainly: it cannot kill, suspend or signal a process (the host harness owns the loop), and it does not schedule. It observes, records and refuses. The full contract, with every limit and its reproduction, is [`docs/architecture/v8-kernel.md`](../architecture/v8-kernel.md); the operator's commands (`octo ps`, `octo top`, `octo journal`, `octo bench`) are on [[Getting-Started]].
+What the kernel does **not** do, stated plainly: it cannot kill, suspend or signal a process (the host harness owns the loop), and it does not schedule. It observes, records and refuses. The full contract, with every limit and its reproduction, is [`docs/architecture/v8-kernel.md`](../architecture/v8-kernel.md); the operator's commands (`octo ps`, `octo top`, `octo journal`, `octo bench`, and since v10 `octo dash` and `octo friction`) are on [[Getting-Started]].
 
 ---
 
