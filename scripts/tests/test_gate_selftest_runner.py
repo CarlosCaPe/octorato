@@ -484,5 +484,41 @@ class UserSite(_Base):
         self.assertEqual(got["fork"], got["spawn"])
 
 
+class ReplacedRun(_Base):
+    """runtime_census replaces subprocess.run to route every leg through the
+    hook shim. A forked leg would bypass the replacement and the census would
+    read a gate that never ran through the shim as a pass."""
+
+    def test_a_replaced_subprocess_run_sees_every_leg(self):
+        script = self.gate("import sys\nsys.exit(0)\n")
+        legs = [self.leg(script) for _ in range(3)]
+        real = subprocess.run
+        seen = []
+
+        def router(args, *a, **kw):
+            seen.append(list(args))
+            return subprocess.CompletedProcess(args, 2, DENY, "")
+
+        forks = []
+        real_fork = os.fork if hasattr(os, "fork") else None
+
+        def no_fork():
+            forks.append(1)
+            raise AssertionError("a leg was forked while subprocess.run was replaced")
+
+        subprocess.run = router
+        if real_fork is not None:
+            os.fork = no_fork
+        try:
+            got = gate_selftest.run_scripts(legs, workers=2)
+        finally:
+            subprocess.run = real
+            if real_fork is not None:
+                os.fork = real_fork
+        self.assertEqual(forks, [])
+        self.assertEqual(seen, [[sys.executable, script]] * 3)
+        self.assertEqual([(r.returncode, r.stdout) for r in got], [(2, DENY)] * 3)
+
+
 if __name__ == "__main__":
     unittest.main()

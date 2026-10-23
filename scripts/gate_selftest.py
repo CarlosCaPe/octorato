@@ -124,6 +124,11 @@ def emits_block(returncode: int, stdout: str) -> bool:
 # frameworks load) the leg is the old `subprocess.run`, unchanged.
 # ---------------------------------------------------------------------------
 _FORK_OK = sys.platform.startswith("linux") and hasattr(os, "fork")
+# The subprocess.run this module was imported with. A caller that replaces
+# subprocess.run (runtime_census routes every leg through the hook shim that
+# way) is asking to see each leg, and a forked leg never reaches it. So while
+# subprocess.run is not this one, every leg is spawned through the replacement.
+_REAL_RUN = subprocess.run
 _CODE_CACHE: dict = {}
 # Env names that change how a fresh interpreter starts. A leg that sets one of
 # these differently from this process is spawned, not forked. PYTHONUSERBASE
@@ -536,7 +541,9 @@ def run_scripts(legs: list, workers: int = 1) -> list:
     subprocess.TimeoutExpired, as subprocess.run does."""
     # Asked here, in the parent, so every fork inherits the answer instead of
     # each child spawning its own probe interpreter.
-    if not _FORK_OK or not _starts_like_fresh():
+    # The replacement check comes before the probe: the probe itself calls
+    # subprocess.run, and a router that stands in for it would see the probe.
+    if not _FORK_OK or subprocess.run is not _REAL_RUN or not _starts_like_fresh():
         return [_spawn(leg) for leg in legs]
 
     import io
