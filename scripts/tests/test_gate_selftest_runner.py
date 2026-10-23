@@ -519,6 +519,42 @@ class ReplacedRun(_Base):
         self.assertEqual(seen, [[sys.executable, script]] * 3)
         self.assertEqual([(r.returncode, r.stdout) for r in got], [(2, DENY)] * 3)
 
+    def test_a_functools_wraps_router_sees_every_leg(self):
+        # functools.wraps copies __module__ == "subprocess" and
+        # __qualname__ == "run" onto the router. Read off names alone it is
+        # the real run, and every leg forks past the shim.
+        import functools
+        script = self.gate("import sys\nsys.exit(0)\n")
+        legs = [self.leg(script) for _ in range(3)]
+        real = subprocess.run
+        seen, forks = [], []
+
+        @functools.wraps(real)
+        def router(args, *a, **kw):
+            seen.append(list(args))
+            return subprocess.CompletedProcess(args, 2, DENY, "")
+
+        self.assertEqual((router.__module__, router.__qualname__),
+                         ("subprocess", "run"))
+        real_fork = os.fork if hasattr(os, "fork") else None
+
+        def no_fork():
+            forks.append(1)
+            raise AssertionError("a leg was forked while subprocess.run was replaced")
+
+        subprocess.run = router
+        if real_fork is not None:
+            os.fork = no_fork
+        try:
+            got = gate_selftest.run_scripts(legs, workers=2)
+        finally:
+            subprocess.run = real
+            if real_fork is not None:
+                os.fork = real_fork
+        self.assertEqual(forks, [])
+        self.assertEqual(seen, [[sys.executable, script]] * 3)
+        self.assertEqual([(r.returncode, r.stdout) for r in got], [(2, DENY)] * 3)
+
     def test_a_run_replaced_before_the_first_import_sees_every_leg(self):
         # runtime_census swaps subprocess.run and only then runs the gate's
         # selftest, which is what first imports gate_selftest. Whatever the

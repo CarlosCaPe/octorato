@@ -139,10 +139,28 @@ def _run_replaced() -> bool:
     never reaches it. The answer is read from the object itself, not from an
     identity captured at import: runtime_census swaps subprocess.run BEFORE a
     gate's selftest first imports this module, so an import-time capture would
-    hold the replacement and call it real."""
+    hold the replacement and call it real.
+
+    Names are not enough: functools.wraps(subprocess.run) copies __module__,
+    __qualname__ and __name__ onto a router, which would then read as real and
+    every leg would fork past the shim (fail-open). What wraps cannot copy is
+    the function's code and globals. The real run is a plain function whose
+    __globals__ IS the subprocess module's namespace (set when `def run` ran
+    inside subprocess.py, and not copyable by wraps) and whose code object is
+    named `run`. A router defined anywhere else carries its own module's
+    globals. Anything that also carries __wrapped__ is a wrapper by
+    declaration. The code's file name is deliberately not compared: a distro
+    that byte-compiles the stdlib under a build prefix records another path,
+    and every leg would spawn for nothing. Any doubt (not a plain function, a
+    builtin, a partial, a callable object) reads as replaced, so the runner
+    falls back to subprocess.run and the router sees the leg."""
+    import types
     r = subprocess.run
-    return not (getattr(r, "__module__", None) == "subprocess"
-                and getattr(r, "__qualname__", None) == "run")
+    if getattr(r, "__wrapped__", None) is not None:
+        return True
+    if type(r) is not types.FunctionType:
+        return True
+    return not (r.__globals__ is vars(subprocess) and r.__code__.co_name == "run")
 
 
 class LegResult:
