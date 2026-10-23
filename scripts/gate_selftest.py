@@ -352,7 +352,15 @@ def _fork_child(script: str, code, leg: dict, fds: tuple, close: list,
     SIGKILLed mid-leg, no deadline will ever fire, so the kernel's parent-death
     signal does the runner's last kill instead. See _arm_parent_death."""
     try:
+        import gc
         import signal
+        # The fork keeps the runner's heap, and a runner file object that is
+        # already garbage (in a cycle, waiting for the collector) still owns
+        # its fd number. That number is closed below and then reused by a file
+        # the supervisor or the gate opens; collected later, the object's
+        # dealloc would close THAT file. Freezing moves every inherited object
+        # out of the collector's reach, here and in the gate this process forks.
+        gc.freeze()
         fin, fout, ferr = fds
         os.dup2(fin, 0)
         os.dup2(fout, 1)

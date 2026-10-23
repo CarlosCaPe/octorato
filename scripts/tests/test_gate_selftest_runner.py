@@ -515,6 +515,56 @@ class InheritedFds(_Base):
 
 
 @unittest.skipUnless(FORKS, "legs are spawned here, not forked")
+class InheritedHeap(_Base):
+    """A forked gate keeps the runner's Python heap. A runner file object that
+    is already garbage (in a reference cycle, waiting for the collector) still
+    believes it owns its fd number, which the leg closed and the gate may have
+    reused. Collected inside the gate, its dealloc would close the GATE's file,
+    and the gate's crash (exit 1) reads as a block."""
+
+    RUNNER = textwrap.dedent("""
+        import gc, json, os, sys
+        sys.path.insert(0, sys.argv[1])
+        import gate_selftest as gs
+        if not gs._starts_like_fresh():
+            print(json.dumps("nofork"))
+            sys.exit(0)
+        gc.disable()            # keep the cycle uncollected until the leg runs
+        held = open(os.devnull)
+        cycle = [held]
+        cycle.append(cycle)
+        del held, cycle
+        r = gs.run_scripts([{"script": sys.argv[2], "input": "{}",
+                             "cwd": sys.argv[3], "env": dict(os.environ),
+                             "timeout": 30}])[0]
+        print(json.dumps([r.returncode, r.stdout, r.stderr]))
+        """)
+
+    def test_a_runner_cycle_collected_in_the_gate_closes_nothing_of_the_gates(self):
+        script = self.gate(f"""
+            import gc, os
+            mine = [open({os.path.join(self.tmp, "g")!r} + str(i), "w") for i in range(16)]
+            gc.collect()
+            lost = []
+            for fh in mine:
+                try:
+                    os.fstat(fh.fileno())
+                except OSError:
+                    lost.append(fh.fileno())
+            print("lost %r" % lost if lost else "ok", end="")
+            """)
+        runner = os.path.join(self.tmp, "runner.py")
+        with open(runner, "w", encoding="utf-8") as fh:
+            fh.write(self.RUNNER)
+        cp = subprocess.run([sys.executable, runner, str(SCRIPTS), script, self.tmp],
+                            capture_output=True, text=True, timeout=60)
+        got = json.loads(cp.stdout)
+        if got == "nofork":
+            self.skipTest("the runner subprocess spawns its legs")
+        self.assertEqual(got[:2], [0, "ok"], got[2])
+
+
+@unittest.skipUnless(FORKS, "legs are spawned here, not forked")
 class RunnerDeath(_Base):
     """A SIGKILLed runner never reaches its deadline kill. Its supervisor, the
     gate and the gate's in-group children must still die with it."""
