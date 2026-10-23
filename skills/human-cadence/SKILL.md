@@ -5,6 +5,7 @@ metadata:
   short-description: "10 anti-AI-tell no-rules for human-sounding, token-lean output"
   type: reference
   source: "https://www.tiktok.com/@soyfelixgo/video/7642065153533496598 (caption = the humanizer prompt)"
+  provenance: "The Independent convergence note quotes short excerpts from https://github.com/xai-org/grok-prompts, licensed AGPL-3.0 (read at commit a7c186f5). The skill's prose is original and covered by this repo's MIT license; the quoted excerpts are not, and they are marked inline."
 ---
 
 # Human Cadence: The 10 No-Rules
@@ -94,3 +95,18 @@ Rules 4/7/8/10 (triads, rhythm, bullets-in-prose, voice) stay with the model: re
 - `voice-and-cadence-consistency`: keeps voice uniform across a long *technical* doc; different concept (consistency, not de-AI-ing).
 - CLAUDE.md §Communication: the always-on summary that points here.
 - 4D Disclose: these rules fire at the delivery boundary, every output.
+
+**Independent convergence (2026-09-03).** xAI ships the same technique in the
+production prompt for the `@grok` bot on X: rather than describing a tone, it
+enumerates banned strings. "The response must not be pejorative nor use snarky
+one-liners to justify a viewpoint, such as 'Facts over feelings' ... must not use
+phrases that preach or advocate for a specific emotional stance, such as
+'prioritize empathy' or 'Let's discuss thoughtfully'." Plus hard output locks:
+under 550 characters, no markdown, match the poster's regional dialect and
+alphabet. Two things worth taking from it: a frontier lab reached for a
+phrase-level blocklist rather than an adjective, which is the bet rule 2 already
+makes; and the banned phrases are paired with hard limits, so tone and shape are
+enforced together. See `ask_grok_system_prompt.j2` in
+[xai-org/grok-prompts](https://github.com/xai-org/grok-prompts).
+
+Excerpt (c) xAI, AGPL-3.0, quoted for analysis; not covered by this file's MIT license.
