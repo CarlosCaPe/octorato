@@ -5,6 +5,7 @@ metadata:
   short-description: "10 anti-AI-tell no-rules for human-sounding, token-lean output"
   type: reference
   source: "https://www.tiktok.com/@soyfelixgo/video/7642065153533496598 (caption = the humanizer prompt)"
+  provenance: "The Independent convergence note quotes short excerpts from https://github.com/xai-org/grok-prompts, licensed AGPL-3.0 (read at commit a7c186f5). The skill's prose is original and covered by this repo's MIT license; the quoted excerpts are not, and they are marked inline."
 ---
 
 # Human Cadence: The 10 No-Rules
@@ -107,3 +108,5 @@ phrase-level blocklist rather than an adjective, which is the bet rule 2 already
 makes; and the banned phrases are paired with hard limits, so tone and shape are
 enforced together. See `ask_grok_system_prompt.j2` in
 [xai-org/grok-prompts](https://github.com/xai-org/grok-prompts).
+
+Excerpt (c) xAI, AGPL-3.0, quoted for analysis; not covered by this file's MIT license.
