@@ -716,7 +716,8 @@ def _remote_slugs(repo_root: Path) -> set:
 # among them, through the per-wrapper spec (`_wrapper_specs`, `_peel_wrapper`).
 # SECURITY: without the peel, `env A=1 gh pr merge`, `command gh pr merge` or
 # `timeout 300 gh pr merge` evade the ^gh/^git anchor and bypass the approval
-# gate. The last one was not hypothetical: it merged PR #307 on 2026-09-15.
+# gate. The last one was not hypothetical: it merged #307 on 2026-09-15 under
+# the previous gate.
 # Iterative so the wrappers may interleave (`env A=1 sudo nohup timeout 300 ...`).
 # The real approval channels stay the agent-proof env/file, never an inline token.
 _W_GROUP = re.compile(r"^[({]\s*")
@@ -820,6 +821,7 @@ def _wrapper_specs() -> dict:
 
 
 _ENV_ASSIGN_TOKEN = re.compile(r"^[A-Za-z_]\w*=")
+_SHORT_CLUSTER = re.compile(r"^-[A-Za-z0-9]+$")
 _WRAPPER_HEAD = re.compile(r"^([^\s;&|]+)(\s+)")
 # A token is a run of quoted segments and unquoted non-space characters, so
 # `-u "car los"` is TWO tokens and not four. `\S+` split it at the space and
@@ -858,6 +860,20 @@ def _peel_wrapper(s: str):
                 nxt = _WRAPPER_TOKEN.match(rest)
                 if nxt:
                     rest = rest[nxt.end():]
+            elif _SHORT_CLUSTER.match(word):
+                # A short cluster is read the way getopt reads it: the first
+                # value-taking letter takes the rest of the word, or the next
+                # word when it is the last letter. `env -iu X cmd` and
+                # `sudo -nu root cmd` end on `-u`, so `X`/`root` is its value,
+                # not the command; matching the whole word only (`-iu`) made
+                # the value the command and lost the publish verb behind it.
+                for k in range(1, len(word)):
+                    if "-" + word[k] in takes_value:
+                        if k == len(word) - 1:
+                            nxt = _WRAPPER_TOKEN.match(rest)
+                            if nxt:
+                                rest = rest[nxt.end():]
+                        break
             continue
         if _ENV_ASSIGN_TOKEN.match(word):
             rest = rest[tok.end():]          # `env A=1 B=2 cmd`

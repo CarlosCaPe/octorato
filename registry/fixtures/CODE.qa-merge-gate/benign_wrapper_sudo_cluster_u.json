@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "sudo -nu root apt update"}, "cwd": "/nonexistent/repo"}
