@@ -507,6 +507,8 @@ def pull(args) -> int:
                 warn("⚠ Changes available — run 'ai-pull'")
                 print(git("--no-pager", "log", "--oneline", "HEAD..@{u}")[1])
             return 0
+        if not _guard_live_root("ai-pull"):
+            return 1
         _, pre, _ = git("rev-parse", "HEAD")
         print("=== Pulling ~/.claude/ ===")
         code, out, e = git("pull")
@@ -749,6 +751,41 @@ def es_tronco(rama: str) -> bool:
     return rama in TRONCOS
 
 
+def live_root_off_trunk(rama: str, linked_worktree: bool) -> bool:
+    """True when the MAIN checkout sits on a branch that is not the trunk.
+
+    The main checkout is the live brain the harness loads; dimension worktrees are
+    where branches live. A live root parked on a feature branch that tracks the
+    trunk rebases onto the trunk on every pull and then pushes to its own remote
+    branch, which is non-fast-forward after each rebase: a sync that can never land.
+    """
+    return not linked_worktree and not es_tronco(rama)
+
+
+def _is_linked_worktree() -> bool:
+    """A linked worktree's `.git` is a file; the main checkout's is a directory.
+
+    Read from the filesystem rather than `rev-parse --path-format`, which git
+    older than 2.31 echoes back as output instead of rejecting.
+    """
+    return (Path(_this_tree()) / ".git").is_file()
+
+
+def _guard_live_root(verb: str) -> bool:
+    """Refuse to sync a live root that is off the trunk. True = go ahead."""
+    _, rama, _ = git("rev-parse", "--abbrev-ref", "HEAD", quiet=True)
+    if not live_root_off_trunk(rama, _is_linked_worktree()):
+        return True
+    trunk = tronco_remoto()
+    where = "a detached HEAD" if rama == "HEAD" else f"branch '{rama}'"
+    err(f"✗ {verb} aborted: the live brain {_this_tree()} is on {where}, "
+        f"not on '{trunk}'.")
+    err("   Branch work belongs in a dimension worktree; the live root follows the trunk.")
+    err("   Its switch is the operator's terminal step (the arming-surface gate denies it here):")
+    err(f"     cd {_this_tree()} && git switch {trunk} && git merge --ff-only origin/{trunk}")
+    return False
+
+
 def _is_repo() -> bool:
     """Hay repo aqui, sea checkout principal o worktree enlazado.
 
@@ -845,6 +882,9 @@ def hooks_drift_ok(verb: str) -> bool:
 
 
 def push(args) -> int:
+    if not _guard_live_root("ai-push"):
+        return 1
+
     # Co-tenancy guard: never commit in a tree another session shares. ai-push stages
     # whole BRAIN_PATHS dirs and then commits the entire index, so a second writer's
     # uncommitted work gets swallowed into the wrong commit (CLAUDE.md Core Principle
@@ -1068,6 +1108,9 @@ def cycle(args) -> int:
         err("✗ ~/.claude is not a git repo — cannot sync")
         return 1
 
+    if not _guard_live_root("ai-sync"):
+        return 1
+
     self_heal_origin()
     ensure_hooks_path()
 
@@ -1268,6 +1311,13 @@ def selftest() -> int:
         chk("una rama auto/ NO es tronco", not es_tronco("auto/fix-algo"))
         chk("un nombre que CONTIENE master no basta",
             not es_tronco("feature/master-cleanup"))
+
+        # ---- a live root parked on a feature branch can never sync.
+        chk("live root on master syncs", not live_root_off_trunk("master", False))
+        chk("live root on a feature branch is refused",
+            live_root_off_trunk("chore/t28-1012", False))
+        chk("a dimension worktree on its branch syncs",
+            not live_root_off_trunk("dim/3fdefe390adb", True))
     finally:
         globals()["SESSIONS_REGISTRY"] = original
 
