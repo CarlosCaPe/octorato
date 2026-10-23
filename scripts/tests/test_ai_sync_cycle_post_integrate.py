@@ -25,13 +25,15 @@ import ai_sync  # noqa: E402
 
 
 class CyclePostIntegrate(unittest.TestCase):
-    def _run_cycle(self, head_moves: bool, drift: bool = False):
+    def _run_cycle(self, head_moves: bool, drift: bool = False, branch: str = "master"):
         events = []
         heads = iter(["a" * 40, ("b" if head_moves else "a") * 40])
 
         def fake_git(*args, check=False, quiet=False):
             if args == ("rev-parse", "HEAD"):
                 return 0, next(heads), ""
+            if args == ("rev-parse", "--abbrev-ref", "HEAD"):
+                return 0, branch, ""
             if args[:1] == ("pull",):
                 events.append(("git", args))
                 return 0, "", ""
@@ -56,6 +58,7 @@ class CyclePostIntegrate(unittest.TestCase):
 
         ns = argparse.Namespace(message=[])
         with mock.patch.object(ai_sync, "_is_repo", return_value=True), \
+                mock.patch.object(ai_sync, "_is_linked_worktree", return_value=False), \
                 mock.patch.object(ai_sync, "git", side_effect=fake_git), \
                 mock.patch.object(ai_sync, "self_heal_origin"), \
                 mock.patch.object(ai_sync, "ensure_hooks_path"), \
@@ -76,6 +79,13 @@ class CyclePostIntegrate(unittest.TestCase):
             if pred(ev):
                 return i
         return -1
+
+    def test_live_root_off_trunk_is_refused_before_the_integrate(self):
+        # A main checkout parked on a feature branch rebases onto the trunk and
+        # then pushes to its own remote branch, which can never fast-forward.
+        rc, events = self._run_cycle(head_moves=True, branch="chore/stray")
+        self.assertEqual(rc, 1)
+        self.assertEqual(events, [])
 
     def test_moved_head_runs_merge_hooks_before_push(self):
         rc, events = self._run_cycle(head_moves=True)
