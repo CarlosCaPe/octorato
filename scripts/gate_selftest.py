@@ -111,7 +111,13 @@ def emits_block(returncode: int, stdout: str) -> bool:
 #     the group was empty, and nothing is signalled by an id that could have
 #     been recycled. Waiting for the group is stricter than subprocess.run,
 #     which would return while a grandchild that closed its pipes lingers. The
-#     one gate-visible difference is the gate's parent pid, the supervisor's;
+#     gate-visible differences are the gate's parent pid (the supervisor's) and
+#     its parent-death signal (SIGKILL, read only by PR_GET_PDEATHSIG);
+#   - no leg outlives the runner: a SIGKILLed runner never fires its deadline,
+#     so the kernel's parent-death signal kills the supervisor, which first
+#     kills the leg's group, and the gate dies with the supervisor;
+#   - the leg holds fds 0, 1, 2 and nothing else of the runner's, as a spawn
+#     with close_fds=True does;
 #   - a leg runs forked only while this interpreter starts like a fresh one:
 #     the same sys.flags (-O, -I, -s, -E, -X utf8, -X dev ...), warning options
 #     and -X options, read from the same one-time probe as the streams. If any
@@ -139,10 +145,35 @@ def _run_replaced() -> bool:
     never reaches it. The answer is read from the object itself, not from an
     identity captured at import: runtime_census swaps subprocess.run BEFORE a
     gate's selftest first imports this module, so an import-time capture would
-    hold the replacement and call it real."""
+    hold the replacement and call it real.
+
+    Names are not enough: functools.wraps(subprocess.run) copies __module__,
+    __qualname__ and __name__ onto a router, which would then read as real and
+    every leg would fork past the shim (fail-open). What wraps cannot copy is
+    the function's code and globals. The real run is a plain function whose
+    __globals__ IS the subprocess module's namespace (set when `def run` ran
+    inside subprocess.py, and not copyable by wraps) and whose code object is
+    named `run`. A router defined anywhere else carries its own module's
+    globals. Anything that also carries __wrapped__ is a wrapper by
+    declaration. The code's file name is deliberately not compared: a distro
+    that byte-compiles the stdlib under a build prefix records another path,
+    and every leg would spawn for nothing. Any doubt (not a plain function, a
+    builtin, a partial, a callable object) reads as replaced, so the runner
+    falls back to subprocess.run and the router sees the leg."""
+    import types
     r = subprocess.run
-    return not (getattr(r, "__module__", None) == "subprocess"
-                and getattr(r, "__qualname__", None) == "run")
+    if getattr(r, "__wrapped__", None) is not None:
+        return True
+    if type(r) is not types.FunctionType:
+        return True
+    return not (r.__globals__ is vars(subprocess) and r.__code__.co_name == "run")
+
+
+class LegRunnerError(RuntimeError):
+    """A forked leg whose gate never ran: its supervisor failed (EAGAIN on the
+    gate's fork, say) and exited 1 with no output. That is no verdict at all,
+    and a non-zero exit read as one would make an unblocking gate's violation
+    leg read as blocked, so it is raised, never returned as a LegResult."""
 
 
 class LegResult:
@@ -242,6 +273,7 @@ def _rebase_user_site(env: dict) -> None:
             pass
 
 
+_PR_SET_PDEATHSIG = 1
 _PR_SET_CHILD_SUBREAPER = 36
 _LIBC = None
 
@@ -255,6 +287,30 @@ def _libc():
         except Exception:
             _LIBC = False
     return _LIBC
+
+
+def _arm_parent_death(libc, sig: int, parent: int) -> bool:
+    """Ask the kernel to send `sig` to this process when its parent dies, then
+    close the race: if the parent died between fork() and the prctl, the
+    signal will never come, and getppid() already names someone else
+    (init or a subreaper). Returns False in that case, so the caller cleans up
+    and exits; a SIGKILL disposition exits here directly. Without ctypes or on
+    a prctl failure this is best effort (True), as the subreaper call is.
+
+    The death signal is tied to the THREAD that forked. run_scripts forks from
+    the thread that called it and does not return until every leg is reaped,
+    so that thread outlives every leg it started."""
+    if libc:
+        try:
+            libc.prctl(_PR_SET_PDEATHSIG, int(sig), 0, 0, 0)
+        except Exception:
+            return True
+    if os.getppid() != parent:
+        import signal
+        if int(sig) == int(signal.SIGKILL):
+            os._exit(1)
+        return False
+    return True
 
 
 def _live_in_group(group: int) -> bool:
@@ -288,7 +344,7 @@ def _live_in_group(group: int) -> bool:
 
 
 def _fork_child(script: str, code, leg: dict, fds: tuple, close: list,
-                info_w: int) -> None:
+                info_w: int, parent: int) -> None:
     """Runs in the forked child, the leg's supervisor, and never returns.
 
     The supervisor stays in THIS process's group, as a spawned gate's parent
@@ -297,8 +353,21 @@ def _fork_child(script: str, code, leg: dict, fds: tuple, close: list,
     the parent the gate's pid on `info_w`, and becomes a child subreaper so every
     orphaned descendant of the gate is adopted here. It never reaps the gate:
     the gate stays a zombie, which keeps its pid, and so the leg's group id,
-    from being recycled while this supervisor lives."""
+    from being recycled while this supervisor lives.
+
+    Neither it nor the gate outlives the runner (`parent`): if the runner is
+    SIGKILLed mid-leg, no deadline will ever fire, so the kernel's parent-death
+    signal does the runner's last kill instead. See _arm_parent_death."""
     try:
+        import gc
+        import signal
+        # The fork keeps the runner's heap, and a runner file object that is
+        # already garbage (in a cycle, waiting for the collector) still owns
+        # its fd number. That number is closed below and then reused by a file
+        # the supervisor or the gate opens; collected later, the object's
+        # dealloc would close THAT file. Freezing moves every inherited object
+        # out of the collector's reach, here and in the gate this process forks.
+        gc.freeze()
         fin, fout, ferr = fds
         os.dup2(fin, 0)
         os.dup2(fout, 1)
@@ -309,18 +378,63 @@ def _fork_child(script: str, code, leg: dict, fds: tuple, close: list,
                     os.close(fd)
                 except OSError:
                     pass
+        # A spawned leg runs with close_fds=True: it holds 0, 1, 2 and nothing
+        # else. The fork inherits every fd this process has open (a caller's
+        # log file, a socket, a lock, another tool's pipe), so close them all
+        # except info_w, which the supervisor still needs. closerange uses
+        # close_range(2) where the kernel has it, so a high fd limit is cheap.
+        # No fd can be opened at or above the soft RLIMIT_NOFILE, which is
+        # what SC_OPEN_MAX reports.
+        try:
+            top = max(256, os.sysconf("SC_OPEN_MAX"))
+        except (ValueError, OSError):
+            top = 65536
+        os.closerange(3, info_w)
+        os.closerange(info_w + 1, top)
         libc = _libc()
+        # Before the gate exists there is nothing to clean up: die with the
+        # runner outright.
+        _arm_parent_death(libc, signal.SIGKILL, parent)
         if libc:
             libc.prctl(_PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0)
+        sup = os.getpid()
         gate = os.fork()
         if gate == 0:
             os.close(info_w)
             os.setpgid(0, 0)
+            # The gate dies with the supervisor even if the supervisor itself
+            # is SIGKILLed and never runs its handler below.
+            _arm_parent_death(libc, signal.SIGKILL, sup)
             _gate_child(script, code, leg)
         try:
             os.setpgid(gate, gate)
         except OSError:
             pass  # the gate already did it, or already left
+
+        # Once the gate exists, the runner's death is caught, not suffered:
+        # SIGTERM from the kernel kills the leg's whole group (the gate pid is
+        # never reaped here, so that group id still names this leg), which
+        # also takes the gate's in-group descendants this subreaper adopted.
+        # The handler is installed after the gate's fork so the gate starts
+        # with the disposition it inherited, as a spawned gate would.
+        # The group kill goes through proc_group, the one guarded copy (loaded
+        # in the runner before this fork, so no import happens in a handler).
+        pg = _proc_group()
+
+        def _orphaned(_sig, _frame):
+            try:
+                pg.kill_group(_Leg(gate, False), group=gate)
+                _Leg(gate, False).kill()
+            finally:
+                os._exit(1)
+
+        signal.signal(signal.SIGTERM, _orphaned)
+        try:  # a mask inherited from the runner must not hold the signal back
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+        except (AttributeError, OSError, ValueError):
+            pass
+        if not _arm_parent_death(libc, signal.SIGTERM, parent):
+            _orphaned(None, None)
         os.write(info_w, str(gate).encode())
         os.close(info_w)
         # Only the gate and what it starts may hold the leg's pipes.
@@ -666,10 +780,11 @@ def run_scripts(legs: list, workers: int = 1) -> list:
                     close.extend(st["fds"])
                 info_r, info_w = os.pipe()
                 close.append(info_r)
+                me = os.getpid()
                 pid = os.fork()
                 if pid == 0:
                     _fork_child(script, code, leg, (fin.fileno(), out_w, err_w),
-                                close, info_w)
+                                close, info_w, me)
                 os.close(info_w)
                 os.close(out_w)
                 os.close(err_w)
@@ -681,6 +796,15 @@ def run_scripts(legs: list, workers: int = 1) -> list:
                     raw += chunk
                 os.close(info_r)
                 gate_pid = int(raw) if raw.strip().isdigit() else None
+            if gate_pid is None:
+                # The supervisor closed its end without naming a gate: it died
+                # before the gate could run, so nothing decided this leg.
+                os.close(out_r)
+                os.close(err_r)
+                _, status = os.waitpid(pid, 0)
+                raise LegRunnerError(
+                    "leg %s: the supervisor exited (status %d) before its gate "
+                    "ran" % (script, status))
             timeout = leg.get("timeout")
             running[pid] = {
                 "i": i, "gate": gate_pid, "exited": False,
@@ -806,7 +930,11 @@ def run_gate_selftest(script_path, fixture_dir) -> int:
         failures = []
         rule = _kernel_rule_of(script)
         for vf in violations:
-            rc, out = _run_leg(script, _prep_payload(vf, fdir, sandbox), sandbox)
+            try:
+                rc, out = _run_leg(script, _prep_payload(vf, fdir, sandbox), sandbox)
+            except LegRunnerError as exc:
+                failures.append(f"{vf.name} never reached the gate: {exc}")
+                continue
             if not emits_block(rc, out):
                 failures.append(f"{vf.name} did NOT block (rc={rc})")
         # v8 Phase 4: a gate that refuses must also RECORD the refusal. The
@@ -823,7 +951,11 @@ def run_gate_selftest(script_path, fixture_dir) -> int:
             elif rule not in journaled:
                 failures.append(f"journaled deny rule {journaled[0]!r} != {rule!r}")
         for bf in benigns:
-            rc, out = _run_leg(script, _prep_payload(bf, fdir, sandbox), sandbox)
+            try:
+                rc, out = _run_leg(script, _prep_payload(bf, fdir, sandbox), sandbox)
+            except LegRunnerError as exc:
+                failures.append(f"{bf.name} never reached the gate: {exc}")
+                continue
             if emits_block(rc, out):
                 failures.append(f"{bf.name} WAS blocked (must allow, rc={rc})")
     finally:

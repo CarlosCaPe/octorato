@@ -484,6 +484,220 @@ class UserSite(_Base):
         self.assertEqual(got["fork"], got["spawn"])
 
 
+@unittest.skipUnless(FORKS, "legs are spawned here, not forked")
+class InheritedFds(_Base):
+    """A spawned leg runs with close_fds=True. A forked one must not hold any
+    fd of the runner's either, or a gate could write to the caller's log, lock
+    or socket, and a pipe it holds would keep a reader waiting on EOF."""
+
+    def test_a_leg_does_not_see_the_parents_other_fds(self):
+        fd = os.open(os.path.join(self.tmp, "held"), os.O_RDWR | os.O_CREAT)
+        os.set_inheritable(fd, True)
+        r, w = os.pipe()
+        try:
+            script = self.gate(f"""
+                import os
+                seen = []
+                for fd in ({fd}, {r}, {w}):
+                    try:
+                        os.fstat(fd)
+                        seen.append(fd)
+                    except OSError:
+                        pass
+                print("held" if seen else "none", end="")
+                """)
+            got = self.both(script)
+        finally:
+            for x in (fd, r, w):
+                os.close(x)
+        self.assertEqual(got[1], (0, "none"))     # subprocess.run
+        self.assertEqual(got[0], got[1])          # the fork matches it
+
+
+@unittest.skipUnless(FORKS, "legs are spawned here, not forked")
+class InheritedHeap(_Base):
+    """A forked gate keeps the runner's Python heap. A runner file object that
+    is already garbage (in a reference cycle, waiting for the collector) still
+    believes it owns its fd number, which the leg closed and the gate may have
+    reused. Collected inside the gate, its dealloc would close the GATE's file,
+    and the gate's crash (exit 1) reads as a block."""
+
+    RUNNER = textwrap.dedent("""
+        import gc, json, os, sys
+        sys.path.insert(0, sys.argv[1])
+        import gate_selftest as gs
+        if not gs._starts_like_fresh():
+            print(json.dumps("nofork"))
+            sys.exit(0)
+        gc.disable()            # keep the cycle uncollected until the leg runs
+        held = open(os.devnull)
+        cycle = [held]
+        cycle.append(cycle)
+        del held, cycle
+        r = gs.run_scripts([{"script": sys.argv[2], "input": "{}",
+                             "cwd": sys.argv[3], "env": dict(os.environ),
+                             "timeout": 30}])[0]
+        print(json.dumps([r.returncode, r.stdout, r.stderr]))
+        """)
+
+    def test_a_runner_cycle_collected_in_the_gate_closes_nothing_of_the_gates(self):
+        script = self.gate(f"""
+            import gc, os
+            mine = [open({os.path.join(self.tmp, "g")!r} + str(i), "w") for i in range(16)]
+            gc.collect()
+            lost = []
+            for fh in mine:
+                try:
+                    os.fstat(fh.fileno())
+                except OSError:
+                    lost.append(fh.fileno())
+            print("lost %r" % lost if lost else "ok", end="")
+            """)
+        runner = os.path.join(self.tmp, "runner.py")
+        with open(runner, "w", encoding="utf-8") as fh:
+            fh.write(self.RUNNER)
+        cp = subprocess.run([sys.executable, runner, str(SCRIPTS), script, self.tmp],
+                            capture_output=True, text=True, timeout=60)
+        got = json.loads(cp.stdout)
+        if got == "nofork":
+            self.skipTest("the runner subprocess spawns its legs")
+        self.assertEqual(got[:2], [0, "ok"], got[2])
+
+
+class SupervisorFailure(_Base):
+    """The leg's supervisor exits 1, with no output, when it fails before the
+    gate runs (EAGAIN on the gate's fork, say). Read as a leg result that is a
+    non-zero exit, so a violation leg the gate never decided reads as blocked
+    and an allow-all gate passes its selftest."""
+
+    @unittest.skipUnless(FORKS, "legs are spawned here, not forked")
+    def test_an_allow_all_gate_fails_when_a_violation_legs_gate_never_ran(self):
+        import contextlib
+        import errno
+        import io
+        fdir = os.path.join(self.tmp, "fixtures")
+        os.mkdir(fdir)
+        for name in ("violation.json", "benign.json"):
+            with open(os.path.join(fdir, name), "w", encoding="utf-8") as fh:
+                json.dump({"tool_name": "Bash", "tool_input": {"command": name}}, fh)
+        script = self.gate("import sys\nsys.stdin.read()\nsys.exit(0)\n")
+        real_child = gate_selftest._fork_child
+
+        def failing_child(script_, code, leg, *a, **kw):
+            # Runs in the forked supervisor only, so the patch dies with it.
+            if "violation.json" in leg["input"]:
+                def no_fork():
+                    raise OSError(errno.EAGAIN, "Resource temporarily unavailable")
+                os.fork = no_fork
+            real_child(script_, code, leg, *a, **kw)
+
+        gate_selftest._fork_child = failing_child
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = gate_selftest.run_gate_selftest(script, fdir)
+        finally:
+            gate_selftest._fork_child = real_child
+        self.assertEqual(rc, 1, out.getvalue() + err.getvalue())
+        self.assertNotIn("selftest PASS", out.getvalue())
+        self.assertIn("violation.json", err.getvalue())
+
+    @unittest.skipUnless(FORKS, "legs are spawned here, not forked")
+    def test_run_scripts_raises_rather_than_returning_a_result(self):
+        import errno
+        script = self.gate("import sys\nsys.exit(0)\n")
+        real_child = gate_selftest._fork_child
+
+        def failing_child(*a, **kw):
+            def no_fork():
+                raise OSError(errno.EAGAIN, "Resource temporarily unavailable")
+            os.fork = no_fork
+            real_child(*a, **kw)
+
+        gate_selftest._fork_child = failing_child
+        try:
+            with self.assertRaises(gate_selftest.LegRunnerError):
+                gate_selftest.run_scripts([self.leg(script), self.leg(script)],
+                                          workers=2)
+        finally:
+            gate_selftest._fork_child = real_child
+
+
+@unittest.skipUnless(FORKS, "legs are spawned here, not forked")
+class RunnerDeath(_Base):
+    """A SIGKILLed runner never reaches its deadline kill. Its supervisor, the
+    gate and the gate's in-group children must still die with it."""
+
+    RUNNER = textwrap.dedent("""
+        import json, os, sys
+        sys.path.insert(0, sys.argv[1])
+        import gate_selftest as gs
+        if not gs._starts_like_fresh():
+            print("nofork", flush=True)
+            sys.exit(3)
+        gs.run_scripts([{"script": sys.argv[2], "input": "{}", "cwd": sys.argv[3],
+                         "env": dict(os.environ), "timeout": 120}])
+        """)
+
+    @staticmethod
+    def _alive(pid: int) -> bool:
+        try:
+            with open("/proc/%d/stat" % pid, "rb") as fh:
+                state = fh.read().rsplit(b")", 1)[1].split()[0]
+        except OSError:
+            return False
+        return state != b"Z"
+
+    def test_a_killed_runner_leaves_no_leg_process(self):
+        import signal
+        pids_file = os.path.join(self.tmp, "pids.json")
+        script = self.gate(f"""
+            import json, os, subprocess, sys, time
+            kid = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+            with open({pids_file!r} + ".tmp", "w") as fh:
+                json.dump({{"gate": os.getpid(), "sup": os.getppid(),
+                           "kid": kid.pid}}, fh)
+            os.rename({pids_file!r} + ".tmp", {pids_file!r})
+            time.sleep(120)
+            """)
+        runner = os.path.join(self.tmp, "runner.py")
+        with open(runner, "w", encoding="utf-8") as fh:
+            fh.write(self.RUNNER)
+        proc = subprocess.Popen([sys.executable, runner, str(SCRIPTS), script, self.tmp],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        pids = {}
+        try:
+            end = time.monotonic() + 20
+            while not os.path.exists(pids_file):
+                if proc.poll() is not None:
+                    self.fail("runner exited early: %r" % (proc.communicate(),))
+                if time.monotonic() > end:
+                    self.fail("the hung leg never started")
+                time.sleep(0.02)
+            with open(pids_file) as fh:
+                pids = json.load(fh)
+            for name, pid in pids.items():
+                self.assertTrue(self._alive(pid), name)
+            os.kill(proc.pid, signal.SIGKILL)
+            proc.wait(timeout=10)
+            end = time.monotonic() + 5
+            while time.monotonic() < end and any(map(self._alive, pids.values())):
+                time.sleep(0.02)
+            left = {n: p for n, p in pids.items() if self._alive(p)}
+            self.assertEqual(left, {}, "leg processes outlived the runner")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            for stream in (proc.stdout, proc.stderr):
+                stream.close()
+            for pid in pids.values():
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+
+
 class ReplacedRun(_Base):
     """runtime_census replaces subprocess.run to route every leg through the
     hook shim. A forked leg would bypass the replacement and the census would
@@ -500,6 +714,42 @@ class ReplacedRun(_Base):
             return subprocess.CompletedProcess(args, 2, DENY, "")
 
         forks = []
+        real_fork = os.fork if hasattr(os, "fork") else None
+
+        def no_fork():
+            forks.append(1)
+            raise AssertionError("a leg was forked while subprocess.run was replaced")
+
+        subprocess.run = router
+        if real_fork is not None:
+            os.fork = no_fork
+        try:
+            got = gate_selftest.run_scripts(legs, workers=2)
+        finally:
+            subprocess.run = real
+            if real_fork is not None:
+                os.fork = real_fork
+        self.assertEqual(forks, [])
+        self.assertEqual(seen, [[sys.executable, script]] * 3)
+        self.assertEqual([(r.returncode, r.stdout) for r in got], [(2, DENY)] * 3)
+
+    def test_a_functools_wraps_router_sees_every_leg(self):
+        # functools.wraps copies __module__ == "subprocess" and
+        # __qualname__ == "run" onto the router. Read off names alone it is
+        # the real run, and every leg forks past the shim.
+        import functools
+        script = self.gate("import sys\nsys.exit(0)\n")
+        legs = [self.leg(script) for _ in range(3)]
+        real = subprocess.run
+        seen, forks = [], []
+
+        @functools.wraps(real)
+        def router(args, *a, **kw):
+            seen.append(list(args))
+            return subprocess.CompletedProcess(args, 2, DENY, "")
+
+        self.assertEqual((router.__module__, router.__qualname__),
+                         ("subprocess", "run"))
         real_fork = os.fork if hasattr(os, "fork") else None
 
         def no_fork():
