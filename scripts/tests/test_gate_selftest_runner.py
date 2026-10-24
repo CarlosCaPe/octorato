@@ -623,6 +623,145 @@ class SupervisorFailure(_Base):
             gate_selftest._fork_child = real_child
 
 
+
+@unittest.skipUnless(FORKS, "legs are spawned here, not forked")
+class SupervisorDeathAfterTheGateStarted(_Base):
+    """The supervisor reports the gate's pid, then waits for the leg's group.
+    If it dies there (MemoryError, the OOM killer, a signal from outside), its
+    exit is non-zero whatever the gate did. Read as the leg's result, an
+    allow-all gate's violation leg would block and the selftest would pass with
+    no gate deciding anything. Only the supervisor's final status message is a
+    verdict; without it the leg is a LegRunnerError."""
+
+    def _fixtures(self) -> str:
+        fdir = os.path.join(self.tmp, "fixtures")
+        os.mkdir(fdir)
+        for name in ("violation.json", "benign.json"):
+            with open(os.path.join(fdir, name), "w", encoding="utf-8") as fh:
+                json.dump({"tool_name": "Bash", "tool_input": {"command": name}}, fh)
+        return fdir
+
+    def _selftest(self, die, only_violation=True):
+        """run_gate_selftest of an allow-all gate whose supervisors run `die()`
+        after the gate's pid was reported (inside the group wait). Returns
+        (rc, stdout, stderr)."""
+        import contextlib
+        import io
+        fdir = self._fixtures()
+        script = self.gate("import sys\nsys.stdin.read()\nsys.exit(0)\n")
+        real_child = gate_selftest._fork_child
+
+        def dying_child(script_, code, leg, *a, **kw):
+            # Runs in the forked supervisor only, so the patch dies with it.
+            if not only_violation or "violation.json" in leg["input"]:
+                def wait(_group):
+                    die()
+                    return False
+                gate_selftest._live_in_group = wait
+            real_child(script_, code, leg, *a, **kw)
+
+        gate_selftest._fork_child = dying_child
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = gate_selftest.run_gate_selftest(script, fdir)
+        finally:
+            gate_selftest._fork_child = real_child
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_a_sigkilled_supervisor_fails_an_allow_all_gates_selftest(self):
+        import signal
+        rc, out, err = self._selftest(lambda: os.kill(os.getpid(), signal.SIGKILL))
+        self.assertEqual(rc, 1, out + err)
+        self.assertNotIn("selftest PASS", out)
+        self.assertIn("violation.json never reached the gate", err)
+        self.assertIn("without reporting its gate's status", err)
+
+    def test_a_supervisor_that_exits_one_fails_an_allow_all_gates_selftest(self):
+        rc, out, err = self._selftest(lambda: os._exit(1))
+        self.assertEqual(rc, 1, out + err)
+        self.assertNotIn("selftest PASS", out)
+        self.assertIn("without reporting its gate's status", err)
+
+    def test_a_sigkill_from_outside_after_the_pid_is_a_runner_error(self):
+        # The test process itself kills the supervisor, once it is parked in
+        # the group wait (the gate's pid already reported).
+        import signal
+        script = self.gate("import sys\nsys.stdin.read()\nsys.exit(0)\n")
+        ready = os.path.join(self.tmp, "parked")
+        real_child = gate_selftest._fork_child
+
+        def parked_child(*a, **kw):
+            def wait(_group):
+                open(ready, "w").close()
+                time.sleep(30)
+                return False
+            gate_selftest._live_in_group = wait
+            real_child(*a, **kw)
+
+        import threading
+        sup = []
+        real_fork = os.fork
+
+        def recording_fork():
+            pid = real_fork()
+            if pid:
+                sup.append(pid)
+            return pid
+
+        def killer():
+            deadline = time.monotonic() + 20
+            while not os.path.exists(ready) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            os.kill(sup[0], signal.SIGKILL)
+
+        gate_selftest._fork_child = parked_child
+        os.fork = recording_fork
+        t = threading.Thread(target=killer)
+        t.start()
+        try:
+            with self.assertRaises(gate_selftest.LegRunnerError) as cm:
+                gate_selftest.run_scripts([self.leg(script)])
+        finally:
+            os.fork = real_fork
+            gate_selftest._fork_child = real_child
+            t.join()
+        self.assertIn("without reporting its gate's status", str(cm.exception))
+
+    def test_a_malformed_status_is_neither_a_block_nor_an_allow(self):
+        script = self.gate("import sys\nsys.exit(0)\n")
+        real_child = gate_selftest._fork_child
+        for bad in (b"", b"exit\n", b"exit 0", b"exit 0\nexit 0\n", b"exit 999\n",
+                    b"signal 0\n", b"block\n", b"exit -1\n"):
+            def bad_child(*a, _bad=bad, **kw):
+                gate_selftest._status_message = lambda _info: _bad
+                real_child(*a, **kw)
+            gate_selftest._fork_child = bad_child
+            try:
+                with self.assertRaises(gate_selftest.LegRunnerError, msg=bad):
+                    gate_selftest.run_scripts([self.leg(script)])
+            finally:
+                gate_selftest._fork_child = real_child
+
+    def test_a_normal_leg_still_reports_the_gates_status(self):
+        for body, want in (("import sys\nsys.exit(0)\n", 0),
+                           ("import sys\nsys.exit(2)\n", 2),
+                           ("import os, signal\nos.kill(os.getpid(), signal.SIGTERM)\n",
+                            -15)):
+            # A file per case: compiled code is cached by path.
+            path = os.path.join(self.tmp, "gate_%d.py" % (want & 0xFF))
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(body)
+            r = gate_selftest.run_scripts([self.leg(path)])[0]
+            self.assertEqual(r.returncode, want, body)
+
+    def test_a_timeout_is_still_timeout_expired(self):
+        script = self.gate("import time\ntime.sleep(30)\n")
+        t0 = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            gate_selftest.run_scripts([self.leg(script, timeout=0.5)])
+        self.assertLess(time.monotonic() - t0, 10)
+
 @unittest.skipUnless(FORKS, "legs are spawned here, not forked")
 class RunnerDeath(_Base):
     """A SIGKILLed runner never reaches its deadline kill. Its supervisor, the
