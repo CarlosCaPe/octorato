@@ -15,6 +15,40 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-23]: v11.8.1
+### Other
+- perf(selftest): fork gate selftest legs instead of spawning an interpreter each (#393)
+
+## [2026-10-23]: v11.8.0
+### Features
+- feat(skill): extend llm-system-prompt-engineering with template-composed prompts (#251)
+
+## [2026-10-23]: v11.7.0
+### Features
+- feat(commands): /next closes long sessions with a ready-to-paste /compact (#405)
+
+## [2026-10-23]: v11.6.3
+### Fixes
+- fix(silence-watcher): ignore calendar invitations in the mail sensor (#409)
+
+## [2026-10-23]: v11.6.2
+### Fixes
+- fix(scripts): give wa-latido explicit utf-8 for its JSON I/O (#305)
+
+## [2026-10-23]: v11.6.1
+### Fixes
+- fix(gate): a wrapper prefix is not a way past the merge gate (speed bump, not boundary) (#310)
+
+## [2026-10-23]: v11.6.0
+### Features
+- feat(commands): add /next-continue to work agent-owned pending items until none remain (#435)
+
+## [2026-10-23]: v11.5.1
+### Fixes
+- fix(ai-sync): refuse to sync a live root that is off the trunk (#437)
+### Other
+- docs(changelog): backfill v11.5.0 (#436)
+
 ## [2026-10-22]: v11.5.0
 ### Fixes
 - fix(reply-panel): cut the measured cost of the v11 reply panel without dropping a reviewer from a reply that carries claims. Measured since v11.0.0 (35 operator turns, 103 replies): the panel cost about 36% of weighted tokens. (1) The source class reads `Basis /path` (no colon), a `·` after the label and a lowercase `basis`, and reads `self` inside a path or file name as a source while a bare `self-*` word stays SELF: 17 of 35 final replies move from SELF (quorum 3) to SOURCED (quorum 1), none the other way. (2) `panel_digest.py --preflight` and a preflight inside `--panel-request --to operator` (`scripts/panel_preflight.py`) run every other reply-text Stop hook on the draft, so a later gate no longer forces an edit after the PASS (16 of 32 extra rounds). (3) A status line of at most 30 words passes while a subagent launched or messaged in this operator turn still runs (hand-back, task notification, TaskStop or kernel `exit` line read as the stop, 30-minute cap without one), at most 3 times per operator prompt; a claim-word check is a speed bump on top (11 of the 34 measured spin blocks would pass). (4) A reply that is only one `input-needed:` question for an operator-only fact, plus at most one 15-word context line, is INPUT, quorum 1, unless its footer names self; the no-menu gate reads past the label. What each change loosens is listed in `docs/architecture/v11-reply-panel.md`, "Cost controls (measured)". Selftest: 79 block and 39 allow. Tests: `test_reply_panel_source_class.py`, `test_reply_panel_status_line.py`, `test_panel_preflight.py`.
