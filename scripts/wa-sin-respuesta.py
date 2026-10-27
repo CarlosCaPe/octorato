@@ -317,8 +317,12 @@ def ultimo(con, jid, entrante):
 LIMITE_ENTRANTES = 500
 
 
-def espera_abierta(con, jid):
+def espera_abierta(con, jid, t_sal_otro=None):
     """(primer entrante sin contestar, cuantos hay). (None, 0) si no hay espera.
+
+    `t_sal_otro` is the newest outgoing message of the same person on another
+    bridge (a chat that declares `puentes`). A reply there answers this chat
+    too: the person was answered, only through a different number.
 
     EL RELOJ ARRANCA EN EL PRIMERO, NO EN EL ULTIMO (11-ago). Se medía desde el
     ULTIMO entrante, asi que cada mensaje nuevo del cliente REINICIABA el reloj:
@@ -336,6 +340,8 @@ def espera_abierta(con, jid):
     """
     sal = ultimo(con, jid, False)
     t_sal = parse_ts(sal[1]) if sal else None
+    if t_sal_otro and (t_sal is None or t_sal_otro > t_sal):
+        t_sal = t_sal_otro
     filas = con.execute(
         "SELECT id, timestamp, media_type, content FROM messages "
         "WHERE chat_jid = ? AND is_from_me = 0 ORDER BY timestamp DESC LIMIT ?",
@@ -440,6 +446,28 @@ def revisa(cfg, ahora=None, estados=None, cobertura=None):
     # Sin `todos`, una config sin `chats` sigue reventando a la vista (KeyError),
     # en vez de dejar un vigia que corre sin mirar nada.
     chats = list(vig.get("chats") or []) if vig.get("todos") else list(vig["chats"])
+    # ONE PERSON, SEVERAL NUMBERS (27-oct). A contact can write to more than one
+    # bridge with the same JID and get the answer through the other one. As two
+    # separate conversations, the copy that got no answer in ITS bridge alarms
+    # forever, and leaving it off the list makes `todos` rediscover it as an
+    # unlabeled chat. `puentes: [a, b]` watches the chat on every listed bridge,
+    # and an outgoing message on any of them closes the wait on all of them.
+    # `puentes` wins over `puente` when both are present. A non-list value is a
+    # config error: iterating a string would watch one bridge per character.
+    expandidos = []
+    for c in chats:
+        lista = c.get("puentes")
+        if not lista:
+            expandidos.append(c)
+            continue
+        if not isinstance(lista, list):
+            anota(f"sensor de WhatsApp: 'puentes' del chat {c.get('jid')!r} "
+                  f"debe ser una lista, no {type(lista).__name__}")
+            continue
+        for p in lista:
+            expandidos.append({**c, "puente": p,
+                               "_gemelos": [g for g in lista if g != p]})
+    chats = expandidos
     if vig.get("todos"):
         conocidos = {(c["jid"], c.get("puente", nombre_puente)) for c in chats}
         excluir = set(vig.get("excluir") or [])
@@ -464,6 +492,7 @@ def revisa(cfg, ahora=None, estados=None, cobertura=None):
                               "cliente": "Sin etiquetar", "canal": "whatsapp",
                               "puente": nombre})
 
+    n0 = len(vistos)
     for chat in chats:
         jid, quien = chat["jid"], chat.get("quien", "chat")
         # Ciego no es sano: si su puente no abre, el chat NO se anota como
@@ -486,7 +515,15 @@ def revisa(cfg, ahora=None, estados=None, cobertura=None):
         # El reloj arranca en el PRIMER entrante sin contestar, no en el ultimo.
         # Ver `espera_abierta`: medir desde el ultimo hacia que insistir apagara
         # la alarma.
-        primero, cuantos = espera_abierta(con, jid)
+        t_otro = None
+        for g in chat.get("_gemelos") or []:
+            cg = abrir(g)
+            sal_g = ultimo(cg, jid, False) if cg is not None else None
+            if sal_g:
+                ts = parse_ts(sal_g[1])
+                if t_otro is None or ts > t_otro:
+                    t_otro = ts
+        primero, cuantos = espera_abierta(con, jid, t_otro)
         if not primero:
             # Lo ultimo del chat es nuestro: no hay nadie esperando.
             sano()
@@ -530,6 +567,16 @@ def revisa(cfg, ahora=None, estados=None, cobertura=None):
         })
         vistos.append(estado_vigilado(cliente, canal, jid, quien, minutos,
                                       desde, chat.get("prueba")))
+
+    # One person on several bridges is ONE watched entry for the dashboard: the
+    # receiver merges readings by id, so two rows with the same id let a healthy
+    # reading overwrite a silent one. Collapse them keeping the worst state.
+    unicos = {}
+    for e in vistos[n0:]:
+        prev = unicos.get(e["id"])
+        if prev is None or (e["silencio_min"] or -1) > (prev["silencio_min"] or -1):
+            unicos[e["id"]] = e
+    vistos[n0:] = list(unicos.values())
 
     for c in conexiones.values():
         if c is not None:
@@ -1299,6 +1346,76 @@ def selftest():
         if not any(s["quien"] == "A-lejos" for s in r_dos):
             fallos.append("puente por chat: no leyo la base declarada en el "
                           "chat y el silencio paso por 'ya contestaron'")
+
+        # ---- one person on two bridges (`puentes`) --------------------------
+        # GEMELO-SI wrote on `p` 45 min ago and was answered 30 min ago on
+        # `otro`: answered, no alarm, and `todos` must not rediscover it as an
+        # unlabeled chat. GEMELO-NO was answered on `otro` BEFORE writing on
+        # `p` (60 min ago): still waiting, so it must alarm. The negative case
+        # is what proves the twin bridge does not silence everything.
+        con = sqlite3.connect(db)
+        for mid, jid in (("g1", "GEMELO-SI"), ("g2", "GEMELO-NO")):
+            con.execute("INSERT INTO messages VALUES (?,?,?,?,?,?)",
+                        (mid, jid, 0, (ahora - timedelta(minutes=45)).isoformat(),
+                         "me ayudas con esto", ""))
+        con.commit(); con.close()
+        con2 = sqlite3.connect(db2)
+        for mid, jid, m in (("h1", "GEMELO-SI", 30), ("h2", "GEMELO-NO", 60)):
+            con2.execute("INSERT INTO messages VALUES (?,?,?,?,?,?)",
+                         (mid, jid, 1, (ahora - timedelta(minutes=m)).isoformat(),
+                          "respuesta", ""))
+        con2.commit(); con2.close()
+        cfg_gem = {"puentes": {"p": {"db": str(db)}, "otro": {"db": str(db2)}},
+                   "vigilancia": {"puente": "p", "umbral_minutos": 20,
+                                  "todos": True,
+                                  "chats": [{"jid": j, "quien": j, "cliente": "G",
+                                             "canal": "whatsapp",
+                                             "puentes": ["p", "otro"]}
+                                            for j in ("GEMELO-SI", "GEMELO-NO")]}}
+        r_gem = Counter(s["quien"] for s in revisa(cfg_gem, ahora, [], []))
+        casos += 1
+        if r_gem.get("GEMELO-SI"):
+            fallos.append("puentes: a reply on the twin bridge did not close "
+                          "the wait")
+        casos += 1
+        if r_gem.get("GEMELO-NO") != 1:
+            fallos.append("puentes: a reply on the twin bridge OLDER than the "
+                          "message silenced a real wait")
+        # Silent on one bridge, empty on the other: the dashboard must get ONE
+        # entry for the person, and it must carry the silence, never a green
+        # reading from the empty bridge.
+        con = sqlite3.connect(db)
+        con.execute("INSERT INTO messages VALUES (?,?,?,?,?,?)",
+                    ("g3", "GEMELO-UNO", 0,
+                     (ahora - timedelta(minutes=45)).isoformat(),
+                     "sigo esperando", ""))
+        con.commit(); con.close()
+        cfg_uno = {"puentes": {"p": {"db": str(db)}, "otro": {"db": str(db2)}},
+                   "vigilancia": {"puente": "p", "umbral_minutos": 20,
+                                  "chats": [{"jid": "GEMELO-UNO", "quien": "U",
+                                             "cliente": "U", "canal": "whatsapp",
+                                             "puentes": ["p", "otro"]}]}}
+        est_uno = []
+        revisa(cfg_uno, ahora, est_uno, [])
+        casos += 1
+        if len(est_uno) != 1 or not est_uno[0]["silencio_min"]:
+            fallos.append(f"puentes: dashboard entries for one person should be "
+                          f"one silent entry, got {[(e['id'], e['silencio_min']) for e in est_uno]}")
+        casos += 1
+        cfg_mal = {"puentes": {"p": {"db": str(db)}},
+                   "vigilancia": {"puente": "p", "umbral_minutos": 20,
+                                  "chats": [{"jid": "X", "quien": "X",
+                                             "cliente": "X", "canal": "whatsapp",
+                                             "puentes": "p"}]}}
+        cob_mal = []
+        revisa(cfg_mal, ahora, [], cob_mal)
+        if not any("debe ser una lista" in h["texto"] for h in cob_mal):
+            fallos.append("puentes: a string value was not reported as a "
+                          "config error")
+        casos += 1
+        if any(q.startswith("chat sin etiqueta (GEMELO") for q in r_gem):
+            fallos.append("puentes: `todos` rediscovered a listed twin chat as "
+                          "unlabeled")
 
         # Y el fallo del puente NO se disfraza de salud: si la base no existe,
         # el chat sale como hueco de cobertura, nunca como vigilado sano.
