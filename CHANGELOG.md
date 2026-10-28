@@ -15,6 +15,16 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-24]: v11.8.3
+### Fixes
+- fix(gate-selftest): close the wraps, inherited-fd and orphaned-leg gaps in the fork runner (#439)
+
+## [2026-10-24]: v11.8.2
+### Fixes
+- fix(wa-latido): give the seen-notices JSON explicit utf-8 too (#438)
+### Other
+- docs(changelog): backfill v11.8.1 (#440)
+
 ## [2026-10-23]: v11.8.1
 ### Other
 - perf(selftest): fork gate selftest legs instead of spawning an interpreter each (#393)
