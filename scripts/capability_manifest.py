@@ -75,7 +75,17 @@ def _trunc(s: str, n: int = 120) -> str:
 # private skill names, client names and operator identity into a published file.
 # Ask git what is excluded and drop it. FAIL-CLOSED: if git cannot answer, abort
 # rather than risk publishing the private layer.
+#
+# Ask about the exact FILE each entry is read from, never its parent directory:
+# `skills/x/*` or `agents/div/secret.md` ignore files inside a directory that git
+# reports as not ignored. check-ignore on a file also matches ancestor patterns.
 # ---------------------------------------------------------------------------
+
+# A hook context (pre-push) can export these; they would make check-ignore answer
+# for another repo or index than BRAIN. cwd=BRAIN must be the only authority.
+_GIT_REPO_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+                 "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_PREFIX")
+
 
 def _git_excluded(paths: list[Path]) -> set:
     """Return the subset of `paths` git considers ignored/excluded.
@@ -92,18 +102,20 @@ def _git_excluded(paths: list[Path]) -> set:
         return set()
     rel = [str(q.relative_to(BRAIN)).replace(os.sep, "/") for q in paths]
     payload = ("\0".join(rel) + "\0").encode("utf-8")
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_REPO_ENV}
     try:
         proc = subprocess.run(
             ["git", "check-ignore", "--stdin", "-z"],
-            input=payload, capture_output=True, cwd=str(BRAIN), timeout=60,
+            input=payload, capture_output=True, cwd=str(BRAIN), timeout=60, env=env,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise SystemExit(
             f"capability_manifest: cannot reach git to filter the private layer ({exc}). "
             "Refusing to write docs/CAPABILITIES.md: it is public and would leak private entries."
         )
-    # check-ignore: 0 = some paths ignored, 1 = none ignored, >1 = real error
-    if proc.returncode > 1:
+    # check-ignore: 0 = some paths ignored, 1 = none ignored, anything else (128, or a
+    # negative code when a signal killed git) = no answer, so fail closed
+    if proc.returncode not in (0, 1):
         raise SystemExit(
             f"capability_manifest: git check-ignore failed "
             f"({proc.stderr.decode('utf-8', 'replace').strip()}). "
@@ -120,21 +132,18 @@ def _git_excluded(paths: list[Path]) -> set:
 def scan_skills() -> list[dict]:
     skills_dir = BRAIN / "skills"
     results = []
-    candidates = [d for d in sorted(skills_dir.iterdir()) if d.is_dir()]
-    private = _git_excluded(candidates)
-    for skill_dir in candidates:
-        if skill_dir in private:
+    # A symlinked skill dir is an installed package (v8 PACKAGE: skills/<name> ->
+    # skills/vendor/<name>). Counting it would make docs/CAPABILITIES.md depend on
+    # which packages this machine happens to have installed, and the manifest gate
+    # at pre-push demands a machine-independent file. Packages are listed by
+    # `octo pkg list`, not here.
+    skill_files = [d / "SKILL.md" for d in sorted(skills_dir.iterdir())
+                   if d.is_dir() and not d.is_symlink() and (d / "SKILL.md").exists()]
+    private = _git_excluded(skill_files)
+    for skill_file in skill_files:
+        if skill_file in private:
             continue  # operator's private layer -- never in a public manifest
-        # A symlinked skill dir is an installed package (v8 PACKAGE: skills/<name> ->
-        # skills/vendor/<name>). Counting it would make docs/CAPABILITIES.md depend on
-        # which packages this machine happens to have installed, and the manifest gate
-        # at pre-push demands a machine-independent file. Packages are listed by
-        # `octo pkg list`, not here.
-        if skill_dir.is_symlink():
-            continue
-        skill_file = skill_dir / "SKILL.md"
-        if not skill_file.exists():
-            continue
+        skill_dir = skill_file.parent
         text = skill_file.read_text(encoding="utf-8", errors="replace")
         fm = _yaml_frontmatter(text)
         name = fm.get("name") or skill_dir.name
@@ -170,25 +179,23 @@ def scan_agents() -> list[dict]:
     results = []
     divisions = [d for d in sorted(agents_dir.iterdir())
                  if d.is_dir() and d.name not in EXCLUDED_AGENT_DIRS]
-    private_div = _git_excluded(divisions)
-    for division_dir in divisions:
-        if division_dir in private_div:
+    # recursive: personas may live in sub-categories (game-development/godot/)
+    agent_files = [(div, f) for div in divisions for f in sorted(div.rglob("*.md"))
+                   if f.name not in NON_PERSONA_FILES]
+    private = _git_excluded([f for _, f in agent_files])
+    for division_dir, agent_file in agent_files:
+        if agent_file in private:
             continue  # operator's private layer -- never in a public manifest
-        division = division_dir.name
-        # recursive: personas may live in sub-categories (game-development/godot/)
-        for agent_file in sorted(division_dir.rglob("*.md")):
-            if agent_file.name in NON_PERSONA_FILES:
-                continue
-            text = agent_file.read_text(encoding="utf-8", errors="replace")
-            fm = _yaml_frontmatter(text)
-            name = fm.get("name") or agent_file.stem
-            desc = fm.get("description") or fm.get("vibe") or _first_heading(text)
-            results.append({
-                "name": name,
-                "division": division,
-                "description": desc,
-                "path": str(agent_file.relative_to(BRAIN)),
-            })
+        text = agent_file.read_text(encoding="utf-8", errors="replace")
+        fm = _yaml_frontmatter(text)
+        name = fm.get("name") or agent_file.stem
+        desc = fm.get("description") or fm.get("vibe") or _first_heading(text)
+        results.append({
+            "name": name,
+            "division": division_dir.name,
+            "description": desc,
+            "path": str(agent_file.relative_to(BRAIN)),
+        })
     return results
 
 
@@ -238,18 +245,28 @@ def _script_purpose(path: Path) -> str:
 def scan_scripts() -> list[dict]:
     scripts_dir = BRAIN / "scripts"
     results = []
-    skip = {"__pycache__", "lib", "tests"}
-    for entry in sorted(scripts_dir.iterdir()):
-        if entry.name in skip or entry.name.startswith("."):
-            continue
-        if entry.is_file():
-            purpose = _script_purpose(entry)
-            results.append({
-                "filename": entry.name,
-                "purpose": purpose,
-                "path": str(entry.relative_to(BRAIN)),
-            })
+    files = _public_script_files(scripts_dir)
+    for entry in files:
+        results.append({
+            "filename": entry.name,
+            "purpose": _script_purpose(entry),
+            "path": str(entry.relative_to(BRAIN)),
+        })
     return results
+
+
+def _public_script_files(scripts_dir: Path) -> list[Path]:
+    """Top-level files in scripts/ that git does not ignore.
+
+    Shared by the script list and the wiring index: a private script must not
+    appear in the manifest, and must not make a public script look wired either,
+    or the published orphan count would depend on the machine that built it.
+    """
+    skip = {"__pycache__", "lib", "tests"}
+    files = [e for e in sorted(scripts_dir.iterdir())
+             if e.name not in skip and not e.name.startswith(".") and e.is_file()]
+    private = _git_excluded(files)
+    return [e for e in files if e not in private]
 
 
 # ---------------------------------------------------------------------------
@@ -359,11 +376,7 @@ def _build_wiring_index(hooks: dict[str, list[str]]) -> set[str]:
             wired.add(m.group(1))
 
     # invocations within scripts/ themselves
-    scripts_dir = BRAIN / "scripts"
-    skip = {"__pycache__", "lib", "tests"}
-    for entry in scripts_dir.iterdir():
-        if entry.name in skip or not entry.is_file():
-            continue
+    for entry in _public_script_files(BRAIN / "scripts"):
         try:
             text = entry.read_text(encoding="utf-8", errors="replace")
         except Exception:
