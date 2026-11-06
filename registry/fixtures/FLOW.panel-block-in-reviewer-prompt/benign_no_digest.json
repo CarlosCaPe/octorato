@@ -1,0 +1,11 @@
+{
+  "session_id": "__selftest__",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "Panel review",
+    "subagent_type": "Reality Checker",
+    "prompt": "Refactor scripts/panel_digest.py so that PANEL-SHA256 parsing is shared; the reviewer protocol ends with PANEL-VERDICT and PANEL-SHA256 lines."
+  },
+  "tool_use_id": "toolu_fixture"
+}

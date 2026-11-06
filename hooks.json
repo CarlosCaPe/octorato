@@ -129,6 +129,17 @@
     {
       "hooks": [
         {
+          "command": "python3 ~/.claude/scripts/g__pretool-agent__panel-block.py",
+          "statusMessage": "🧾 panel request: checking the reviewer prompt carries its block...",
+          "timeout": 5,
+          "type": "command"
+        }
+      ],
+      "matcher": "Agent|SendMessage"
+    },
+    {
+      "hooks": [
+        {
           "command": "python3 ~/.claude/scripts/trace-hook.py --phase gate",
           "timeout": 5,
           "type": "command"
