@@ -6,7 +6,7 @@
 
 | Metric | Count |
 |---|---|
-| Skills | 246 |
+| Skills | 247 |
 | Agents | 167 |
 | Divisions | 13 |
 | Scripts: wired | 143 |
@@ -14,7 +14,7 @@
 | Rules | 106 |
 | Hook entries | 61 |
 
-## Skills (246)
+## Skills (247)
 
 | Name | Description |
 |---|---|
@@ -120,6 +120,7 @@
 | infinite-monitor | Builds AI dashboards on Infinite Monitor, an open-source Next.js app where you describe the widget in natural language a... |
 | investigate-before-asking | Canonical mandate , before asking the operator any clarifying question, spend 30-60 seconds doing read-only investigatio... |
 | jupyter-notebook | Use when the user asks to create, scaffold, or edit Jupyter notebooks (`.ipynb`) for experiments, explorations, or tutor... |
+| kdp-coloring-book | Turns an operator-supplied original story or theme into a print-ready coloring book for Amazon KDP paperback: page plan,... |
 | kids-home-tutor | Turns an assistant into a patient home tutor a parent runs for a child: finds what the child already understands, explai... |
 | knowledge-corpus | Build and query focused knowledge corpora from brain skills, git history, and workspace files. Use when users want to co... |
 | legal-first-reader | Turns an assistant into a first reader of legal paper for a layperson: explains a contract, notice or official letter in... |
