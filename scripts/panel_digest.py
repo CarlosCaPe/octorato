@@ -300,6 +300,29 @@ def _people(tool_input: dict) -> list:
     return out
 
 
+# send_reactions carries its reaction list as text, one `<hex id> <emoji> [<sender JID>]`
+# per line. The digest collapses whitespace, so the list must stay unambiguous after
+# that: the gate re-parses it with the tool's own grammar and refuses any other shape.
+_REACTION_EMOJI = ("\U0001F44D", "\u2764\ufe0f", "\U0001F602", "\U0001F62E", "\U0001F622", "\U0001F64F")
+_REACTION_ID = re.compile(r"^[0-9A-Fa-f]{8,64}$")
+_REACTION_SENDER = re.compile(r"^\d+@(s\.whatsapp\.net|lid)$")
+
+
+def _check_reactions(recipient: str, message) -> None:
+    if not isinstance(message, str):
+        raise PanelDigestError("reaction list is not text")
+    group = recipient.endswith("@g.us")
+    lines = [ln.split() for ln in message.splitlines() if ln.strip()]
+    if not lines:
+        raise PanelDigestError("reaction list is empty")
+    for n, parts in enumerate(lines, 1):
+        if len(parts) not in (2, 3) or not _REACTION_ID.match(parts[0]) \
+                or parts[1] not in _REACTION_EMOJI \
+                or (len(parts) == 3 and not _REACTION_SENDER.match(parts[2])) \
+                or (group and len(parts) != 3):
+            raise PanelDigestError(f"reaction line {n} is not '<hex id> <allowed emoji> [<sender JID>]'")
+
+
 def _mcp_message(tool_name: str, tool_input) -> Message:
     if not isinstance(tool_input, dict):
         raise PanelDigestError("tool input is not an object")
@@ -343,6 +366,8 @@ def _mcp_message(tool_name: str, tool_input) -> Message:
                 raise PanelDigestError("attachment of an unknown shape")
     if "whatsapp" in tool_name:
         recipients = [str(tool_input.get("recipient") or "")]
+        if tool_name.endswith("send_reactions"):
+            _check_reactions(recipients[0], tool_input.get("message"))
     else:
         recipients = _people(tool_input)
         if tool_input.get("messageId"):
