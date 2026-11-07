@@ -173,7 +173,7 @@
           "shell:denied": 45
         },
         "locator": "scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/COMMS.outward-send-gate",
-        "matcher": "^(mcp_gmail_send_email|mcp_claude_ai_Gmail_send_message|mcp_claude_ai_Gmail_reply|mcp_claude_ai_Gmail_forward|mcp_whatsapp_send_message|mcp_whatsapp_send_file|mcp_whatsapp_send_audio_message|run_shell_command)$",
+        "matcher": "^(mcp_gmail_send_email|mcp_claude_ai_Gmail_send_message|mcp_claude_ai_Gmail_reply|mcp_claude_ai_Gmail_forward|mcp_whatsapp_send_message|mcp_whatsapp_send_file|mcp_whatsapp_send_audio_message|mcp_whatsapp_send_reactions|run_shell_command)$",
         "result": "pass",
         "selftest_lines": [
           "selftest PASS: 90 block + 61 allow (g__pretool-mcp__outward-send.py vs COMMS.outward-send-gate)"
@@ -198,7 +198,7 @@
           "shell:denied": 72
         },
         "locator": "scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/FLOW.panel-before-send",
-        "matcher": "^(mcp_gmail_send_email|mcp_claude_ai_Gmail_send_message|mcp_claude_ai_Gmail_reply|mcp_claude_ai_Gmail_forward|mcp_whatsapp_send_message|mcp_whatsapp_send_file|mcp_whatsapp_send_audio_message|run_shell_command)$",
+        "matcher": "^(mcp_gmail_send_email|mcp_claude_ai_Gmail_send_message|mcp_claude_ai_Gmail_reply|mcp_claude_ai_Gmail_forward|mcp_whatsapp_send_message|mcp_whatsapp_send_file|mcp_whatsapp_send_audio_message|mcp_whatsapp_send_reactions|run_shell_command)$",
         "result": "pass",
         "selftest_lines": [
           "selftest PASS: 96 block + 34 allow (g__pretool-mcp__outward-send.py vs FLOW.panel-before-send)"

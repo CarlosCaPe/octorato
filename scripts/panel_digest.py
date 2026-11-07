@@ -159,6 +159,8 @@ KNOWN_KEYS = {
     "mcp__whatsapp__send_message": {"recipient", "message"},
     "mcp__whatsapp__send_file": {"recipient", "media_path"},
     "mcp__whatsapp__send_audio_message": {"recipient", "media_path"},
+    # One call reacts to several messages of one chat; the reaction list is the text.
+    "mcp__whatsapp__send_reactions": {"recipient", "message"},
 }
 _DRAFT_KEYS = ("draftId", "draft_id", "draftID")
 
