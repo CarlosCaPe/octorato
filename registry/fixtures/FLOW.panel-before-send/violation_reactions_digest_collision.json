@@ -1,0 +1,10 @@
+{
+  "session_id": "fx-p-violation-reactions-collision",
+  "tool_name": "mcp__whatsapp__send_reactions",
+  "tool_input": {
+    "recipient": "120363000000000000@g.us",
+    "message": "3EB0AAAA1111 👍\n5210000000001@lid 3EB0BBBB2222 👍 5210000000002@lid\n"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_reactions_digest_collision_transcript.jsonl"
+}
