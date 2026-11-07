@@ -66,7 +66,7 @@ WHAT IT REQUIRES (docs/architecture/v7-nothing-ships-unverified.md)
      in an earlier call) is not tied to the script.
   5. Panel receipt (FLOW.panel-before-send, operator directive 2026-10-02: no
      message leaves without a panel, however small). Every MESSAGE send (mail
-     send/reply/forward, WhatsApp send_message/send_file/send_audio_message,
+     send/reply/forward, WhatsApp send_message/send_file/send_audio_message/send_reactions,
      the support bridge, its --archivo included) computes panel_digest.py over
      the outgoing text plus the bytes of every attachment, and is denied
      unless the panel receipt that DECIDES that digest in this session, inside
@@ -146,7 +146,7 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 
 _SEND_TOOL = re.compile(
-    r"(send_email|send_message|send_file|send_audio_message|__reply$|__forward$)",
+    r"(send_email|send_message|send_file|send_audio_message|send_reactions|__reply$|__forward$)",
     re.IGNORECASE,
 )
 # Bash sends are found by TOKEN in the argv of any sub-command (after the
@@ -553,7 +553,7 @@ def _walk_strings(obj, out: list) -> None:
 # checks still run, because a household chat is still an outward send.
 # Fail-closed: an unreadable or malformed file waives nothing.
 _AUTONOMOUS_FILE = Path.home() / ".claude" / "company" / "config" / "outward-send-autonomous.json"
-_WA_SEND = re.compile(r"whatsapp.*(send_message|send_file|send_audio_message)$", re.IGNORECASE)
+_WA_SEND = re.compile(r"whatsapp.*(send_message|send_file|send_audio_message|send_reactions)$", re.IGNORECASE)
 
 
 def _autonomous_cfg() -> list:
