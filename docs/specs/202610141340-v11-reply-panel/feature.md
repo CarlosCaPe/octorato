@@ -63,7 +63,7 @@ The Reply_Gate exits 0 when any of these holds, checked in this order:
 4. a Pending_Panel exists and `last_assistant_message` is at most the Status_Cap;
 5. FR-02 finds a receipt.
 
-Otherwise it exits 2 with a stderr message naming the Reply_Digest, the `panel_digest.py --panel-request --to operator` command and the accepted reviewer types. The stderr never names the Skip_Token, so the gate's own feedback cannot read as a waiver. It decides the same way when `stop_hook_active` is true: there is no block-once.
+Otherwise it exits 2 with a stderr message naming the Reply_Digest, the `panel_digest.py --panel-request --to operator` command and the accepted reviewer types. The stderr never names the Skip_Token, so the gate's own feedback cannot read as a waiver. When `stop_hook_active` is true it exits 0 and journals the skip: block-once (operator directive 2026-11-07).
 
 ### FR-04: Fail-closed, with an exit only the operator holds
 
@@ -86,7 +86,7 @@ The rule `FLOW.panel-before-reply` is registered in the Rule_Registry with stren
 - [ ] AC-05: IF a NEEDS-WORK receipt for the Reply_Digest is newer than its PASS, THEN THE Reply_Gate SHALL exit 2.
 - [ ] AC-06: IF the reply text changed after the panel, THEN THE Reply_Gate SHALL exit 2.
 - [ ] AC-07: WHEN the Operator_Prompt carries the Skip_Token, THE Reply_Gate SHALL exit 0, also after another Stop gate's feedback was appended, and IF the Skip_Token appears only in assistant text, a tool result or an `isMeta` entry, THEN THE Reply_Gate SHALL exit 2.
-- [ ] AC-08: WHILE `stop_hook_active` is true, THE Reply_Gate SHALL apply the same decision as on a first stop.
+- [ ] AC-08: WHILE `stop_hook_active` is true, THE Reply_Gate SHALL exit 0 and journal the skip (block-once, operator directive 2026-11-07).
 - [ ] AC-09: IF the Reply_Gate cannot read the transcript or raises on the Receipt_Ledger, THEN THE Reply_Gate SHALL exit 2 and name the error, and WHEN the receipts directory is missing, THE Reply_Gate SHALL treat it as no receipt.
 - [ ] AC-10: WHEN the Off_Switch is set or `last_assistant_message` is empty, THE Reply_Gate SHALL exit 0, and THE Reply_Gate SHALL ignore `CLAUDE_CODE_CHILD_SESSION`.
 - [ ] AC-11: WHEN an unspent Pending_Panel exists and `last_assistant_message` is at most the Status_Cap, THE Reply_Gate SHALL exit 0 and record the Pending_Panel as spent, and IF the reply exceeds the Status_Cap, the agent is not a Panel_Reviewer, its prompt carries no valid panel block, it already completed (by notification or by a non-acknowledgment tool_result) or it was already spent, THEN THE Reply_Gate SHALL exit 2.
