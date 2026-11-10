@@ -1,0 +1,11 @@
+{
+  "session_id": "__selftest__",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "SendMessage",
+  "tool_input": {
+    "to": "a0000000000000000",
+    "summary": "panel round",
+    "message": "Round two. End with `PANEL-VERDICT` and `PANEL-SHA256: d1aed9b2a3aabcf9742f9989f3eed299b536e60833edc7325d235ef44d220401`."
+  },
+  "tool_use_id": "toolu_fixture"
+}

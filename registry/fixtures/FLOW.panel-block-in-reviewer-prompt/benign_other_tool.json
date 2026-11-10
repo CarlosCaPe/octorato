@@ -1,0 +1,7 @@
+{
+  "session_id": "__selftest__",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo PANEL-SHA256: d1aed9b2a3aabcf9742f9989f3eed299b536e60833edc7325d235ef44d220401"
+  }
+}

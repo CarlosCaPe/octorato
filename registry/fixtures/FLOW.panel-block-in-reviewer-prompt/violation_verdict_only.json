@@ -1,0 +1,11 @@
+{
+  "session_id": "__selftest__",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "Panel review",
+    "subagent_type": "Reality Checker",
+    "prompt": "Review the reply I am about to send to the operator. End with only `PANEL-VERDICT: PASS | NEEDS-WORK` and `PANEL-SHA256: d1aed9b2a3aabcf9742f9989f3eed299b536e60833edc7325d235ef44d220401`."
+  },
+  "tool_use_id": "toolu_fixture"
+}
