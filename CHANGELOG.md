@@ -15,6 +15,39 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-11-10]: v11.11.4
+### Fixes
+- fix(gate-selftest): a supervisor that dies after its gate started is a runner error, not a block (#441)
+
+## [2026-11-10]: v11.11.3
+### Other
+- chore(gitignore): ignore session-registry temp files (#443)
+
+## [2026-11-10]: v11.11.2
+### Fixes
+- fix(watcher): one chat can span several bridges (#444)
+
+## [2026-11-10]: v11.11.1
+### Fixes
+- fix(scripts): keep the operator private layer out of the public capability manifest (#446)
+
+## [2026-11-10]: v11.11.0
+### Features
+- feat(skills): add kdp-coloring-book skill (#447)
+
+## [2026-11-10]: v11.10.0
+### Features
+- feat(gates): deny a panel review request that omits the body block (#448)
+
+## [2026-11-10]: v11.9.2
+### Fixes
+- fix(memory): follow MEMORY.md sub-indexes in recall and corpus coverage (#452)
+
+## [2026-11-10]: v11.9.1
+### Other
+- chore(registry): triage 14 recurrent lessons in reflex-triage (#453)
+- docs(changelog): backfill v11.9.0 (#451)
+
 ## [2026-11-07]: v11.9.0
 ### Features
 - feat(gates): gate the WhatsApp send_reactions tool like any message send (#449)
