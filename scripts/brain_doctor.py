@@ -1337,11 +1337,21 @@ def check_corpus_coverage(fix: bool) -> Result:
         brain_cov = brain_total = arm_cov = arm_total = 0
         brain_direct = 0
         indexed_by_dir = {}
+        # MEMORY.md is split into sub-indexes (index_*.md, same dir) to stay under
+        # the harness read limit. An entry in a sub-index MEMORY.md links is indexed:
+        # the recall hook scores those files too (brain-memory-recall.index_files).
+        subidx_re = re.compile(r"\]\((index_[^)/]+\.md)\)")
         for d in {mf.parent for mf in mem_files}:
             idx = set()
             mm = d / "MEMORY.md"
+            index_paths = [mm] if mm.exists() else []
             if mm.exists():
-                for ln in _rt(mm).splitlines():
+                for sm in subidx_re.finditer(_rt(mm)):
+                    sp = d / sm.group(1)
+                    if sp.is_file() and sp not in index_paths:
+                        index_paths.append(sp)
+            for ip in index_paths:
+                for ln in _rt(ip).splitlines():
                     ln = ln.strip()
                     if not ln.startswith("- ["):
                         continue

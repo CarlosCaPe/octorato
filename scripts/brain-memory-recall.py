@@ -121,12 +121,37 @@ def prompt_tokens(prompt: str, transcript_path: str) -> set[str]:
     return tokenize(text)
 
 
+SUBINDEX_RE = re.compile(r"\]\((?P<file>index_[^)/]+\.md)\)")
+
+
+def index_files(md: Path) -> list[Path]:
+    """MEMORY.md plus the sub-indexes it links (index_*.md, same dir, one hop).
+
+    MEMORY.md is split into secondary indexes to stay under the harness read
+    limit. Scoring only MEMORY.md left every entry moved to a sub-index out of
+    the index pass, so those directives fell back to the body and graph passes
+    and were measurably missed.
+    """
+    files = [md]
+    try:
+        text = md.read_text(encoding="utf-8")
+    except Exception:
+        return files
+    for m in SUBINDEX_RE.finditer(text):
+        sub = md.parent / m.group("file")
+        if sub.is_file() and sub not in files:
+            files.append(sub)
+    return files
+
+
 def score_lines(md: Path, ptoks: set[str]):
     out = []
-    try:
-        lines = md.read_text(encoding="utf-8").splitlines()
-    except Exception:
-        return out
+    lines = []
+    for f in index_files(md):
+        try:
+            lines += f.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            continue
     for ln in lines:
         ln = ln.strip()
         if not ln.startswith("- ["):
