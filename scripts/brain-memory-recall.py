@@ -121,12 +121,40 @@ def prompt_tokens(prompt: str, transcript_path: str) -> set[str]:
     return tokenize(text)
 
 
+SUBINDEX_RE = re.compile(r"\]\((?P<file>index_[^)/]+\.md)\)")
+
+
+def index_files(md: Path) -> list[Path]:
+    """MEMORY.md plus the sub-indexes it links (index_*.md, same dir, one hop).
+
+    MEMORY.md is split into secondary indexes to stay under the harness read
+    limit. Scoring only MEMORY.md left every entry moved to a sub-index out of
+    the index pass, so those directives fell back to the body and graph passes
+    and were measurably missed.
+    """
+    files = [md]
+    try:
+        text = md.read_text(encoding="utf-8")
+    except Exception:
+        return files
+    for ln in text.splitlines():
+        if not ln.strip().startswith("- ["):
+            continue  # only an index entry activates a sub-index, never prose
+        for m in SUBINDEX_RE.finditer(ln):
+            sub = md.parent / m.group("file")
+            if sub.is_file() and sub not in files:
+                files.append(sub)
+    return files
+
+
 def score_lines(md: Path, ptoks: set[str]):
     out = []
-    try:
-        lines = md.read_text(encoding="utf-8").splitlines()
-    except Exception:
-        return out
+    lines = []
+    for f in index_files(md):
+        try:
+            lines += f.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            continue
     for ln in lines:
         ln = ln.strip()
         if not ln.startswith("- ["):
@@ -134,7 +162,14 @@ def score_lines(md: Path, ptoks: set[str]):
         for m in ENTRY_RE.finditer(ln):
             _score_entry(out, m, ptoks)
     out.sort(key=lambda x: (-x[0], x[1]))
-    return out[:MAX_HITS]
+    # A file listed in MEMORY.md and in a sub-index scores twice; keep its best
+    # row before the cut so a duplicate never takes a slot from another file.
+    seen, uniq = set(), []
+    for row in out:
+        if row[2] not in seen:
+            seen.add(row[2])
+            uniq.append(row)
+    return uniq[:MAX_HITS]
 
 
 def _score_entry(out, m, ptoks):

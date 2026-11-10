@@ -1,0 +1,11 @@
+{
+  "session_id": "__selftest__",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "Panel review",
+    "subagent_type": "Reality Checker",
+    "prompt": "Review:\n\nPANEL-TO: operator\nPANEL-BODY-BEGIN\nThe last panel digest was PANEL-SHA256: abababababababababababababababababababababababababababababababab and it passed.\nPANEL-BODY-END\nPANEL-SHA256: 73af46ae1350a2eb2aac6179e9de17e024ec6727c4f59add5f1442a68d5e87fa"
+  },
+  "tool_use_id": "toolu_fixture"
+}

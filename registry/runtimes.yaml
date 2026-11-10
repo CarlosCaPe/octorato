@@ -116,7 +116,7 @@ runtimes:
     # translates; every other tool is the residual of `*`.
     unprojected:
       events: [PermissionDenied, PostToolUse, SessionStart, Stop, SubagentStart, SubagentStop, UserPromptSubmit]
-      matchers: [Agent, MultiEdit, NotebookEdit]
+      matchers: [Agent, MultiEdit, NotebookEdit, SendMessage]
 
   codex-cli:
     name: Codex CLI
@@ -159,4 +159,4 @@ runtimes:
     # translates; every other tool is the residual of `*`.
     unprojected:
       events: [PermissionDenied, PostToolUse, SessionStart, Stop, SubagentStart, SubagentStop, UserPromptSubmit]
-      matchers: [Agent, MultiEdit, NotebookEdit]
+      matchers: [Agent, MultiEdit, NotebookEdit, SendMessage]

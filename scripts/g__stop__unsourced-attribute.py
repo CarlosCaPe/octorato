@@ -169,7 +169,7 @@ _CODE_SIGNAL = re.compile(
 # the path the motivating incident actually took (a formal email via the mail MCP).
 _SEND_TOOL = re.compile(
     r"(send_message|send_email|draft_email|create_draft|update_draft|reply"
-    r"|forward|send_file|send_audio_message|wa-soporte)",
+    r"|forward|send_file|send_audio_message|send_reactions|wa-soporte)",
     re.IGNORECASE,
 )
 # Argument keys that carry human-readable body text in those tools.

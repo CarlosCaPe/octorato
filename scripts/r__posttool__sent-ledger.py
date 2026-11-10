@@ -54,7 +54,7 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 
 _SEND_TOOL = re.compile(
-    r"(send_email|send_message|send_file|send_audio_message|__reply$|__forward$)", re.IGNORECASE)
+    r"(send_email|send_message|send_file|send_audio_message|send_reactions|__reply$|__forward$)", re.IGNORECASE)
 _WA_STATUS = re.compile(r"message_id=([^\s\]]+)(?:\s+chat_jid=([^\s\]]*))?")
 
 
