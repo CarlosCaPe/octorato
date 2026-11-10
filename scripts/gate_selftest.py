@@ -101,12 +101,17 @@ def emits_block(returncode: int, stdout: str) -> bool:
 #     group (where a spawned gate's parent is), becomes a child subreaper and
 #     forks the gate as the leader of a new group, the leg's. It never reaps the
 #     gate, so the gate's pid, which IS the leg's group id, cannot be recycled
-#     while the supervisor lives. It exits, relaying the gate's exit status,
-#     once the gate has exited and no live process of the leg's group is left
-#     among its children (the subreaper adopts every orphan, so that is one
-#     /proc read, not a scan). The parent sees that exit with waitid(WNOWAIT)
-#     and reaps the supervisor after both pipes reached EOF (as subprocess.run
-#     reads to EOF). At the deadline it signals the group and the gate by id
+#     while the supervisor lives. Once the gate has exited and no live process
+#     of the leg's group is left among its children (the subreaper adopts
+#     every orphan, so that is one /proc read, not a scan), it writes the
+#     gate's status on its info pipe and exits. That message, never the
+#     supervisor's own exit code, is the leg's result: a supervisor that dies
+#     after its gate started (MemoryError, the OOM killer, a stray signal)
+#     exits non-zero too, and that exit read as the gate's would be a block
+#     nobody decided. A leg whose info pipe closes without a well-formed
+#     status raises LegRunnerError. The parent sees the supervisor's exit with
+#     waitid(WNOWAIT) and reaps it after every pipe reached EOF (as
+#     subprocess.run reads to EOF). At the deadline it signals the group and the gate by id
 #     only while the supervisor is still alive; once the supervisor has exited
 #     the group was empty, and nothing is signalled by an id that could have
 #     been recycled. Waiting for the group is stricter than subprocess.run,
@@ -170,10 +175,13 @@ def _run_replaced() -> bool:
 
 
 class LegRunnerError(RuntimeError):
-    """A forked leg whose gate never ran: its supervisor failed (EAGAIN on the
-    gate's fork, say) and exited 1 with no output. That is no verdict at all,
-    and a non-zero exit read as one would make an unblocking gate's violation
-    leg read as blocked, so it is raised, never returned as a LegResult."""
+    """A forked leg with no trustworthy verdict: its supervisor failed before
+    the gate ran (EAGAIN on the gate's fork, say), or it died after the gate
+    started and before it reported the gate's status (MemoryError, the OOM
+    killer, an external signal), or the status it reported is malformed. Each
+    leaves only the supervisor's own non-zero exit, and that read as the
+    gate's would make an unblocking gate's violation leg read as blocked, so
+    it is raised, never returned as a LegResult."""
 
 
 class LegResult:
@@ -343,6 +351,30 @@ def _live_in_group(group: int) -> bool:
     return False
 
 
+def _status_message(info) -> bytes:
+    """The supervisor's final message on the info pipe: how the gate ended, as
+    waitid reported it. run_scripts accepts exactly this shape and nothing
+    else (see _parse_status)."""
+    if info.si_code == os.CLD_EXITED:
+        return b"exit %d\n" % (info.si_status & 0xFF)
+    return b"signal %d\n" % info.si_status
+
+
+_STATUS_RE = re.compile(rb"(exit|signal) ([0-9]{1,3})\n")
+
+
+def _parse_status(raw: bytes):
+    """The gate's returncode from the supervisor's final message, or None when
+    the message is missing or malformed. None is never a verdict."""
+    m = _STATUS_RE.fullmatch(raw)
+    if m is None:
+        return None
+    n = int(m.group(2))
+    if m.group(1) == b"exit":
+        return n if n <= 255 else None
+    return -n if 1 <= n <= 64 else None
+
+
 def _fork_child(script: str, code, leg: dict, fds: tuple, close: list,
                 info_w: int, parent: int) -> None:
     """Runs in the forked child, the leg's supervisor, and never returns.
@@ -353,7 +385,9 @@ def _fork_child(script: str, code, leg: dict, fds: tuple, close: list,
     the parent the gate's pid on `info_w`, and becomes a child subreaper so every
     orphaned descendant of the gate is adopted here. It never reaps the gate:
     the gate stays a zombie, which keeps its pid, and so the leg's group id,
-    from being recycled while this supervisor lives.
+    from being recycled while this supervisor lives. When the leg is over it
+    writes the gate's status on `info_w` as a second message (_status_message):
+    that, not this process's exit code, is what the parent reports.
 
     Neither it nor the gate outlives the runner (`parent`): if the runner is
     SIGKILLed mid-leg, no deadline will ever fire, so the kernel's parent-death
@@ -435,8 +469,8 @@ def _fork_child(script: str, code, leg: dict, fds: tuple, close: list,
             pass
         if not _arm_parent_death(libc, signal.SIGTERM, parent):
             _orphaned(None, None)
-        os.write(info_w, str(gate).encode())
-        os.close(info_w)
+        os.write(info_w, b"%d\n" % gate)
+        # info_w stays open for the final status message below.
         # Only the gate and what it starts may hold the leg's pipes.
         for fd in (0, 1, 2):
             os.close(fd)
@@ -449,6 +483,10 @@ def _fork_child(script: str, code, leg: dict, fds: tuple, close: list,
         import time
         while _live_in_group(gate):
             time.sleep(0.01)
+        # The verdict. Without this message the parent raises LegRunnerError,
+        # whatever this process's exit code turns out to be.
+        os.write(info_w, _status_message(info))
+        os.close(info_w)
         if info.si_code == os.CLD_EXITED:
             os._exit(info.si_status & 0xFF)
         import resource
@@ -689,7 +727,14 @@ def run_scripts(legs: list, workers: int = 1) -> list:
                                      encoding=enc, errors=errs).read()
                     for fd in st["order"])
         _, status = os.waitpid(pid, 0)      # the leader is reaped only now
-        rc = -os.WTERMSIG(status) if os.WIFSIGNALED(status) else os.WEXITSTATUS(status)
+        # The gate's status comes from the supervisor's final message, never
+        # from the supervisor's own exit: a supervisor killed after its gate
+        # started exits non-zero, and that is no verdict.
+        rc = _parse_status(bytes(st["buf"][st["info"]]))
+        if rc is None:
+            raise LegRunnerError(
+                "leg %s: the supervisor (status %d) ended without reporting its "
+                "gate's status" % (leg["script"], status))
         results[st["i"]] = LegResult(rc, out, err)
 
     def _kill(pid: int) -> None:
@@ -788,17 +833,20 @@ def run_scripts(legs: list, workers: int = 1) -> list:
                 os.close(info_w)
                 os.close(out_w)
                 os.close(err_w)
+                # The first message is the gate's pid, one line. The final
+                # status may already follow it in the same read: keep the rest.
                 raw = b""
-                while True:
-                    chunk = os.read(info_r, 32)
+                while b"\n" not in raw:
+                    chunk = os.read(info_r, 64)
                     if not chunk:
                         break
                     raw += chunk
-                os.close(info_r)
-                gate_pid = int(raw) if raw.strip().isdigit() else None
+                line, nl, rest = raw.partition(b"\n")
+                gate_pid = int(line) if nl and line.isdigit() else None
             if gate_pid is None:
                 # The supervisor closed its end without naming a gate: it died
                 # before the gate could run, so nothing decided this leg.
+                os.close(info_r)
                 os.close(out_r)
                 os.close(err_r)
                 _, status = os.waitpid(pid, 0)
@@ -808,12 +856,15 @@ def run_scripts(legs: list, workers: int = 1) -> list:
             timeout = leg.get("timeout")
             running[pid] = {
                 "i": i, "gate": gate_pid, "exited": False,
-                "fds": {out_r, err_r}, "order": (out_r, err_r),
-                "buf": {out_r: bytearray(), err_r: bytearray()},
+                "fds": {out_r, err_r, info_r}, "order": (out_r, err_r),
+                "info": info_r,
+                "buf": {out_r: bytearray(), err_r: bytearray(),
+                        info_r: bytearray(rest)},
                 "deadline": time.monotonic() + timeout if timeout else float("inf"),
             }
             sel.register(out_r, selectors.EVENT_READ, pid)
             sel.register(err_r, selectors.EVENT_READ, pid)
+            sel.register(info_r, selectors.EVENT_READ, pid)
         while running:
             _pump()
     finally:
