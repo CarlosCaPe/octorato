@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "kdp-coloring-book",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Turns an operator-supplied original story or theme into a print-ready coloring book for Amazon KDP paperback: page plan, original line art via imagegen, interior PDF with bleed and margins, wrap cover with spine, and a pre-upload checklist. Never traces or derives from another book's artwork."
+}

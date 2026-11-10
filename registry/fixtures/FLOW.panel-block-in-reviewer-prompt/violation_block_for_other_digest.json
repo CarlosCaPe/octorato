@@ -1,0 +1,11 @@
+{
+  "session_id": "__selftest__",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "Panel review",
+    "subagent_type": "Reality Checker",
+    "prompt": "Review this:\n\nPANEL-TO: operator\nPANEL-BODY-BEGIN\nA different reply text that was never reviewed.\nPANEL-BODY-END\nPANEL-SHA256: 1691a5e8080759cca8f452fdd8437802edac62acdd125ed9045e5a6fce6522fb\n\nEnd your report by repeating the block above byte for byte, PANEL-TO through PANEL-BODY-END, then `PANEL-VERDICT: PASS | NEEDS-WORK` and `PANEL-SHA256: d1aed9b2a3aabcf9742f9989f3eed299b536e60833edc7325d235ef44d220401`."
+  },
+  "tool_use_id": "toolu_fixture"
+}

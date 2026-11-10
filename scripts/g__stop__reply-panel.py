@@ -58,7 +58,9 @@ THE DECISION (FR-03, checked in this order; the first that holds exits 0)
      `self-review of <path>`) is not a self source.
 Otherwise exit 2, stderr naming the source class, the quorum, the digest, the
 panel-request command and the
-accepted reviewer types. stop_hook_active changes nothing: no block-once.
+accepted reviewer types. Block-once (operator directive 2026-11-07): while
+stop_hook_active is true the stop goes through and the skip is journaled, so a
+receipt that cannot be recorded never loops the turn until the harness cap.
 
 THE OPERATOR PROMPT
 The newest user entry, walking back over tool results, task notifications,
@@ -736,6 +738,12 @@ def main() -> int:
         data = json.loads(sys.stdin.read())
         if not isinstance(data, dict):
             raise GateError("the Stop payload is not a JSON object")
+        if data.get("stop_hook_active") is True:
+            # Block-once: the first block already showed the panel request; a
+            # second one only loops (a reply is displayed before any Stop hook
+            # runs). The skip is journaled so it stays visible.
+            _journal_deny("reply panel skipped: stop_hook_active (block-once)", data)
+            return 0
         code, message = decide(data)
     except GateError as e:
         code, message = 2, f"REPLY PANEL (FLOW.panel-before-reply) cannot decide: {e}"

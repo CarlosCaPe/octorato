@@ -1,0 +1,11 @@
+{
+  "session_id": "__selftest__",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "Panel review",
+    "subagent_type": "Reality Checker",
+    "prompt": "Review this:\n\nPANEL-BODY-BEGIN\nThe fixture build is green: 6 block and 6 allow.\n\nProvenance: Basis: scripts/example.py\nPANEL-BODY-END\nPANEL-SHA256: ec255ed22c621efd85ef9e331c0d6ebba580e1e0635318f09d05b94181f11e4f\n\nEnd your report by repeating the block above byte for byte, PANEL-TO through PANEL-BODY-END, then `PANEL-VERDICT: PASS | NEEDS-WORK` and `PANEL-SHA256: ec255ed22c621efd85ef9e331c0d6ebba580e1e0635318f09d05b94181f11e4f`."
+  },
+  "tool_use_id": "toolu_fixture"
+}
