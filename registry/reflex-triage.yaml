@@ -196,7 +196,7 @@ decisions:
   - slug: feedback_panel_inside_the_send_ok_turn
     decision: gate
     mechanism: scripts/g__pretool-mcp__outward-send.py
-    reason: "both recurrences meet the send: every message send is denied without a PASS panel receipt for its exact digest (no hatch, covers the send-without-panel form), and a turn opened by a reviewer notification inherits the operator's latest send ask when the panel receipt postdates it (covers the lost-send-ok form)"
+    reason: "the deny fires at the send, not earlier: every message send is denied without a PASS panel receipt for its exact digest (no hatch), and a turn opened by a reviewer notification inherits the operator's latest send ask when the panel receipt postdates it; candidate holes: a send-ok typed while the turn is still running (queued as an attachment, not a user entry) is not read, the send-ok hatch is not inherited on the walk-back, and nothing checks the reviewer prompt shape before the panel launches"
     decided: 2026-11-10
   - slug: feedback_rehearse_user_first_login
     decision: demote
