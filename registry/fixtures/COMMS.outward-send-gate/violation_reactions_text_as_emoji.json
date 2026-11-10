@@ -1,0 +1,10 @@
+{
+  "session_id": "fx-abc",
+  "tool_name": "mcp__whatsapp__send_reactions",
+  "tool_input": {
+    "recipient": "5210000000000@lid",
+    "message": "3EB0AAAA1111 te_veo_a_las_5\n"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_reactions_text_as_emoji_transcript.jsonl"
+}
