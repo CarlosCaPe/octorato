@@ -177,3 +177,60 @@ decisions:
     decision: demote
     reason: "the root-cause fix lives in the arm's orchestrator (units, venv and REPO_ROOT on a dedicated main worktree, ff-pull under lock), not in the brain; candidate shape: a post-merge check that compares each scheduled unit's WorkingDirectory/ExecStart tree against the branch that received the merge"
     decided: 2026-09-29
+  - slug: feedback_a_rule_met_by_a_mechanism_is_not_the_deliverables_content
+    decision: demote
+    reason: "creative-ownership judgment: a brain rule already met by a platform label or a bio line is not restated inside the deliverable; no tool-call moment separates a requirement from a creative proposal. Candidate: none detectable"
+    decided: 2026-11-10
+  - slug: feedback_cite_to_a_counterpart_only_what_reached_them
+    decision: demote
+    reason: "the outward-send gate checks absence, attributes and promises, not whether a cited document or decision ever reached the counterpart; candidate shape: an outward-send check that flags a reference to an own document or section and requires a sent-folder seek receipt for it in the turn"
+    decided: 2026-11-10
+  - slug: feedback_generate_knowledge_from_canonical_data
+    decision: demote
+    reason: "design-review class (a hand-written copy of canonical data drifts); candidate shape: a PostToolUse reflex that warns on the second edit in a session to a text file whose changed values also appear in a tracked JSON or data file"
+    decided: 2026-11-10
+  - slug: feedback_my_own_deliverable_is_not_a_source
+    decision: demote
+    reason: "the basis of a claim about the counterpart's environment is judgment; candidate shape: the same extension recorded for lesson_my_own_expediente_is_not_a_primary_source (an outward-draft check that a counterpart-environment fact is backed by a counterpart artifact, not an own document)"
+    decided: 2026-11-10
+  - slug: feedback_panel_inside_the_send_ok_turn
+    decision: gate
+    mechanism: scripts/g__pretool-mcp__outward-send.py
+    reason: "the deny fires at the send, not earlier: every message send is denied without a PASS panel receipt for its exact digest (no hatch), and a turn opened by a reviewer notification inherits the operator's latest send ask when the panel receipt postdates it; candidate holes: a send-ok typed while the turn is still running (queued as an attachment, not a user entry) is not read, the send-ok hatch is not inherited on the walk-back, and nothing checks the reviewer prompt shape before the panel launches"
+    decided: 2026-11-10
+  - slug: feedback_rehearse_user_first_login
+    decision: demote
+    reason: "the end user's path (their resolver, browser, credential channel) is not observable by a hook; candidate shape: a Stop check that flags a 'live/up/works' status phrase when every receipt in the turn is server-side (forced resolve, DoH, an API) and none walks the user path"
+    decided: 2026-11-10
+  - slug: feedback_reread_the_channel_in_the_second_before_sending
+    decision: demote
+    reason: "g__pretool-mcp__chat-context.py forces a read only on the first send per chat per 30 minutes and only for one chat channel, so a draft composed on a stale read still passes, and mail is not covered; candidate shape: deny a send when the destination holds an incoming message newer than the last read of that thread in the turn"
+    decided: 2026-11-10
+  - slug: feedback_bank_debit_card_ignore_except_deposits
+    decision: demote
+    reason: "an operator triage preference for a read sweep (one account's charge alerts are noise, only a deposit is actionable); nothing outward to gate. Candidate: none"
+    decided: 2026-11-10
+  - slug: feedback_verify_settled_before_outward_reco
+    decision: demote
+    reason: "whether a recommendation reopens a settled decision is judgment; candidate shape: an outward-send check that flags an open-question framing (X vs Y) on a topic whose decision commit or log entry the turn never read"
+    decided: 2026-11-10
+  - slug: lesson_closed_definition_sweep_holders_by_old_value
+    decision: demote
+    reason: "the sweep is a procedure on the day a definition closes; candidate shape: a lineage check that lists files still holding the old value of a closed definition, keyed by value, not by edges"
+    decided: 2026-11-10
+  - slug: lesson_ledger_pending_is_stale_verify_against_arm_carril
+    decision: demote
+    reason: "reporting a pending item from a memory summary without opening the live operational document is a reasoning step; candidate shape: a Stop check that flags a 'pending/still missing' line sourced from a memory ledger when the turn holds no read of the domain's operational file"
+    decided: 2026-11-10
+  - slug: lesson_open_unidentified_item_blocks_absence_claim
+    decision: demote
+    reason: "measured: the absence detector shared by g__stop__unsourced-absence.py and the outward-send gate does not match non-arrival phrasing ('nothing has arrived', 'no deposit'), so the moment is not gated; candidate shape: extend that vocabulary and require the seek to cover open unidentified items of the same payment method"
+    decided: 2026-11-10
+  - slug: lesson_receipt_dropped_when_subagent_ends_during_foreground_wait
+    decision: demote
+    reason: "a measured but unisolated harness behavior (a receipt sometimes not written when a reviewer ends during a foreground wait), with a counterexample on record; candidate shape: the SubagentStop receipt writer, or a backfill pass in the reply-panel gate that recomputes a missing receipt from the reviewer transcript"
+    decided: 2026-11-10
+  - slug: lesson_reply_panel_zero_receipts_grep_the_ledger
+    decision: demote
+    reason: "the reply-panel deny already states that each reviewer must end with the full block, but the misdiagnosis that follows is not a tool-call moment; candidate shape: r__subagent-stop__qa-receipt.py logs a reviewer report that ends without the block, and the reply-panel deny names it"
+    decided: 2026-11-10

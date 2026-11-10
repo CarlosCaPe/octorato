@@ -1,0 +1,7 @@
+PANEL-TO: operator
+PANEL-BODY-BEGIN
+The fixture build is green: 6 block and 6 allow.
+
+Provenance: Basis: scripts/example.py
+PANEL-BODY-END
+PANEL-SHA256: d1aed9b2a3aabcf9742f9989f3eed299b536e60833edc7325d235ef44d220401
