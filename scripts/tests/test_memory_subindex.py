@@ -64,6 +64,35 @@ class RecallFollowsSubIndex(unittest.TestCase):
             self.assertNotIn("feedback_orphan.md", [h[2] for h in hits])
 
 
+    def test_prose_mention_does_not_link(self):
+        with tempfile.TemporaryDirectory() as d:
+            mem = _memory(Path(d))
+            (mem / "index_prose.md").write_text("- [Okapi tapir](feedback_orphan.md)\n", encoding="utf-8")
+            with open(mem / "MEMORY.md", "a", encoding="utf-8") as fh:
+                fh.write("Retired: see [old](index_prose.md) for history.\n")
+            names = [p.name for p in recall.index_files(mem / "MEMORY.md")]
+            self.assertNotIn("index_prose.md", names)
+
+    def test_one_hop_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            mem = _memory(Path(d))
+            (mem / "index_deep.md").write_text("- [Okapi tapir](feedback_orphan.md)\n", encoding="utf-8")
+            with open(mem / "index_extra.md", "a", encoding="utf-8") as fh:
+                fh.write("- [Deeper](index_deep.md)\n")
+            names = [p.name for p in recall.index_files(mem / "MEMORY.md")]
+            self.assertNotIn("index_deep.md", names)
+
+    def test_duplicate_listing_does_not_take_two_slots(self):
+        with tempfile.TemporaryDirectory() as d:
+            mem = _memory(Path(d))
+            with open(mem / "index_extra.md", "a", encoding="utf-8") as fh:
+                fh.write("- [Zebra quokka again](feedback_top.md)\n")
+            with open(mem / "MEMORY.md", "a", encoding="utf-8") as fh:
+                fh.write("- [Zebra quokka top](feedback_top.md)\n")
+            files = [h[2] for h in recall.score_lines(mem / "MEMORY.md", {"zebra", "quokka", "again", "top"})]
+            self.assertEqual(len(files), len(set(files)))
+
+
 class DoctorFollowsSubIndex(unittest.TestCase):
     def _run(self, d: Path):
         mem = _memory(d)
@@ -81,6 +110,20 @@ class DoctorFollowsSubIndex(unittest.TestCase):
         self.assertIn("memory directives (brain) 2/3", detail)
         self.assertIn("feedback_orphan", detail)
         self.assertNotIn("feedback_sub", detail.split("uncovered:")[-1])
+
+    def test_unlinked_or_prose_linked_index_does_not_cover(self):
+        with tempfile.TemporaryDirectory() as d:
+            dd = Path(d)
+            mem = _memory(dd)
+            (mem / "index_prose.md").write_text("- [Okapi](feedback_orphan.md)\n", encoding="utf-8")
+            with open(mem / "MEMORY.md", "a", encoding="utf-8") as fh:
+                fh.write("Retired: see [old](index_prose.md).\n")
+            (dd / "skills").mkdir()
+            with mock.patch.object(brain_doctor, "CLAUDE_DIR", dd), \
+                    mock.patch.object(brain_doctor, "_brain_memory_dir", return_value=mem), \
+                    mock.patch.object(brain_doctor, "_claude_anchors", return_value=[]):
+                res = brain_doctor.check_corpus_coverage(False)
+        self.assertIn("memory directives (brain) 2/3", res.message)
 
 
 if __name__ == "__main__":

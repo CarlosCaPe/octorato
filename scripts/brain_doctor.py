@@ -1340,16 +1340,21 @@ def check_corpus_coverage(fix: bool) -> Result:
         # MEMORY.md is split into sub-indexes (index_*.md, same dir) to stay under
         # the harness read limit. An entry in a sub-index MEMORY.md links is indexed:
         # the recall hook scores those files too (brain-memory-recall.index_files).
+        # Only MEMORY.md is injected at session start; a sub-index entry reaches
+        # context through the per-prompt recall alone.
         subidx_re = re.compile(r"\]\((index_[^)/]+\.md)\)")
         for d in {mf.parent for mf in mem_files}:
             idx = set()
             mm = d / "MEMORY.md"
             index_paths = [mm] if mm.exists() else []
             if mm.exists():
-                for sm in subidx_re.finditer(_rt(mm)):
-                    sp = d / sm.group(1)
-                    if sp.is_file() and sp not in index_paths:
-                        index_paths.append(sp)
+                for mln in _rt(mm).splitlines():
+                    if not mln.strip().startswith("- ["):
+                        continue  # same rule as recall: only an index entry links
+                    for sm in subidx_re.finditer(mln):
+                        sp = d / sm.group(1)
+                        if sp.is_file() and sp not in index_paths:
+                            index_paths.append(sp)
             for ip in index_paths:
                 for ln in _rt(ip).splitlines():
                     ln = ln.strip()
@@ -1396,7 +1401,7 @@ def check_corpus_coverage(fix: bool) -> Result:
         + " | "
         + (mem_note if mem_note else
            f"memory directives (brain) {brain_cov}/{brain_total} "
-           f"({brain_direct} rule-direct + {brain_cov - brain_direct} REFLEX, injected, obedience unproven)"
+           f"({brain_direct} rule-direct + {brain_cov - brain_direct} REFLEX, recall-indexed, obedience unproven)"
            + (f" (uncovered: {', '.join(brain_uncov[:10])})" if brain_uncov else "")
            + f"; {arm_total} arm-scoped (separate repo, not brain-gated)"
            + (f" [{len(arm_uncov)} not recall-indexed]" if arm_uncov else ""))
