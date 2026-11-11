@@ -45,7 +45,7 @@ KNOWN_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop",
 # A hook command may only invoke a local interpreter on a ~/.claude script — no inline
 # curl/wget, no embedded tokens, no absolute home paths.
 SAFE_COMMAND_RE = re.compile(
-    r"^(python3?|bash|sh|node)\s+~?/?\.?(/)?\.claude/\S+(\s+--?[\w-]+(\s+\S+)?)*\s*$"
+    r"^(python3?|bash|sh|node)\s+~?/?\.?(/)?\.claude/\S+(\s+--?\w[\w-]*(\s+[^\s-]\S*)?)*\s*$"
 )
 
 
