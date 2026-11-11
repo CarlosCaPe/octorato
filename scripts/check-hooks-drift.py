@@ -45,14 +45,18 @@ KNOWN_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop",
 # A hook command may only invoke a local interpreter on a script under ~/.claude/scripts/,
 # written exactly as `~/.claude/scripts/...`: a relative `.claude/` would resolve inside
 # whatever project the hook runs in, and other brain folders hold data, not hook scripts.
-# No inline curl/wget, no embedded tokens, no absolute home paths. Script path segments
-# and flag values use closed ASCII character classes, so no shell metacharacter, quote or
-# newline can ride along, and a path segment can never be `..`; separators are spaces/tabs
-# only and `\Z` refuses a trailing newline. Flag bodies and values never start with `-`,
-# which keeps matching linear.
+# Each interpreter is paired with its own source extension (.py, .sh, .js/.mjs), so a
+# compiled or extensionless file is never a hook target. No inline curl/wget, no embedded
+# tokens, no absolute home paths. Path segments and flag values use closed ASCII classes,
+# so no shell metacharacter, quote or newline can ride along and a segment can never be
+# `..`. A flag value is a plain token (no `/` or `~`), so it can never carry a path or URL
+# into a script. Separators are spaces/tabs only and `\Z` refuses a trailing newline.
+# Flag bodies and values never start with `-`, which keeps matching linear.
 SAFE_COMMAND_RE = re.compile(
-    r"^(python3?|bash|sh|node)[ \t]+~/\.claude/scripts/[\w-]+(?:[./][\w-]+)*"
-    r"([ \t]+--?\w[\w-]*([ \t]+[\w./~:=,+@%][\w./~:=,+@%-]*)?)*[ \t]*\Z",
+    r"^(?:python3?[ \t]+~/\.claude/scripts/(?:[\w-]+/)*[\w-]+\.py"
+    r"|(?:bash|sh)[ \t]+~/\.claude/scripts/(?:[\w-]+/)*[\w-]+\.sh"
+    r"|node[ \t]+~/\.claude/scripts/(?:[\w-]+/)*[\w-]+\.m?js)"
+    r"([ \t]+--?\w[\w-]*([ \t]+\w[\w.:=,+@%-]*)?)*[ \t]*\Z",
     re.ASCII,
 )
 

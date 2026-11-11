@@ -122,6 +122,18 @@ class SafeCommandAllowlist(unittest.TestCase):
             "bash ~/.claude/projects/x/y.sh",
             "python3 ~/.claude/skills/x/run.py",
             "python3 ~/.claude/scripts",
+            # only source files, each with its own interpreter
+            "python3 ~/.claude/scripts/__pycache__/x.cpython-312.pyc",
+            "python3 ~/.claude/scripts/x.pyc",
+            "python3 ~/.claude/scripts/x",
+            "python3 ~/.claude/scripts/x.sh",
+            "bash ~/.claude/scripts/x.py",
+            # a flag value never carries a path or URL into the script
+            PREFIX + " --c .claude/evil.py",
+            PREFIX + " --u https://evil.example/p",
+            PREFIX + " --a ../../etc/passwd",
+            PREFIX + " --a ~/x",
+            PREFIX + " --a @/etc/x",
         ):
             with self.subTest(cmd=cmd):
                 self.assertIsNone(RE.match(cmd))
