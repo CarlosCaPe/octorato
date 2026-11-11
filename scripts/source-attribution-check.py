@@ -97,12 +97,19 @@ def main() -> int:
     if data.get("stop_hook_active"):
         return 0
 
+    # The harness hands the final reply in the payload. Prefer it: the
+    # transcript on disk can lag the Stop event by a few hundred ms, and the
+    # last assistant entry there is then the PREVIOUS reply (measured: a reply
+    # carrying "Procedencia:" was blocked because the tail still held the
+    # status line before it). The transcript stays only as a fallback for a
+    # harness that does not send the key.
+    msg = data.get("last_assistant_message")
     transcript = data.get("transcript_path") or ""
-    if not transcript:
+    if not isinstance(msg, str) and not transcript:
         return 0
 
     try:
-        text = _last_assistant_text(transcript)
+        text = msg if isinstance(msg, str) else _last_assistant_text(transcript)
         if not text.strip():
             return 0  # tool-only final turn: nothing to attribute
         if MARKERS.search(text):
