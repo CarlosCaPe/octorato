@@ -111,6 +111,17 @@ class SafeCommandAllowlist(unittest.TestCase):
             # non-ASCII look-alikes stay outside the closed classes
             "python3 ~/.claude/ｓcripts/x.py",
             PREFIX + " --x ；id",
+            # relative or rootless .claude prefixes resolve inside the current project
+            "python3 .claude/x.py",
+            "python3 .claude/scripts/x.py",
+            "python3 ./.claude/scripts/x.py",
+            "python3 /.claude/scripts/x.py",
+            "python3 ~.claude/scripts/x.py",
+            # brain folders other than scripts/ hold data, not hook scripts
+            "python3 ~/.claude/x.py",
+            "bash ~/.claude/projects/x/y.sh",
+            "python3 ~/.claude/skills/x/run.py",
+            "python3 ~/.claude/scripts",
         ):
             with self.subTest(cmd=cmd):
                 self.assertIsNone(RE.match(cmd))
