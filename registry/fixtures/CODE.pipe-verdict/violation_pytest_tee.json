@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "pytest -q tests/ | tee run.log"
+  },
+  "cwd": "/home/user/project"
+}

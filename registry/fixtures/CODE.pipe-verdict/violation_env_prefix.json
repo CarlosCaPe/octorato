@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "GIT_TERMINAL_PROMPT=0 git -C /repo push origin feat/x | tail -1"
+  },
+  "cwd": "/home/user/project"
+}

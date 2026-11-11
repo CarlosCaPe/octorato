@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "set -euo pipefail\npytest -q | tee run.log"
+  },
+  "cwd": "/home/user/project"
+}

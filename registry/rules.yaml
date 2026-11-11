@@ -901,6 +901,33 @@ rules:
     locator: ULTRA RULE — Machine register
     expect: present
   liveness_required: PRESENT
+- id: CODE.pipe-verdict
+  title: A piped verdict command does not own its exit code
+  category: CODE
+  source:
+    file: skills/post-check-verification/SKILL.md
+    anchor: '## A piped command does not own its exit code'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__pretool-bash__pipe-verdict.py
+    firing_event: PreToolUse
+    firing_matcher: Bash
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Bash|g__pretool-bash__pipe-verdict.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool-bash__pipe-verdict.py --selftest registry/fixtures/CODE.pipe-verdict
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: '## A piped command does not own its exit code'
+    expect: present
+  liveness_required: FIRES
 - id: GIT.version-control
   title: Git and version control — atomic commit discipline
   category: GIT

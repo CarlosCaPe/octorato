@@ -9,10 +9,10 @@
 | Skills | 247 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 144 |
+| Scripts: wired | 145 |
 | Scripts: orphan | 7 |
-| Rules | 107 |
-| Hook entries | 62 |
+| Rules | 108 |
+| Hook entries | 63 |
 
 ## Skills (247)
 
@@ -500,7 +500,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (151)
+## Scripts (152)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -555,6 +555,7 @@
 | friction_ledger.py | friction_ledger.py: every gate deny and Stop block, counted by the system (v10 FR-01). | wired |
 | g__pretool-agent__panel-block.py | g__pretool-agent__panel-block.py: a panel review request carries its block. | wired |
 | g__pretool-bash__git-discipline.py | g__pretool-bash__git-discipline.py: PreToolUse gate for the deterministic subset of GIT.version-cont... | wired |
+| g__pretool-bash__pipe-verdict.py | g__pretool-bash__pipe-verdict.py: PreToolUse gate for CODE.pipe-verdict. | wired |
 | g__pretool-bash__prod-write.py | PreToolUse Bash hook , compuerta de ESCRITURA EN PRODUCCION (FAIL-CLOSED). | wired |
 | g__pretool-bash__tree-owner.py | g__pretool-bash__tree-owner.py: one writer per tree and per lane (Bash side). | wired |
 | g__pretool-mcp__chat-context.py | g__pretool-mcp__chat-context.py: PreToolUse gate for COMMS.chat-context-before-send. | wired |
@@ -656,7 +657,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (107)
+## Rules (108)
 
 ### ARCHITECTURE
 
@@ -691,6 +692,7 @@
 - CODE.do-it-right
 - CODE.dry-run-first
 - CODE.file-organization
+- CODE.pipe-verdict
 - CODE.prompt-defense
 - CODE.qa-merge-gate
 - CODE.universal-discipline
@@ -801,7 +803,7 @@
 |---|---|
 | PermissionDenied | r__permission-denied__journal.py |
 | PostToolUse | budget-check.py, cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, r__posttool-bash__external-review.py, r__posttool__receipt-seek.py, r__posttool__sent-ledger.py, trace-hook.py |
-| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-agent__panel-block.py, g__pretool-bash__git-discipline.py, g__pretool-bash__tree-owner.py, g__pretool-mcp__chat-context.py, g__pretool-mcp__outward-send.py, g__pretool-write__tree-owner.py, g__pretool__arming-surface.py, g__pretool__export-flip.py, g__pretool__kernel.py, grafo-gate.py, qa-merge-gate.py, r__pretool-bash__external-review.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
+| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-agent__panel-block.py, g__pretool-bash__git-discipline.py, g__pretool-bash__pipe-verdict.py, g__pretool-bash__tree-owner.py, g__pretool-mcp__chat-context.py, g__pretool-mcp__outward-send.py, g__pretool-write__tree-owner.py, g__pretool__arming-surface.py, g__pretool__export-flip.py, g__pretool__kernel.py, grafo-gate.py, qa-merge-gate.py, r__pretool-bash__external-review.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
 | SessionStart | budget-check.py, merge-hooks.py, r__session__proc-register.py, session-isolation-hook.py |
 | Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__defer-today.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, g__stop__goal-anchor.py, g__stop__no-menu-question.py, g__stop__paste-ready-raw.py, g__stop__reply-panel.py, g__stop__unsourced-absence.py, g__stop__unsourced-attribute.py, grafo-ledger-check.py, no-pause-suggestion.py, r__stop__friction-ledger.py, source-attribution-check.py, trace-hook.py |
 | SubagentStart | r__subagent-start__proc-register.py |

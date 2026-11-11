@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git push -q origin feat/x 2>&1 | tail -3"
+  },
+  "cwd": "/home/user/project"
+}

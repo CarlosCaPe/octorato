@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "pytest -q || echo failed"
+  },
+  "cwd": "/home/user/project"
+}

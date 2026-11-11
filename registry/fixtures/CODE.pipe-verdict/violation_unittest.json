@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cd /repo && python3 -m unittest discover -s scripts/tests 2>&1 | tail -5"
+  },
+  "cwd": "/home/user/project"
+}

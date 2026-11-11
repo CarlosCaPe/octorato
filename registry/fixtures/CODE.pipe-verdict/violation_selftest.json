@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "python3 scripts/g__pretool__arming-surface.py --selftest | tail -25; echo \"EXIT=$?\""
+  },
+  "cwd": "/home/user/project"
+}

@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "pytest -q | tee run.log; echo \"rc=${PIPESTATUS[0]}\""
+  },
+  "cwd": "/home/user/project"
+}

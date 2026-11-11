@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git log --oneline | head -5"
+  },
+  "cwd": "/home/user/project"
+}

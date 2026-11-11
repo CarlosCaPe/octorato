@@ -221,6 +221,12 @@
           "type": "command"
         },
         {
+          "command": "python3 ~/.claude/scripts/g__pretool-bash__pipe-verdict.py",
+          "statusMessage": "♦ pipe verdict (pipefail on push/tests)...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
           "command": "python3 ~/.claude/scripts/g__pretool-bash__tree-owner.py",
           "statusMessage": "⚙ kernel: one writer per tree...",
           "timeout": 5,

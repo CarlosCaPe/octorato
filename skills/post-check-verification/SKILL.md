@@ -92,6 +92,27 @@ the result.
 - After every deployment (the log IS the evidence)
 - The post-check output goes into the CLOSURE_NOTE as deployment evidence
 
+## A piped command does not own its exit code
+
+The same gap exists in the shell. Without `pipefail`, a pipeline's exit status
+is the status of its LAST stage. `git push origin feat 2>&1 | tail -3` reports
+`tail`'s 0 when the pre-push hook rejected the push, and `pytest | tee run.log`
+reports `tee`'s 0 on a red suite. The harness then prints "exit code 0", and
+that number belongs to a program that did nothing worth reporting.
+
+For any command whose exit status IS the verdict (a push, a `--selftest`, a
+test suite, the brain doctor):
+
+- redirect instead of piping: `<cmd> > run.log 2>&1; echo "x=$?"`, then read the log;
+- or arm `set -o pipefail;` first, or read `${PIPESTATUS[0]}`;
+- and for a push, run `git ls-remote` before saying it landed.
+
+`scripts/g__pretool-bash__pipe-verdict.py` (PreToolUse `Bash`, rule
+`CODE.pipe-verdict`) denies a verdict command piped into a later stage when
+the command arms no `pipefail` before it and reads no `PIPESTATUS`. It does not
+see a pipeline inside `bash -c "..."`, `$( ... )`, backticks or `eval`, or a
+verdict command missing from its pattern list. Those stay model-side.
+
 ## Where We Used It
 
 - ****: 8/8 (4 columns + 4 procedures)
