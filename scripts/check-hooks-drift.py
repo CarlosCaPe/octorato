@@ -44,12 +44,14 @@ KNOWN_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop",
                 "Notification", "PreCompact", "SessionStart"}
 # A hook command may only invoke a local interpreter on a ~/.claude script — no inline
 # curl/wget, no embedded tokens, no absolute home paths. Script path segments and flag
-# values use closed character classes, so no shell metacharacter, quote, `..` segment or
-# newline can ride along; separators are spaces/tabs only and `\Z` refuses a trailing
-# newline. Flag bodies and values never start with `-`, which keeps matching linear.
+# values use closed ASCII character classes, so no shell metacharacter, quote or newline
+# can ride along, and a path segment can never be `..`; separators are spaces/tabs only
+# and `\Z` refuses a trailing newline. Flag bodies and values never start with `-`, which
+# keeps matching linear.
 SAFE_COMMAND_RE = re.compile(
     r"^(python3?|bash|sh|node)[ \t]+~?/?\.?(/)?\.claude/[\w-]+(?:[./][\w-]+)*"
-    r"([ \t]+--?\w[\w-]*([ \t]+[\w./~:=,+@%][\w./~:=,+@%-]*)?)*[ \t]*\Z"
+    r"([ \t]+--?\w[\w-]*([ \t]+[\w./~:=,+@%][\w./~:=,+@%-]*)?)*[ \t]*\Z",
+    re.ASCII,
 )
 
 

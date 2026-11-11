@@ -108,6 +108,9 @@ class SafeCommandAllowlist(unittest.TestCase):
             # newline as a command separator, or trailing
             PREFIX + " --a\nrm -rf ~",
             PREFIX + "\n",
+            # non-ASCII look-alikes stay outside the closed classes
+            "python3 ~/.claude/ｓcripts/x.py",
+            PREFIX + " --x ；id",
         ):
             with self.subTest(cmd=cmd):
                 self.assertIsNone(RE.match(cmd))
