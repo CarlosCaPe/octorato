@@ -49,8 +49,9 @@ KNOWN_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop",
 # compiled or extensionless file is never a hook target. No inline curl/wget, no embedded
 # tokens, no absolute home paths. Path segments and flag values use closed ASCII classes,
 # so no shell metacharacter, quote or newline can ride along and a segment can never be
-# `..`. A flag value is a plain token (no `/` or `~`), so it can never carry a path or URL
-# into a script. Separators are spaces/tabs only and `\Z` refuses a trailing newline.
+# `..`. A flag value is a plain token with no `/` or `~`: at most it names one entry in the
+# hook's working directory, never a traversal, an absolute or home path, or a `scheme://`
+# URL. Separators are spaces/tabs only and `\Z` refuses a trailing newline.
 # Flag bodies and values never start with `-`, which keeps matching linear.
 SAFE_COMMAND_RE = re.compile(
     r"^(?:python3?[ \t]+~/\.claude/scripts/(?:[\w-]+/)*[\w-]+\.py"
