@@ -91,6 +91,26 @@ class SafeCommandAllowlist(unittest.TestCase):
             "python3 /home/u/.claude/scripts/x.py",
             PREFIX + " --",
             PREFIX + " ---a",
+            # shell metacharacters in a flag value
+            PREFIX + " --x ;rm -rf ~",
+            PREFIX + " --x $(id)",
+            PREFIX + " --x |sh",
+            PREFIX + " --x `id`",
+            PREFIX + " --x a&&b",
+            PREFIX + " --x 'a;b'",
+            PREFIX + " --x >/etc/passwd",
+            # shell metacharacters or traversal in the script path
+            "python3 ~/.claude/x.py;id",
+            "python3 ~/.claude/$(id)",
+            "python3 ~/.claude/`id`.py",
+            "python3 ~/.claude/../../tmp/evil.py",
+            "python3 ~/.claude/scripts/../../tmp/evil.py",
+            # newline as a command separator, or trailing
+            PREFIX + " --a\nrm -rf ~",
+            PREFIX + "\n",
+            # non-ASCII look-alikes stay outside the closed classes
+            "python3 ~/.claude/ｓcripts/x.py",
+            PREFIX + " --x ；id",
         ):
             with self.subTest(cmd=cmd):
                 self.assertIsNone(RE.match(cmd))
