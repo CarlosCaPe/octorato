@@ -6,14 +6,19 @@ whose authority it rests. v6 promotes this from advisory to a fail-closed GATE:
 block ONCE when the final reply carries no provenance marker, so the footer is
 appended before the operator ever sees the answer.
 
-The two false-positive classes that kept this advisory are killed by porting the
-proven tail-read from cadence-stop-hook.py:63-97:
-  - read ONLY the LAST assistant entry (never a stale earlier tool-turn message);
+Read order: the payload's last_assistant_message is the reply being judged.
+The transcript tail is only a fallback for a harness that does not send that
+key (absent, null or not a string), because the file on disk can lag the Stop
+event and its last assistant entry is then the previous reply. An empty or
+whitespace message means a text-free final turn: nothing to attribute.
+  - the fallback reads ONLY the LAST assistant entry (ported from
+    cadence-stop-hook.py:63-97);
   - one forced rewrite per turn via the stop_hook_active loop guard.
 
 Fail-open on every error: a broken hook must never hold a conversation hostage.
 
-Stdin:  {"transcript_path": str, "stop_hook_active": bool, ...}
+Stdin:  {"last_assistant_message": str, "transcript_path": str,
+         "stop_hook_active": bool, ...}
 Stdout: {"decision": "block", "reason": "..."} when the marker is absent, else nothing.
 Exit:   always 0.
 """
