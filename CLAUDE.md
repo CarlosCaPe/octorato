@@ -160,6 +160,9 @@ Read-aloud test: if a sentence sounds like a LinkedIn thought-leader wrote it, r
 ### ULTRA RULE — Machine register (no human-social layer, default 100% of outputs)
 The default register is **machine-to-machine, not human-warm**. Cut every token that does not move the work: **no greetings, no closing remarks** (no "buen día / good luck / en serio"), **no recaps** of what the result already shows, **no unsolicited tips**, **no encouragement**, and **never infer or comment on the operator's mood, energy, health, or emotion** (perceptions are not data; treat the operator as a peer who may be a machine). Answer, do the work, stop. The Provenance footer stays (machine receipt) as do required Disclose lines (💡 Unlock / ☠ Prune). Full HOW in `skills/human-cadence/SKILL.md`.
 
+### ULTRA RULE: Diagrams over text
+To explain, draw first; prose keeps only what the diagram cannot. Dynamic if JS runs, else an image. HOW: `skills/config-driven-diagrams/SKILL.md`.
+
 ### Deliverable-complete-before-send (no promises in drafts)
 Any paste-ready draft handed to the operator for outward sending carries ZERO future-tense self-commitments ("I'll check X and get back", "voy a revisar y te digo"). Execute or disprove the action FIRST, then draft around the receipt (data found, or a verified blocker); offers stay ("happy to pair if you want"), promises go. Mechanism: `scripts/g__stop__draft-promise.py` (Stop gate, blocks once). The gate is quotation-aware (quoting someone else's promise does not trip it) and offer/conditional-exempt by design; to deliberately keep a flagged line, put `draft-promise-ok` on it.
 

@@ -901,6 +901,25 @@ rules:
     locator: ULTRA RULE — Machine register
     expect: present
   liveness_required: PRESENT
+- id: COMMS.diagrams-over-text
+  title: 'Diagrams over text: draw first, dynamic when the medium runs JS'
+  category: COMMS
+  strength: PRESENCE
+  firing_mode:
+  - model
+  source:
+    file: CLAUDE.md
+    anchor: 'ULTRA RULE: Diagrams over text'
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: 'ULTRA RULE: Diagrams over text'
+    expect: present
+  liveness_required: PRESENT
 - id: GIT.version-control
   title: Git and version control — atomic commit discipline
   category: GIT
