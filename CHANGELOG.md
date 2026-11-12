@@ -15,6 +15,32 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-11-11]: v11.11.10
+### Fixes
+- fix(hooks): pair interpreters with source extensions and keep paths out of flag values (#460)
+
+## [2026-11-11]: v11.11.9
+### Fixes
+- fix(hooks): pin the --adopt allowlist to ~/.claude/scripts/ (#459)
+
+## [2026-11-11]: v11.11.8
+### Fixes
+- fix(hooks): close shell-metacharacter gaps in the --adopt allowlist (#458)
+
+## [2026-11-11]: v11.11.7
+### Other
+- test(hooks): pin SAFE_COMMAND_RE against ReDoS regressions (#457)
+
+## [2026-11-11]: v11.11.6
+### Fixes
+- fix(hooks): remove exponential backtracking from SAFE_COMMAND_RE (#456)
+
+## [2026-11-11]: v11.11.5
+### Fixes
+- fix(hooks): read last_assistant_message in source-attribution-check (#455)
+### Other
+- docs(changelog): backfill v11.9.1 to v11.11.4 (#454)
+
 ## [2026-11-10]: v11.11.4
 ### Fixes
 - fix(gate-selftest): a supervisor that dies after its gate started is a runner error, not a block (#441)
