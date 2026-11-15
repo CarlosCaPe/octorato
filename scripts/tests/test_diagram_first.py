@@ -69,6 +69,14 @@ class MatcherTest(unittest.TestCase):
     def test_numbered_steps_block(self):
         self.assertIn("numbered", self.v("Steps:\n\n1. read\n2. hash\n3. record\n\n" + FILL))
 
+    def test_numbered_steps_with_sub_bullets_block(self):
+        reply = "1. read\n   - skip binaries\n2. hash\n   - one per commit\n3. record\n\n" + FILL
+        self.assertIn("numbered", self.v(reply))
+
+    def test_unindented_line_breaks_the_numbered_run(self):
+        reply = "1. read\nNote here.\n2. hash\nNote here.\n3. record\n\n" + FILL
+        self.assertEqual(self.v(reply), "")
+
     def test_before_after_block_en_and_es(self):
         self.assertIn("before/after", self.v("**Before:** slow.\n\n**After:** fast.\n\n" + FILL))
         self.assertIn("before/after", self.v("- Antes: lento.\n- Después: rápido.\n\n" + FILL))
@@ -176,7 +184,7 @@ class WiringTest(unittest.TestCase):
         self.assertIn("liveness_required: FIRES", block)
         self.assertIn("### Diagram-first", (ROOT / "CLAUDE.md").read_text(encoding="utf-8"))
         names = {p.name for p in FIXTURES.glob("*.json")}
-        for v in ("flow", "numbered", "before_after", "es", "status", "structure", "late_diagram"):
+        for v in ("flow", "numbered", "numbered_nested", "before_after", "es", "status", "structure", "late_diagram"):
             self.assertIn(f"violation_{v}.json", names)
             self.assertIn(f"benign_{v}.json", names)
         for b in ("short", "paste_ready", "input_needed", "status_line", "hatch", "codeblock",

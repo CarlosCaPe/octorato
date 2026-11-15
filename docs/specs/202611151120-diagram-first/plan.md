@@ -15,3 +15,7 @@ Worktree `~/.octorato/wt/diagram-first`; the live `~/.claude` copy is never edit
 - [ ] T05 [AC-12] skills/human-cadence/SKILL.md: the HOW section with grammar, scope, exemptions, hatch and one example.
 - [ ] T06 [AC-11, AC-15] connectome/lineage.yaml, CHANGELOG.md, docs/CAPABILITIES.md: the lineage node, the Unreleased changelog line and the regenerated capability manifest.
 - [ ] T07 [AC-01, AC-02, AC-03, AC-04, AC-05, AC-06, AC-07, AC-08, AC-09, AC-10, AC-11, AC-13, AC-14, AC-15] scripts/tests/test_diagram_first.py: matcher, process and wiring tests.
+
+## Convergence 1
+
+- [ ] T08 [AC-01] scripts/g__stop__diagram-first.py: `_flow` resets the numbered run on any non-blank non-numbered line, so three numbered steps each followed by an indented sub-bullet (`1. a / - x / 2. b / - y / 3. c`, 90 words of prose) pass unblocked although they are three consecutive items of one numbered list; keep the run across lines indented deeper than the numbered item and pin the case with a violation fixture and a test in scripts/tests/test_diagram_first.py.

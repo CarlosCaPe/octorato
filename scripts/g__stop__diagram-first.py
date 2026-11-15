@@ -220,13 +220,19 @@ def _flow(prose: list) -> str:
     arrows = sum(len(_ARROW.findall(ln)) for ln in prose)
     if arrows >= MIN_ARROWS:
         return f"flow ({arrows} arrows in prose)"
+    # A line indented deeper than the numbered item (a sub-bullet or a wrapped
+    # continuation) belongs to that item and does not break the run.
     run = best = 0
+    item_indent = None
     for ln in prose:
+        line = ln.expandtabs(4)
+        indent = len(line) - len(line.lstrip())
         if _NUMBERED.match(ln):
             run += 1
             best = max(best, run)
-        elif ln.strip():
-            run = 0
+            item_indent = indent
+        elif ln.strip() and (item_indent is None or indent <= item_indent):
+            run, item_indent = 0, None
     if best >= MIN_NUMBERED:
         return f"flow ({best} numbered steps)"
     return ""
