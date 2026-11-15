@@ -1,0 +1,17 @@
+# Plan: Diagram-First Replies
+
+> **Status:** draft
+> **Spec-Format:** ears-1
+> **Feature:** feature.md
+
+Worktree `~/.octorato/wt/diagram-first`; the live `~/.claude` copy is never edited (arming surface). The gate is modelled on `scripts/g__stop__paste-ready-raw.py` (transcript tail reader, last operator prompt, fence parser) and `scripts/g__stop__no-menu-question.py` (prose stripping, footer and Disclose markers).
+
+## Tasks
+
+- [ ] T01 [AC-01, AC-02, AC-03, AC-04, AC-05, AC-06, AC-07, AC-08, AC-09] scripts/g__stop__diagram-first.py: the Stop gate (prose stripping, word floor, the four shapes, opening-diagram check, paste-ask and input-needed exemptions, hatch, block once, fail open, kernel journal mirror, `--selftest`).
+- [ ] T02 [AC-10] registry/fixtures/COMMS.diagram-first/: violation and benign twins for flow, numbered, before/after, Spanish, status, structure and late-diagram, plus the benign short, paste-ready, input-needed, status-line, hatch, code, blockquote and plain-prose fixtures.
+- [ ] T03 [AC-10, AC-11] registry/rules.yaml, hooks.json, registry/friction-signatures.json: the rule entry mirroring COMMS.no-menu-question, the Stop registration next to its siblings, and the `DIAGRAM-FIRST` signature.
+- [ ] T04 [AC-11] CLAUDE.md: the "Diagram-first" paragraph in the Communication section, kept inside the 12,000-token ceiling.
+- [ ] T05 [AC-12] skills/human-cadence/SKILL.md: the HOW section with grammar, scope, exemptions, hatch and one example.
+- [ ] T06 [AC-11] connectome/lineage.yaml, CHANGELOG.md, docs/CAPABILITIES.md: the lineage node, the Unreleased changelog line and the regenerated capability manifest.
+- [ ] T07 [AC-01, AC-02, AC-03, AC-04, AC-05, AC-06, AC-07, AC-08, AC-09, AC-10, AC-11] scripts/tests/test_diagram_first.py: matcher, process and wiring tests.
