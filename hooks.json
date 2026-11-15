@@ -357,6 +357,12 @@
           "type": "command"
         },
         {
+          "command": "python3 ~/.claude/scripts/g__stop__diagram-first.py",
+          "statusMessage": "🗺 diagram-first check (explanatory reply opens with a diagram)...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
           "command": "python3 ~/.claude/scripts/source-attribution-check.py",
           "timeout": 5,
           "type": "command"
