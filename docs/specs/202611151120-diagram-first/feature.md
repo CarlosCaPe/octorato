@@ -1,6 +1,6 @@
 # Feature: Diagram-First Replies
 
-> **Status:** draft
+> **Status:** converged
 > **Spec-Format:** ears-1
 > **Date:** 2026-11-15
 > **Classification:** LARGE (score 9: 10+ files, new feature, multiple modules)

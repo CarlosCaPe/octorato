@@ -1,6 +1,6 @@
 # Plan: Diagram-First Replies
 
-> **Status:** draft
+> **Status:** converged
 > **Spec-Format:** ears-1
 > **Feature:** feature.md
 
