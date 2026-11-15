@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "status?"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "PR 12: merged\nPR 13: pending\nPR 14: blocked\nPR 15: open -> waiting -> QA\n\nProvenance: Basis: scripts/g__stop__diagram-first.py · Engine: build · Touched: none · Verified: selftest"}]}}

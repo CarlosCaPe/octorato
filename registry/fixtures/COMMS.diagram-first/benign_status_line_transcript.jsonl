@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "go"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Converge pass running in the background; it reads the spec, the gate and the tests -> verdict.\n\nProvenance: Basis: scripts/g__stop__diagram-first.py · Engine: build · Touched: none · Verified: selftest"}]}}
