@@ -15,6 +15,9 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+### Features
+- feat(gates): `COMMS.diagram-first`: Stop gate, a reply that explains a flow, a before/after, a multi-item status or a structure opens with an ASCII diagram in a code block; short, paste-ready and `input-needed:` replies exempt, hatch `diagram-ok`
+
 ## [2026-11-11]: v11.11.10
 ### Fixes
 - fix(hooks): pair interpreters with source extensions and keep paths out of flag values (#460)
