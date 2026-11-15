@@ -63,7 +63,10 @@ _INPUT_LABEL = re.compile(r"^[*_\s]*input-needed[*_]*\s*:", re.IGNORECASE)
 _WORD = re.compile(r"[^\W_]", re.UNICODE)
 _LIST_MARKER = re.compile(r"^(?:\d{1,2}[.)]|[a-zA-Z][.)])$")
 
-_ARROW = re.compile(r"-->|->|=>|→|⟶|─►")
+# `-+>` covers `->`, `-->` and `--->` as ONE arrow each. Spelled this way, and
+# not as a `-->` alternative, so a static analyzer does not read the arrow
+# token as an HTML comment terminator (this gate parses no HTML).
+_ARROW = re.compile(r"-+>|=>|→|⟶|─►")
 _NUMBERED = re.compile(r"^\s*\d{1,2}[.)]\s+\S")
 _LIST_ITEM = re.compile(r"^(?P<indent>\s*)(?:[-*+•]|\d{1,2}[.)])\s+\S")
 _BULLET = re.compile(r"^(?P<indent>\s*)[-*+•]\s+\S")

@@ -108,6 +108,15 @@ class MatcherTest(unittest.TestCase):
     def test_bash_fence_is_not_a_diagram(self):
         self.assertNotEqual(self.v("```bash\nls -> out\n```\n\nhook -> ledger -> receipt. " + FILL), "")
 
+    def test_arrow_token_counts_one_per_arrow(self):
+        rx = self.g._ARROW
+        self.assertEqual(len(rx.findall("a -> b --> c ---> d")), 3)
+        self.assertEqual(len(rx.findall("a => b → c ⟶ d ─► e")), 4)
+        self.assertEqual(rx.findall("a --!> b <!-- c"), [])
+
+    def test_html_comment_end_is_not_a_flow(self):
+        self.assertEqual(self.v("<!-- note --!> and <!-- other --!> here. " + FILL), "")
+
     def test_short_reply_passes(self):
         self.assertEqual(self.v("hook -> ledger -> receipt, done."), "")
 
