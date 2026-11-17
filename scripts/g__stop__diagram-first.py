@@ -10,9 +10,10 @@ is a ganglion: a hook that fires on its own.
 
 Blocks when no exemption applies and EITHER check fails:
   1. FLOW: the reply has no opening diagram (a fenced block first, or after
-     one short lead line, whose info string is empty/text/txt/ascii and whose
+     one short lead line, whose info string is empty/text/txt/ascii/plaintext/text-plain and whose
      body holds a diagram glyph: an arrow, a box-drawing branch, or an ASCII
-     table row such as `| a | b |` or `+---+`). Status lines included.
+     table row such as `| a | b |` or `+---+`). Status lines included. A fenced
+     2D Delegate summary may lead; the diagram then follows it.
   2. SHORT TEXT: the Prose exceeds PROSE_MAX_WORDS (120), or holds a paragraph
      (a run of consecutive non-bullet, non-table lines) of more than
      PARAGRAPH_MAX_WORDS (40) words.
@@ -90,7 +91,7 @@ _STATE_WORDS = re.compile(
 _DIAGRAM_GLYPH = re.compile(
     r"─►|►|◄|├─|└─|┌|┐|┘|│|─{2,}|═|║|▼|▲|→|←|->|<-|=>|"
     r"^\s*\|.*\|\s*$|^\s*\+-[-+]*\+\s*$", re.MULTILINE)
-_DIAGRAM_INFO = ("", "text", "txt", "ascii")
+_DIAGRAM_INFO = ("", "text", "txt", "ascii", "plaintext", "text-plain")  # not mermaid: the terminal shows it raw
 
 _RE_SYSTEM_REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
 _RE_COMMAND_TAG = re.compile(r"<command-(?:name|message|args)>.*?</command-\w+>", re.DOTALL)
@@ -210,12 +211,27 @@ def count_words(prose: list) -> int:
                if _WORD.search(tok) and not _LIST_MARKER.match(tok))
 
 
+def _is_2d_summary(fence: dict) -> bool:
+    """The fenced 2D Delegate summary (skills/4d-paradigm-protocol, Mandatory Output
+    Format). It may lead a reply; the diagram follows it."""
+    if fence["info"] not in _DIAGRAM_INFO:
+        return False
+    first = next((ln.strip() for ln in fence["body"].splitlines() if ln.strip()), "")
+    return first.startswith("2D Delegate")
+
+
 def has_opening_diagram(lines: list, fences: list) -> bool:
-    """A diagram fence is the first non-blank element, or follows one short lead line."""
+    """A diagram fence is the first non-blank element, or follows one short lead line.
+    A leading fenced 2D Delegate summary is skipped before that check."""
     nonblank = [i for i, ln in enumerate(lines) if ln.strip()]
     if not nonblank:
         return False
     by_start = {f["start"]: f for f in fences}
+    if nonblank[0] in by_start and _is_2d_summary(by_start[nonblank[0]]):
+        end = by_start[nonblank[0]]["end"]
+        nonblank = [i for i in nonblank if i > end]
+        if not nonblank:
+            return False
     first = nonblank[0]
     if first in by_start:
         return is_diagram_fence(by_start[first])

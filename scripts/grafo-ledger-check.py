@@ -15,6 +15,10 @@ impact-radius.py seeks and grafo-gate.py brain-scans) and decides, AT TURN END:
   operator's screen), so the advisory is written to the session ledger file
   `<sid>.advisory.txt`; grafo-turn-reset.py (UserPromptSubmit) hands it to the model as
   additionalContext at the next prompt and consumes it. Nothing reaches the screen.
+  The advisory is written only for a REAL session: the file is keyed by the hook
+  payload's `session_id` (env CLAUDE_SESSION_ID as fallback), and the ledger it is
+  built from must itself be session-scoped (env CLAUDE_SESSION_ID set). With no real
+  session, the shared "adhoc" ledger would mix sessions and arms, so nothing is written.
 
 Fail-open: any error → exit 0 (never wedge the turn).
 """
@@ -67,8 +71,27 @@ def concept_is_known(term: str) -> bool:
         return False  # if we can't tell, do NOT nudge (no false positives)
 
 
+def payload_session_id(raw: str) -> str:
+    """The hook payload's session_id, or "" when absent or unparsable."""
+    try:
+        data = json.loads(raw) if raw and raw.strip() else {}
+    except ValueError:
+        return ""
+    sid = data.get("session_id") if isinstance(data, dict) else ""
+    return sid.strip() if isinstance(sid, str) else ""
+
+
+def _read_stdin() -> str:
+    try:
+        return "" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.read()
+    except (OSError, ValueError):
+        return ""
+
+
 def main() -> int:
-    sid = os.environ.get("CLAUDE_SESSION_ID", "adhoc")
+    env_sid = os.environ.get("CLAUDE_SESSION_ID", "").strip()
+    sid = env_sid or "adhoc"  # ledger key, the contract of the ledger writers
+    adv_sid = payload_session_id(_read_stdin()) or env_sid
     turn = load(LEDGER / f"{sid}.turn.jsonl")
     seeked = any(r.get("state") in ("SEEK-COMPLETE", "GREP-FALLBACK") for r in turn)
     scans = [r.get("term") for r in turn if r.get("event") == "brain_scan" and r.get("term")]
@@ -91,7 +114,8 @@ def main() -> int:
     # ADVISORY: unlit-neuron fallbacks this session (a PASS that should grow the graph).
     session = load(LEDGER / f"{sid}.jsonl")
     fallbacks = [r.get("target") for r in session if r.get("state") == "GREP-FALLBACK" and r.get("target")]
-    if fallbacks:
+    if (fallbacks and env_sid and adv_sid and adv_sid != "adhoc"
+            and "/" not in adv_sid and "\\" not in adv_sid):
         advisory = (
             f"♦ graph ledger: {len(fallbacks)} grep-fallback(s) this session "
             f"(unlit: {', '.join(dict.fromkeys(fallbacks))[:120]}). A fallback is a PASS — "
@@ -99,7 +123,7 @@ def main() -> int:
             "next lookup is a deterministic seek.")
         try:
             LEDGER.mkdir(parents=True, exist_ok=True)
-            (LEDGER / f"{sid}.advisory.txt").write_text(advisory, encoding="utf-8")
+            (LEDGER / f"{adv_sid}.advisory.txt").write_text(advisory, encoding="utf-8")
         except OSError:
             pass
     return 0

@@ -15,7 +15,7 @@ The gate reads the last assistant reply and the last operator prompt. Unless an 
 
 - **Diagram_Gate**: `scripts/g__stop__diagram-first.py`, a Stop hook.
 - **Prose**: as in the superseded spec: the reply minus fenced code, inline code, blockquote lines, quoted spans, the Provenance footer line, the Disclose one-liners and Hatch lines.
-- **Opening_Diagram**: a fenced block that is the first non-blank element of the reply, or follows one Lead_Line (at most 20 words, not a list item), whose info string is empty, `text`, `txt` or `ascii`, and whose body holds a diagram glyph: an arrow (`─►`, `►`, `◄`, `→`, `←`, `->`, `<-`, `=>`), a box-drawing glyph (`├─`, `└─`, `┌`, `┐`, `┘`, `│`, `──`, `═`, `║`, `▼`, `▲`), or an ASCII table line (`| a | b |` or `+---+`).
+- **Opening_Diagram**: a fenced block that is the first non-blank element of the reply (after an optional leading fenced 2D Delegate summary), or follows one Lead_Line (at most 20 words, not a list item), whose info string is empty, `text`, `txt`, `ascii`, `plaintext` or `text-plain`, and whose body holds a diagram glyph: an arrow (`─►`, `►`, `◄`, `→`, `←`, `->`, `<-`, `=>`), a box-drawing glyph (`├─`, `└─`, `┌`, `┐`, `┘`, `│`, `──`, `═`, `║`, `▼`, `▲`), or an ASCII table line (`| a | b |` or `+---+`).
 - **Prose_Cap**: `PROSE_MAX_WORDS`, 120 words of Prose.
 - **Long_Paragraph**: a run of consecutive non-blank Prose lines that are not list items or table rows (a line indented under a list item continues that item) holding more than `PARAGRAPH_MAX_WORDS`, 40 words.
 - **Input_Only**: the last non-blank Prose line opens with `input-needed:` and the rest of the Prose holds at most `INPUT_LEAD_MAX_WORDS`, 30 words.
@@ -51,7 +51,7 @@ The Rule_Text and the Cadence_Skill state the every-reply rule, the HTML-artifac
 
 ### FR-05: Advisories stay off the operator's screen
 
-The Advisory_Hooks emit no `systemMessage`. The PostToolUse hook emits `hookSpecificOutput.additionalContext`; the Stop hook writes its advisory to `~/.claude/.cache/graph-ledger/<sid>.advisory.txt`, which the UserPromptSubmit relay hands to the model as additionalContext and deletes.
+The Advisory_Hooks emit no `systemMessage`. The PostToolUse hook emits `hookSpecificOutput.additionalContext`; the Stop hook writes its advisory to `~/.claude/.cache/graph-ledger/<sid>.advisory.txt`, which the UserPromptSubmit relay hands to the model as additionalContext and deletes. The file is keyed by the hook payload's `session_id` (env fallback); with no real session id nothing is written or relayed.
 
 ## Acceptance Criteria
 
@@ -69,6 +69,9 @@ The Advisory_Hooks emit no `systemMessage`. The PostToolUse hook emits `hookSpec
 - [ ] AC-12: THE Advisory_Hooks SHALL emit no `systemMessage` key, and SHALL keep exit code 0.
 - [ ] AC-13: WHEN the Stop advisory fires, THE Relay SHALL emit it once as UserPromptSubmit additionalContext at the next prompt and delete the ledger file.
 - [ ] AC-14: THE Cadence_Skill SHALL state FR-04.
+- [ ] AC-15: WHEN a reply leads with a fenced 2D Delegate summary followed by an Opening_Diagram, THE Diagram_Gate SHALL print nothing.
+- [ ] AC-16: IF the Relay finds no real session id, or an advisory file it cannot decode, THEN THE Relay SHALL print nothing, and SHALL delete an undecodable file.
+- [ ] AC-17: WHILE the Stop hook runs for session A, THE Relay SHALL NOT emit A's advisory to any other session.
 
 ## Residuals
 
@@ -77,3 +80,6 @@ The Advisory_Hooks emit no `systemMessage`. The PostToolUse hook emits `hookSpec
 - R-03: The Stop advisory reaches the model one prompt late, and it does not reach it at all when the session ends after that Stop.
 - R-04: Whether prose repeats the diagram is still not measured (superseded spec R-02).
 - R-05: `CLAUDE.md` measured 11,997 of its 12,000-token ceiling before this change and 12,000 after it (doctor check `claude-md-budget`), so the Rule_Text is a compressed paragraph and the Detail_Offer shapes (`¿Más detalle de X?`, `More detail on X?`) and the reply-panel budget note live in the Cadence_Skill. To fit, the Communication bullet loses its pointer sentence to rule 8, which this change made stale.
+- R-06: A paste-ready ask phrased outside `_ASK_PASTE` of `scripts/g__stop__paste-ready-raw.py` is not recognised, so the raw message reply blocks once for a missing diagram. The rewrite (or the Hatch) passes on the next stop; `stop_hook_active` keeps it to one forced rewrite, never a deadlock.
+- R-07: Word caps count whitespace-separated tokens. CJK text has no spaces between words, so a long Chinese or Japanese paragraph counts as a few tokens and passes the Prose_Cap and the Long_Paragraph check.
+- R-08: The graph advisory relay needs a session-scoped ledger (env `CLAUDE_SESSION_ID` set for the ledger writers). Where the harness does not set it, the ledger is the shared "adhoc" file and the advisory is neither written nor relayed: it is dropped, never leaked across sessions.

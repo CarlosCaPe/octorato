@@ -110,6 +110,17 @@ class MatcherTest(unittest.TestCase):
         box = "```text\n+-----+-----+\n| a   | b   |\n+-----+-----+\n```\n\n"
         self.assertEqual(self.v(box + BULLETS), "")
 
+    def test_plaintext_fences_count_mermaid_does_not(self):
+        body = "hook ──► ledger ──► receipt\n```\n\n"
+        for info in ("plaintext", "text-plain"):
+            self.assertEqual(self.v(f"```{info}\n" + body + BULLETS), "")
+        self.assertNotEqual(self.v("```mermaid\n" + body + BULLETS), "")
+
+    def test_fenced_2d_summary_may_lead(self):
+        twod = "```\n2D Delegate: gate\n  Q1 Ventosas: x\n  Q2 MCP/API: N/A\n  Q3 Delegate: LOAD\n```\n\n"
+        self.assertEqual(self.v(twod + DIAG + BULLETS), "")
+        self.assertIn("no opening diagram", self.v(twod + "The gate reads the reply."))
+
     def test_diagram_then_long_paragraph_blocks(self):
         self.assertIn("paragraph", self.v(DIAG + FILL))
 
@@ -225,10 +236,10 @@ class WiringTest(unittest.TestCase):
         names = {p.name for p in FIXTURES.glob("*.json")}
         for v in ("flow", "numbered", "numbered_nested", "before_after", "es", "status", "structure",
                   "late_diagram", "status_line_25", "long_paragraph", "prose_cap", "plain_60",
-                  "input_long_lead", "flipped_status_line", "flipped_plain_prose"):
+                  "input_long_lead", "flipped_status_line", "flipped_plain_prose", "2d_lead_no_diagram"):
             self.assertIn(f"violation_{v}.json", names)
         for b in ("", "_paste_ready", "_input_only", "_status_diagram", "_table_diagram", "_hatch",
-                  "_stop_hook_active"):
+                  "_stop_hook_active", "_2d_lead", "_plaintext_fence"):
             self.assertIn(f"benign{b}.json", names)
 
     def test_friction_signature_matches_the_block_text(self):

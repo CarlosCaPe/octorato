@@ -65,6 +65,13 @@ Two hard rules layered on top of the 10, both operator-flagged after repeated mi
 
 Operator decision, 2026-11-17: 100% of replies to the operator in this terminal are flows. Every reply, status lines, logs and reports included, opens with an ASCII diagram in a code block; a status line needs only a tiny one (`spec ──► gate ──► ?`). After the diagram, the text is short and in bullets: at most 120 words in all, and no non-bullet paragraph over 40 words. Prose says only what the diagram can't: the why, the risk, the one decision. Repeating the diagram in sentences is rule 9 (repeated conclusions) in another shape. When the explanation is too large for ASCII, publish an HTML artifact (the operator values the dynamic HTML reports) and keep a small ASCII diagram in chat.
 
+Motion lives in the artifact, not in chat. The HTML artifact may use small CSS/JS animations: an animated flow, a step-by-step reveal, a progress pulse. The chat is static markdown, so ASCII "animation" there is not possible. In chat, stage the diagram instead, frames side by side:
+
+```
+before                        after
+hook ──► full transcript      hook ──► tail only ──► ✓ 40 ms
+```
+
 More detail only when the operator asks, or offered in one closing line. Use the verbless form, `¿Más detalle de X?` / `More detail on X?`: it passes the no-menu-question gate. A verb-led offer ("¿Quieres más detalle?", "Want me to expand?") is an opener the gate blocks.
 
 Grammar, kept small so every diagram reads the same:
@@ -87,7 +94,11 @@ release ──► 1° QA review ──► 2° operator merge
 
 - The CI lint is the only blocker; the converge pass needs no input.
 
-Exempt: a paste-ready message (that one ships raw, see the paste-ready gate) and a reply that is only an `input-needed:` line with a lead of at most 30 words. Length is not an exemption. A bash block does not count as the diagram; a plain table inside a `text` or bare fence does.
+Exempt: a paste-ready message (that one ships raw, see the paste-ready gate) and a reply that is only an `input-needed:` line with a lead of at most 30 words. Length is not an exemption. A bash block or a `mermaid` block (the terminal shows mermaid raw) does not count as the diagram; a plain table inside a bare, `text`, `txt`, `ascii`, `plaintext` or `text-plain` fence does.
+
+The fenced 2D Delegate summary (skills/4d-paradigm-protocol, Mandatory Output Format) may lead the reply; the diagram comes right after it. Unfenced, the 2D lines count as prose and the reply blocks as "no opening diagram".
+
+A reviewed body (a panel-approved draft, a report) shown to the operator follows the same shape: the diagram carries the structure and the text stays as bullets. Reproducing it as plain paragraphs blocks; the panel approves the content, not an exemption from the format.
 
 Status lines while a subagent runs: the reply panel exempts a status line of at most 30 words (counted with whitespace split, so arrows and fences count) with no outcome word and no digit. Keep the tiny diagram inside that budget and free of digits (`hook ──► reviewer ──► ?`), or the status line needs a panel.
 
