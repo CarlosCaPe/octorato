@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Tests for g__stop__diagram-first.py (rule COMMS.diagram-first).
 
-Pins the four shapes, the opening-diagram check, the word floor, the
-exemptions (paste-ready ask, trailing input-needed, hatch), the quote and code
-awareness, the block-once and fail-open contract, and the wiring (hooks.json,
-rules.yaml, friction signatures, CLAUDE.md anchor, panel preflight, lineage).
+Pins the every-reply trigger (no word floor), the opening-diagram check, the
+short-text check (prose cap, no long non-bullet paragraph), the exemptions
+(paste-ready ask, input-needed-only, hatch), the shape names as diagnostic text,
+the block-once and fail-open contract, and the wiring (hooks.json, rules.yaml,
+friction signatures, CLAUDE.md anchor, panel preflight, lineage).
 
 Stdlib only:
 
@@ -27,6 +28,7 @@ FIXTURES = ROOT / "registry" / "fixtures" / "COMMS.diagram-first"
 FILL = ("The change is small and it touches one script, so the risk stays low. The tests ran on "
         "the branch and the result matches what the spec asks for, with no new dependency added. ") * 3
 DIAG = "```\nhook ──► ledger ──► receipt\n         └─ ✓ written\n```\n\n"
+BULLETS = "- The hook reads the staged files.\n- The ledger records one digest.\n- The reviewer checks it.\n"
 
 
 def _load(path, name):
@@ -75,7 +77,8 @@ class MatcherTest(unittest.TestCase):
 
     def test_unindented_line_breaks_the_numbered_run(self):
         reply = "1. read\nNote here.\n2. hash\nNote here.\n3. record\n\n" + FILL
-        self.assertEqual(self.v(reply), "")
+        self.assertNotIn("numbered", self.v(reply))
+        self.assertIn("no opening diagram", self.v(reply))
 
     def test_before_after_block_en_and_es(self):
         self.assertIn("before/after", self.v("**Before:** slow.\n\n**After:** fast.\n\n" + FILL))
@@ -95,11 +98,29 @@ class MatcherTest(unittest.TestCase):
         out = self.v("It goes hook -> ledger -> receipt. " + FILL + "\n\n" + DIAG)
         self.assertIn("move it to the top", out)
 
-    def test_opening_diagram_passes(self):
-        self.assertEqual(self.v(DIAG + "It goes hook -> ledger -> receipt. " + FILL), "")
+    def test_opening_diagram_with_short_bullets_passes(self):
+        self.assertEqual(self.v(DIAG + BULLETS), "")
 
     def test_one_lead_line_then_diagram_passes(self):
-        self.assertEqual(self.v("The flow:\n\n" + DIAG + "hook -> ledger -> receipt. " + FILL), "")
+        self.assertEqual(self.v("The flow:\n\n" + DIAG + BULLETS), "")
+
+    def test_ascii_table_fence_counts_as_diagram(self):
+        table = "```\n| PR  | state  |\n|-----|--------|\n| one | review |\n```\n\n"
+        self.assertEqual(self.v(table + BULLETS), "")
+        box = "```text\n+-----+-----+\n| a   | b   |\n+-----+-----+\n```\n\n"
+        self.assertEqual(self.v(box + BULLETS), "")
+
+    def test_diagram_then_long_paragraph_blocks(self):
+        self.assertIn("paragraph", self.v(DIAG + FILL))
+
+    def test_diagram_then_prose_over_cap_blocks(self):
+        bullets = "".join(f"- item {i} touches one script and the tests ran on the branch today.\n"
+                          for i in range(12))
+        self.assertIn("cap", self.v(DIAG + bullets))
+
+    def test_bullet_continuation_is_not_a_paragraph(self):
+        reply = DIAG + "- The hook reads the staged files\n  and skips binaries on the way.\n"
+        self.assertEqual(self.v(reply), "")
 
     def test_long_lead_line_blocks(self):
         lead = "word " * 25 + "\n\n"
@@ -115,10 +136,15 @@ class MatcherTest(unittest.TestCase):
         self.assertEqual(rx.findall("a --!> b <!-- c"), [])
 
     def test_html_comment_end_is_not_a_flow(self):
-        self.assertEqual(self.v("<!-- note --!> and <!-- other --!> here. " + FILL), "")
+        self.assertNotIn("flow", self.v("<!-- note --!> and <!-- other --!> here. " + FILL))
 
-    def test_short_reply_passes(self):
-        self.assertEqual(self.v("hook -> ledger -> receipt, done."), "")
+    def test_short_reply_without_diagram_blocks(self):
+        self.assertNotEqual(self.v("hook -> ledger -> receipt, done."), "")
+        self.assertNotEqual(self.v("Converge pass running in the background."), "")
+
+    def test_reason_carries_the_operator_phrase(self):
+        self.assertIn("flow first; text short and in bullets; offer more detail in one line "
+                      "instead of writing it", self.g.build_reason("x"))
 
     def test_word_floor_ignores_glyph_tokens(self):
         self.assertEqual(self.g.count_words(["─► ├─ 1. ok - -> two"]), 2)
@@ -126,8 +152,11 @@ class MatcherTest(unittest.TestCase):
     def test_paste_ask_exempt(self):
         self.assertEqual(self.v("hook -> ledger -> receipt. " + FILL, "pásame el mensaje para pegar"), "")
 
-    def test_trailing_input_needed_exempt(self):
-        self.assertEqual(self.v("hook -> ledger -> receipt. " + FILL + "\n\ninput-needed: which branch?"), "")
+    def test_input_needed_only_exempt(self):
+        self.assertEqual(self.v("Two PRs touch the same gate.\n\ninput-needed: which branch?"), "")
+
+    def test_input_needed_with_long_lead_blocks(self):
+        self.assertNotEqual(self.v("hook -> ledger -> receipt. " + FILL + "\n\ninput-needed: which branch?"), "")
 
     def test_input_needed_not_last_does_not_exempt(self):
         self.assertNotEqual(self.v("input-needed: which?\n\nhook -> ledger -> receipt. " + FILL), "")
@@ -135,19 +164,20 @@ class MatcherTest(unittest.TestCase):
     def test_hatch_exempt(self):
         self.assertEqual(self.v("hook -> ledger -> receipt. " + FILL + "\ndiagram-ok"), "")
 
-    def test_shapes_inside_code_quote_blockquote_pass(self):
-        self.assertEqual(self.v("Run `a -> b -> c` now. " + FILL), "")
-        self.assertEqual(self.v('He said "a -> b -> c". ' + FILL), "")
-        self.assertEqual(self.v("> a -> b -> c\n\n" + FILL), "")
-        self.assertEqual(self.v("```\na -> b -> c\n```\n" + FILL), "")
+    def test_shapes_inside_code_quote_blockquote_are_not_named(self):
+        for reply in ("Run `a -> b -> c` now. " + FILL, 'He said "a -> b -> c". ' + FILL,
+                      "> a -> b -> c\n\n" + FILL):
+            out = self.v(reply)
+            self.assertIn("no opening diagram", out)
+            self.assertNotIn("flow", out)
 
-    def test_plain_long_prose_passes(self):
-        self.assertEqual(self.v(FILL * 3), "")
+    def test_plain_long_prose_blocks(self):
+        self.assertIn("no opening diagram", self.v(FILL * 3))
 
     def test_footer_and_disclose_do_not_count(self):
-        reply = ("Done. " + "\n\nProvenance: Basis: a -> b -> c · Engine: x"
-                 + "\n💡 Unlock-suggestion: x -> y -> z")
-        self.assertEqual(self.v(reply + " " + FILL), "")
+        reply = (DIAG + BULLETS + "\n\nProvenance: Basis: " + "a -> b " * 80 + "· Engine: x"
+                 + "\n💡 Unlock-suggestion: " + "x -> y " * 80)
+        self.assertEqual(self.v(reply), "")
 
     def test_empty_reply_passes(self):
         self.assertEqual(self.v(""), "")
@@ -193,12 +223,13 @@ class WiringTest(unittest.TestCase):
         self.assertIn("liveness_required: FIRES", block)
         self.assertIn("### Diagram-first", (ROOT / "CLAUDE.md").read_text(encoding="utf-8"))
         names = {p.name for p in FIXTURES.glob("*.json")}
-        for v in ("flow", "numbered", "numbered_nested", "before_after", "es", "status", "structure", "late_diagram"):
+        for v in ("flow", "numbered", "numbered_nested", "before_after", "es", "status", "structure",
+                  "late_diagram", "status_line_25", "long_paragraph", "prose_cap", "plain_60",
+                  "input_long_lead", "flipped_status_line", "flipped_plain_prose"):
             self.assertIn(f"violation_{v}.json", names)
-            self.assertIn(f"benign_{v}.json", names)
-        for b in ("short", "paste_ready", "input_needed", "status_line", "hatch", "codeblock",
-                  "blockquote", "quoted", "plain_prose", "lead_line", "stop_hook_active"):
-            self.assertIn(f"benign_{b}.json", names)
+        for b in ("", "_paste_ready", "_input_only", "_status_diagram", "_table_diagram", "_hatch",
+                  "_stop_hook_active"):
+            self.assertIn(f"benign{b}.json", names)
 
     def test_friction_signature_matches_the_block_text(self):
         raw = json.loads((ROOT / "registry" / "friction-signatures.json").read_text(encoding="utf-8"))

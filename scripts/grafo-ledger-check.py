@@ -10,8 +10,11 @@ impact-radius.py seeks and grafo-gate.py brain-scans) and decides, AT TURN END:
   "known vs unlit" happens HERE (off the hot PreToolUse path); an unlit cold-start scan is
   legitimate and never triggers the teeth.
 
-  ADVISORY (systemMessage, exit 0): the session hit grep-fallbacks (unlit neurons) — a
-  PASS that should grow the graph; surface it so an edge gets added.
+  ADVISORY (exit 0): the session hit grep-fallbacks (unlit neurons) — a PASS that
+  should grow the graph. Stop has no model-only channel (systemMessage is shown on the
+  operator's screen), so the advisory is written to the session ledger file
+  `<sid>.advisory.txt`; grafo-turn-reset.py (UserPromptSubmit) hands it to the model as
+  additionalContext at the next prompt and consumes it. Nothing reaches the screen.
 
 Fail-open: any error → exit 0 (never wedge the turn).
 """
@@ -89,11 +92,16 @@ def main() -> int:
     session = load(LEDGER / f"{sid}.jsonl")
     fallbacks = [r.get("target") for r in session if r.get("state") == "GREP-FALLBACK" and r.get("target")]
     if fallbacks:
-        print(json.dumps({"systemMessage":
+        advisory = (
             f"♦ graph ledger: {len(fallbacks)} grep-fallback(s) this session "
             f"(unlit: {', '.join(dict.fromkeys(fallbacks))[:120]}). A fallback is a PASS — "
             "add the edge to connectome/lineage.yaml (or company/ for arm/private) so the "
-            "next lookup is a deterministic seek."}))
+            "next lookup is a deterministic seek.")
+        try:
+            LEDGER.mkdir(parents=True, exist_ok=True)
+            (LEDGER / f"{sid}.advisory.txt").write_text(advisory, encoding="utf-8")
+        except OSError:
+            pass
     return 0
 
 

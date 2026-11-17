@@ -619,7 +619,7 @@ edges:
       found and closed.
 
   - id: diagram-first-gate
-    concept: "diagram-first / a reply explaining a flow, before/after, multi-item status or structure opens with an ASCII diagram"
+    concept: "diagram-first / every reply to the operator opens with an ASCII diagram, then short bullets"
     appears_in:
       - CLAUDE.md                                       # anchor "Diagram-first"
       - skills/human-cadence/SKILL.md                   # the HOW: grammar, exemptions, example
@@ -629,7 +629,9 @@ edges:
       - registry/fixtures/COMMS.diagram-first           # the liveness proof (violation/benign twins)
       - registry/friction-signatures.json               # DIAGRAM-FIRST
       - hooks.json                                      # the Stop wiring (and so the panel preflight)
-      - docs/specs/202611151120-diagram-first           # the ears-1 spec
+      - docs/specs/202611151120-diagram-first           # the ears-1 spec (shape trigger, superseded)
+      - docs/specs/202611172031-diagram-always          # the ears-1 spec (every-reply trigger)
+      - scripts/tests/test_diagram_first.py             # matcher, process and wiring tests
     kind: appears_in
     note: >-
       The gate reads surface shapes (arrows, numbered steps, before/after

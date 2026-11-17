@@ -231,8 +231,8 @@ rules:
     expect: 0
   liveness_required: FIRES
 - id: COMMS.diagram-first
-  title: Diagram-first, a reply that explains a flow, a before/after, a multi-item
-    status or a structure opens with an ASCII diagram in a code block
+  title: Diagram-first, every reply to the operator opens with an ASCII diagram in
+    a code block, and the text after it is short and in bullets
   category: COMMS
   source:
     file: CLAUDE.md

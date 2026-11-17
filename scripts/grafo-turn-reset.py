@@ -4,7 +4,12 @@
 The Stop-hook teeth (grafo-ledger-check) judge graph-before-grep behaviour for the
 CURRENT turn, not the whole session. Truncating the per-turn ledger at the start of
 each turn gives those teeth a clean, turn-scoped ground truth. Fail-open and silent.
+
+It also consumes the advisory grafo-ledger-check.py left at the last Stop
+(`<sid>.advisory.txt`) and hands it to the model as additionalContext, so the
+advisory reaches the agent without a systemMessage on the operator's screen.
 """
+import json
 import os
 from pathlib import Path
 import sys
@@ -27,3 +32,13 @@ try:
     f.write_text("", encoding="utf-8")
 except OSError:
     pass
+
+adv = f.parent / f"{sid}.advisory.txt"
+try:
+    text = adv.read_text(encoding="utf-8").strip()
+    adv.unlink()
+except OSError:
+    text = ""
+if text:
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+                                             "additionalContext": text}}))

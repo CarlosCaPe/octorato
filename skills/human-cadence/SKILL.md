@@ -27,7 +27,7 @@ This is a **delivery discipline**, not a content rule. It changes *how* the answ
 | 5 | **No rigid transitions** (moreover, furthermore, additionally, in conclusion / además, asimismo, adicionalmente, en conclusión). | Let sentences connect naturally, or just start the next one. |
 | 6 | **No filler openers** ("I hope this message finds you well", "in today's fast-paced world", "in the realm of", "it's worth noting that" / "espero que este mensaje te encuentre bien", "en el vertiginoso mundo actual", "en el ámbito de", "cabe destacar que"). | Open on the point. |
 | 7 | **No uniform sentence length.** | Mix short, medium, long. Use fragments. Vary the rhythm. |
-| 8 | **No bullets in informal/conversational prose** (chat reply, casual email, a description). | Write flowing sentences. (Exception below: structured technical output keeps its tables/code.) |
+| 8 | **No bullets in informal/conversational prose** (casual email, a chat message sent as the operator, a description, a doc). | Write flowing sentences. (Exceptions below: structured technical output keeps its tables/code, and a reply to the operator in this terminal is a diagram plus short bullets, see Diagram-first.) |
 | 9 | **No repeated conclusions / summary tails** ("overall", "in summary", "to wrap up" / "en general", "en resumen", "para finalizar"). | End on the last real point. Stop. |
 | 10 | **No voiceless perfect grammar.** | Use contractions, natural voice. Sound like a person. Keep the meaning, add no new ideas. |
 
@@ -47,7 +47,8 @@ The list is a starting set, not exhaustive. The principle: if a word shows up fa
 CLAUDE.md §Communication mandates "tables, bullets, code blocks; wall-of-text = failure." That still holds for **structured/technical deliverables** (specs, comparisons, runbooks, query results, step lists). Rule 8 governs **conversational prose**: chat replies, casual emails, narrative descriptions. The two coexist:
 
 - Technical/structured answer → tables, code, numbered steps stay. Cadence rules 1–7, 9, 10 still apply *inside* the prose parts.
-- Conversational/chat answer → prose, varied rhythm, contractions, no bullet-spam.
+- Conversational outward draft (email, chat message sent as the operator, doc) → prose, varied rhythm, contractions, no bullet-spam.
+- Reply to the operator in this terminal → a diagram, then short bullets (Diagram-first below). Rule 8 does not apply there.
 
 When unsure which mode you're in: is the user asking for data/structure, or talking with you? Structure for the first, cadence for the second.
 
@@ -60,9 +61,11 @@ Two hard rules layered on top of the 10, both operator-flagged after repeated mi
 1. **Paste-bound text ships as PLAIN TEXT.** Any chunk meant to be pasted somewhere else (LinkedIn post, email, caption, prompt, message) goes with zero markdown: no blockquote (`>`), no code fence, no bullets, no leading indent. The operator copies straight from the terminal, where a blockquote renders as `▎` plus indentation and arrives broken at the paste target. Commentary addressed TO the operator can stay normal prose; the instant a chunk is for pasting, strip its formatting. When unsure, treat it as paste-bound and keep it plain.
 2. **Never open a paragraph or sentence in lowercase.** Capitalize the first letter, every time. The operator writes with normal capitalization, and a lowercase-start reads as an AI tell, worst of all when drafting in his voice.
 
-## Diagram-first (explanatory replies open with a picture)
+## Diagram-first (every reply to the operator is a flow)
 
-When a reply explains a **flow**, a **before/after**, the **status of several items** or a **structure**, it opens with an ASCII diagram in a code block. Prose after it says only what the diagram can't: the why, the risk, the one decision. Repeating the diagram in sentences is rule 9 (repeated conclusions) in another shape.
+Operator decision, 2026-11-17: 100% of replies to the operator in this terminal are flows. Every reply, status lines, logs and reports included, opens with an ASCII diagram in a code block; a status line needs only a tiny one (`spec ──► gate ──► ?`). After the diagram, the text is short and in bullets: at most 120 words in all, and no non-bullet paragraph over 40 words. Prose says only what the diagram can't: the why, the risk, the one decision. Repeating the diagram in sentences is rule 9 (repeated conclusions) in another shape. When the explanation is too large for ASCII, publish an HTML artifact (the operator values the dynamic HTML reports) and keep a small ASCII diagram in chat.
+
+More detail only when the operator asks, or offered in one closing line. Use the verbless form, `¿Más detalle de X?` / `More detail on X?`: it passes the no-menu-question gate. A verb-led offer ("¿Quieres más detalle?", "Want me to expand?") is an opener the gate blocks.
 
 Grammar, kept small so every diagram reads the same:
 
@@ -82,11 +85,13 @@ release ──► 1° QA review ──► 2° operator merge
             └─ ✗ CI lint red on docs/
 ```
 
-The CI lint is the only blocker; the converge pass needs no input.
+- The CI lint is the only blocker; the converge pass needs no input.
 
-Exempt: a short reply (under 80 words of prose), a paste-ready message (that one ships raw, see the paste-ready gate), the status line while a subagent runs, and a reply that ends on one `input-needed:` question. A table or a bash block does not replace the diagram when the content is a flow; a table of plain data with no flow is fine as is.
+Exempt: a paste-ready message (that one ships raw, see the paste-ready gate) and a reply that is only an `input-needed:` line with a lead of at most 30 words. Length is not an exemption. A bash block does not count as the diagram; a plain table inside a `text` or bare fence does.
 
-Enforced by `scripts/g__stop__diagram-first.py` (Stop gate, blocks once, rule `COMMS.diagram-first`). It reads the prose outside code, blockquotes and quotes, looks for arrows, three or more numbered steps, `Before:`/`After:` labels, three or more items carrying a state, or a nested list, and blocks when the reply does not open with a diagram fence (one short lead line before it is allowed). Hatch: `diagram-ok` on a line. Spec: `docs/specs/202611151120-diagram-first/`.
+Status lines while a subagent runs: the reply panel exempts a status line of at most 30 words (counted with whitespace split, so arrows and fences count) with no outcome word and no digit. Keep the tiny diagram inside that budget and free of digits (`hook ──► reviewer ──► ?`), or the status line needs a panel.
+
+Enforced by `scripts/g__stop__diagram-first.py` (Stop gate, blocks once, rule `COMMS.diagram-first`). The trigger is every reply, not a shape: it blocks when the reply does not open with a diagram fence (one short lead line before it is allowed; the body needs an arrow, a box-drawing branch or an ASCII table row), or when the prose outside code, blockquotes, quotes, the footer and the Disclose lines runs over 120 words or holds a non-bullet paragraph over 40 words. The old shape detectors (arrows, numbered steps, `Before:`/`After:`, states, nesting) only name the shape in the block reason. Hatch: `diagram-ok` on a line. Spec: `docs/specs/202611172031-diagram-always/` (supersedes `docs/specs/202611151120-diagram-first/`).
 
 ## The source prompt (verbatim, for reuse as a humanizer)
 
