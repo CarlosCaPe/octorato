@@ -4,7 +4,7 @@ description: "Narrative voice for book prose, nonfiction and fiction: turn a fla
 metadata:
   short-description: "3D narrative prose: one idea from N sides, sensory staging, excess guards, VOZ-3D QA rubric"
   type: technique
-  source: "Multi-source research report (19 sources fetched, 25 claims verified by 3 voters, 23 confirmed, 2 refuted) on the craft statements and critical reception of a late-20th/early-21st-century Spanish literary novelist known for gothic Barcelona mysteries. Sources listed at the end."
+  source: "Multi-source research report (19 sources fetched, 25 claims verified by 3 voters, 23 confirmed, 2 refuted) on the craft statements and critical reception of a contemporary Spanish literary novelist. Sources listed at the end."
   provenance: "Techniques are described in original prose. No phrase, name, character or scene from the reference novelist's works is reproduced."
 ---
 
@@ -14,7 +14,7 @@ metadata:
 
 A first draft usually tells an idea once, from one side, in the order the writer thought of it. The reader gets the fact and nothing to hold. Call that **2D**.
 
-The **3D** version keeps every fact and adds two things: more perspectives on the same idea, and detail the reader can picture. The model is a reference novelist (a late-20th/early-21st-century Spanish literary novelist known for gothic Barcelona mysteries) who described his own craft in building and musical terms. Only his techniques transfer. His phrases, names, characters and scenes never do, and his name never appears in outward text.
+The **3D** version keeps every fact and adds two things: more perspectives on the same idea, and detail the reader can picture. The model is a reference novelist (a contemporary Spanish literary novelist) who described his own craft in building and musical terms. Only his techniques transfer. His phrases, names, characters and scenes never do, and his name never appears in outward text.
 
 ## When to use it
 
@@ -25,6 +25,8 @@ The **3D** version keeps every fact and adds two things: more perspectives on th
 | A critic loop over a manuscript | QA (the VOZ-3D rubric below) |
 
 Triggers in EN and ES: "narrative voice", "3D voice", "voz 3D", "more perspectives", "más perspectivas", "make it picturable", "hazlo imaginable".
+
+In fiction the techniques apply directly: the "How, in nonfiction" lines become "how, in your story", and the guardrails below bind to the story's own established facts instead of the real record.
 
 Not for: reference docs, API docs, step-by-step instructions, chat replies. An instruction the reader must follow stays flat and exact. 3D goes in the scene and the explanation, never inside the step.
 
@@ -79,9 +81,9 @@ Confidence comes from the research report: **high** = several sources agree, inc
 
 ### 8. Hybrid registers
 
-- **Why.** Mixing registers (mystery, humor, history, fable, the technical) keeps long prose alive, and the craft is in making them cohere.
+- **Why.** Mixing registers (gothic, mystery, romance, humor, historical fiction, fable) keeps long prose alive, and the craft is in making them cohere.
 - **Confidence.** High (his own words: the hard part is getting many registers to work together; a critic adds that the novelty is in the combination, not in new elements).
-- **How, in nonfiction.** Let a technical explanation borrow one register at a time: a beat of humor, a line of history, a fable-like image. One register per paragraph is plenty. The technical fact stays exact whatever register carries it.
+- **How, in nonfiction.** Adaptation: let a technical explanation borrow one register at a time: a beat of humor, a line of history, a fable-like image. One register per paragraph is plenty. The technical fact stays exact whatever register carries it.
 
 Low-confidence note: one reader's blog reads the comic sidekick's cheek and half-believed folk sayings as a source of the humor. Treat that as a possible flavor, not a rule.
 
@@ -95,7 +97,7 @@ Low-confidence note: one reader's blog reads the comic sidekick's cheek and half
 
 ## Excess guards (checklist)
 
-The reference novelist's critics, mostly in a favorable reception, flagged a consistent set of excesses. Check each one before you call a passage done.
+Several critics, a minority in a mostly favorable reception, flagged these excesses (medium confidence; the forced-metaphor point was verified only through a search snippet). Check each one before you call a passage done.
 
 - [ ] **Melodrama.** Emotion bigger than the event that caused it.
 - [ ] **Stock villains.** A person or company drawn as purely bad, with no real act shown.
@@ -115,7 +117,7 @@ A critic agent runs this over a manuscript chapter by chapter. Each finding name
 |---|---|---|
 | **VOZ-3D-FLAT** | A technical term or key event told from one angle only, with nothing the reader can picture | "A token is a unit of text." and the paragraph moves on |
 | **VOZ-3D-EXCESS** | A hit on the excess checklist above | Three metaphors in one sentence; gloom with no event behind it |
-| **VOZ-3D-INVENTED** | A detail added for texture with no source: an event, a quote, a number, an outcome. Counts as a **HECHO-level failure** (a fact failure), not a style note | "She smiled at the screen" when no source says she did |
+| **VOZ-3D-INVENTED** | Nonfiction: a detail added for texture with no source (an event, a quote, a number, an outcome). Fiction: a detail that contradicts the story's own established facts. Counts as a **fact-level failure**, not a style note | Nonfiction: "She smiled at the screen" when no source says she did. Fiction: a character seen in a city the story already placed elsewhere that day |
 
 ### Severity
 
@@ -145,11 +147,11 @@ It measures the text, not a reader. It cannot tell whether a real reader picture
 >
 > Look at it first from your side of the keyboard. You type a sentence. To you it's eight words. To the model it's a handful of small pieces, some whole words, some fragments of words, and each piece is a token.
 >
-> Now look at it from the meter's side. Picture the electricity meter in a hallway, the little dial that turns when you switch on a lamp. Your message turns the dial once when the model reads it. The answer turns it again while the model writes it. A long question and a long answer turn it twice as far.
+> Now look at it from the meter's side. Picture the electricity meter in a hallway, the little dial that turns when you switch on a lamp. Your message turns the dial once when the model reads it. The answer turns it again while the model writes it. A long question and a long answer turn it further.
 >
-> And look at it from the end of the month. The bill doesn't list your ideas. It lists a count of pieces in and pieces out. That's why a short, clear request often costs less than a long, vague one, and gets a better answer too.
+> And look at it from the end of the month. The bill doesn't list your ideas. It lists a count of pieces in and pieces out. That's why a short, clear request costs less than a long, vague one.
 
-What changed: the definition stayed word-for-word. Three sides were added (the writer, the meter, the bill). The meter is an image and would be marked as one in the source note. No number, event or quote was invented.
+What changed: the definition stayed; the billing clause moved up into it. Three sides were added (the writer, the meter, the bill). The meter is an image and would be marked as one in the source note. No number, event or quote was invented.
 
 ## Sources
 
