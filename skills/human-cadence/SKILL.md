@@ -60,6 +60,34 @@ Two hard rules layered on top of the 10, both operator-flagged after repeated mi
 1. **Paste-bound text ships as PLAIN TEXT.** Any chunk meant to be pasted somewhere else (LinkedIn post, email, caption, prompt, message) goes with zero markdown: no blockquote (`>`), no code fence, no bullets, no leading indent. The operator copies straight from the terminal, where a blockquote renders as `▎` plus indentation and arrives broken at the paste target. Commentary addressed TO the operator can stay normal prose; the instant a chunk is for pasting, strip its formatting. When unsure, treat it as paste-bound and keep it plain.
 2. **Never open a paragraph or sentence in lowercase.** Capitalize the first letter, every time. The operator writes with normal capitalization, and a lowercase-start reads as an AI tell, worst of all when drafting in his voice.
 
+## Diagram-first (explanatory replies open with a picture)
+
+When a reply explains a **flow**, a **before/after**, the **status of several items** or a **structure**, it opens with an ASCII diagram in a code block. Prose after it says only what the diagram can't: the why, the risk, the one decision. Repeating the diagram in sentences is rule 9 (repeated conclusions) in another shape.
+
+Grammar, kept small so every diagram reads the same:
+
+| Glyph | Meaning |
+|---|---|
+| `──►` | a step, left to right |
+| `├─` / `└─` | a branch, the last one closes with `└─` |
+| `✓` / `?` / `✗` | state: done, unknown or open, failed or refused |
+| `1°` / `2°` | order, with the owner next to it (`1° operator`, `2° agent`) |
+
+Example, a status of three items:
+
+```
+release ──► 1° QA review ──► 2° operator merge
+            ├─ ✓ selftest green
+            ├─ ? converge pass running
+            └─ ✗ CI lint red on docs/
+```
+
+The CI lint is the only blocker; the converge pass needs no input.
+
+Exempt: a short reply (under 80 words of prose), a paste-ready message (that one ships raw, see the paste-ready gate), the status line while a subagent runs, and a reply that ends on one `input-needed:` question. A table or a bash block does not replace the diagram when the content is a flow; a table of plain data with no flow is fine as is.
+
+Enforced by `scripts/g__stop__diagram-first.py` (Stop gate, blocks once, rule `COMMS.diagram-first`). It reads the prose outside code, blockquotes and quotes, looks for arrows, three or more numbered steps, `Before:`/`After:` labels, three or more items carrying a state, or a nested list, and blocks when the reply does not open with a diagram fence (one short lead line before it is allowed). Hatch: `diagram-ok` on a line. Spec: `docs/specs/202611151120-diagram-first/`.
+
 ## The source prompt (verbatim, for reuse as a humanizer)
 
 The canonical "rewrite to sound human" prompt these rules were inverted from:

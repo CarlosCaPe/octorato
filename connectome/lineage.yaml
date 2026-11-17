@@ -618,6 +618,26 @@ edges:
       artifact proves nothing. Edge added 2026-08-18 when the blind spot was
       found and closed.
 
+  - id: diagram-first-gate
+    concept: "diagram-first / a reply explaining a flow, before/after, multi-item status or structure opens with an ASCII diagram"
+    appears_in:
+      - CLAUDE.md                                       # anchor "Diagram-first"
+      - skills/human-cadence/SKILL.md                   # the HOW: grammar, exemptions, example
+      - scripts/g__stop__diagram-first.py               # the Stop gate (the mechanism)
+      - scripts/g__stop__paste-ready-raw.py             # loaded by file path for its paste-ready ask pattern
+      - registry/rules.yaml                             # COMMS.diagram-first
+      - registry/fixtures/COMMS.diagram-first           # the liveness proof (violation/benign twins)
+      - registry/friction-signatures.json               # DIAGRAM-FIRST
+      - hooks.json                                      # the Stop wiring (and so the panel preflight)
+      - docs/specs/202611151120-diagram-first           # the ears-1 spec
+    kind: appears_in
+    note: >-
+      The gate reads surface shapes (arrows, numbered steps, before/after
+      labels, state markers, nested bullets) from the prose outside code and
+      quotes. Change a shape or the word floor and reconcile the fixture twins
+      in the same commit, or the selftest proves nothing about the change.
+      Edge added 2026-11-15 with the rule.
+
   - id: no-menu-question-gate
     concept: "no-menu-question / a reply never closes on a choice question the agent could decide with /choice"
     appears_in:

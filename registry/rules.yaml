@@ -230,6 +230,31 @@ rules:
     locator: scripts/g__stop__paste-ready-raw.py --selftest registry/fixtures/COMMS.paste-ready-raw-message
     expect: 0
   liveness_required: FIRES
+- id: COMMS.diagram-first
+  title: Diagram-first, a reply that explains a flow, a before/after, a multi-item
+    status or a structure opens with an ASCII diagram in a code block
+  category: COMMS
+  source:
+    file: CLAUDE.md
+    anchor: Diagram-first
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__stop__diagram-first.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|g__stop__diagram-first.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__stop__diagram-first.py --selftest registry/fixtures/COMMS.diagram-first
+    expect: 0
+  liveness_required: FIRES
 - id: CODE.adversarial-verify-operator
   title: Adversarially verify the operator; claims need proof (verification claims and total-coverage claims)
   category: CODE
