@@ -81,13 +81,13 @@ Confidence comes from the research report: **high** = several sources agree, inc
 
 ### 8. Hybrid registers
 
-- **Why.** Mixing registers (gothic, mystery, romance, humor, historical fiction, fable) keeps long prose alive, and the craft is in making them cohere.
+- **Why.** Mixing registers (suspense, mystery, romance, humor, historical fiction, fable) keeps long prose alive, and the craft is in making them cohere.
 - **Confidence.** High (his own words: the hard part is getting many registers to work together; a critic adds that the novelty is in the combination, not in new elements).
-- **How, in nonfiction.** Adaptation: let a technical explanation borrow one register at a time: a beat of humor, a line of history, a fable-like image. One register per paragraph is plenty. The technical fact stays exact whatever register carries it.
+- **How, in nonfiction.** Adaptation. Let a technical explanation borrow one register at a time: a beat of humor, a line of history, a fable-like image. One register per paragraph is plenty. The technical fact stays exact whatever register carries it.
 
 Low-confidence note: one reader's blog reads the comic sidekick's cheek and half-believed folk sayings as a source of the humor. Treat that as a possible flavor, not a rule.
 
-## Nonfiction guardrails (hard rules)
+## Guardrails (hard rules; for fiction, map them as described under "When to use it")
 
 1. **Every fact stays real and sourced.** Dates, numbers, quotes, names, outcomes: each one traces to a source the editor can open. Keep the source next to the passage (for example an HTML comment that does not print).
 2. **3D adds, it never invents.** It adds perspectives and sensory detail. It never adds events, quotes, numbers or outcomes.
@@ -145,7 +145,7 @@ It measures the text, not a reader. It cannot tell whether a real reader picture
 
 > A token is the unit an AI model reads and writes, and the unit it bills you for.
 >
-> Look at it first from your side of the keyboard. You type a sentence. To you it's eight words. To the model it's a handful of small pieces, some whole words, some fragments of words, and each piece is a token.
+> Look at it first from your side of the keyboard. You type a sentence. To you it's a few words. To the model it's a handful of small pieces, some whole words, some fragments of words, and each piece is a token.
 >
 > Now look at it from the meter's side. Picture the electricity meter in a hallway, the little dial that turns when you switch on a lamp. Your message turns the dial once when the model reads it. The answer turns it again while the model writes it. A long question and a long answer turn it further.
 >
