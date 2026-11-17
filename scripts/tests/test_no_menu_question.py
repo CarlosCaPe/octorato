@@ -314,14 +314,32 @@ class QaRoundThreeTest(unittest.TestCase):
         ])
 
     def test_near_miss_inputs_stay_linear(self):
+        # Linearity is a RATIO, not a wall-clock budget: a fixed 0.2 s limit
+        # failed on an idle-free machine (load avg ~15) for unchanged code.
+        # Time each shape at size k and 8k (best of 5 to drop scheduler
+        # noise); linear scan grows ~8x, quadratic ~64x, so a 20x bound
+        # separates them with margin. The 2 s ceiling still catches
+        # catastrophic backtracking outright.
         import time
-        for txt in ("¿te " + "a" * 20000 + " o b?", "do you " + "x" * 20000 + " or y?",
-                    "¿ves " + "a o " * 5000 + "b?", "do you " + "see " * 5000 + "or b?",
-                    "¿se " + "se " * 7000 + "abre o b?"):
-            with self.subTest(n=len(txt)):
+        shapes = (lambda k: "¿te " + "a" * k + " o b?",
+                  lambda k: "do you " + "x" * k + " or y?",
+                  lambda k: "¿ves " + "a o " * (k // 4) + "b?",
+                  lambda k: "do you " + "see " * (k // 4) + "or b?",
+                  lambda k: "¿se " + "se " * (k // 3) + "abre o b?")
+
+        def best(txt):
+            runs = []
+            for _ in range(5):
                 t0 = time.perf_counter()
                 self.g.find_menu("Listo. " + txt, self.cfg)
-                self.assertLess(time.perf_counter() - t0, 0.2)
+                runs.append(time.perf_counter() - t0)
+            return min(runs)
+
+        for i, shape in enumerate(shapes):
+            with self.subTest(shape=i):
+                small, large = best(shape(2500)), best(shape(20000))
+                self.assertLess(large, 2.0)
+                self.assertLess(large, 20 * max(small, 1e-3))
 
 
 class ConfigTest(unittest.TestCase):
