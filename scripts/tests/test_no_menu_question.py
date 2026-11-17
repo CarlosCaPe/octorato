@@ -314,8 +314,10 @@ class QaRoundThreeTest(unittest.TestCase):
         ])
 
     def test_near_miss_inputs_stay_linear(self):
-        # Linearity is a RATIO, not a wall-clock budget: a fixed 0.2 s limit
-        # failed on an idle-free machine (load avg ~15) for unchanged code.
+        # Linearity is a RATIO of CPU time, not a wall-clock budget: a fixed
+        # 0.2 s limit failed on a heavily loaded machine (load avg ~15) for
+        # unchanged code, and even a wall-clock ratio swung to 22x there.
+        # process_time() ignores scheduler waits; ReDoS is CPU-bound.
         # Time each shape at size k and 8k (best of 5 to drop scheduler
         # noise); linear scan grows ~8x, quadratic ~64x, so a 20x bound
         # separates them with margin. The 2 s ceiling still catches
@@ -328,17 +330,18 @@ class QaRoundThreeTest(unittest.TestCase):
                   lambda k: "¿se " + "se " * (k // 3) + "abre o b?")
 
         def best(txt):
-            runs = []
+            cpu, wall = [], []
             for _ in range(5):
-                t0 = time.perf_counter()
+                c0, w0 = time.process_time(), time.perf_counter()
                 self.g.find_menu("Listo. " + txt, self.cfg)
-                runs.append(time.perf_counter() - t0)
-            return min(runs)
+                cpu.append(time.process_time() - c0)
+                wall.append(time.perf_counter() - w0)
+            return min(cpu), min(wall)
 
         for i, shape in enumerate(shapes):
             with self.subTest(shape=i):
-                small, large = best(shape(2500)), best(shape(20000))
-                self.assertLess(large, 2.0)
+                (small, _), (large, large_wall) = best(shape(2500)), best(shape(20000))
+                self.assertLess(large_wall, 2.0)
                 self.assertLess(large, 20 * max(small, 1e-3))
 
 
