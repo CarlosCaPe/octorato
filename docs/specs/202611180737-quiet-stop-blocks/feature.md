@@ -1,6 +1,6 @@
 # Feature: Quiet Stop Blocks
 
-> **Status:** draft
+> **Status:** converged
 > **Spec-Format:** ears-1
 > **Date:** 2026-11-18
 > **Classification:** LARGE (score 8: 10+ files, behavior change of live gates)
@@ -64,6 +64,6 @@ Each Shown_Line keeps the substring its Friction_Signatures row matches (`CADENC
 ## Residuals
 
 - R-01: The model must open the Detail_File to get the instructions. A model that acts on the Shown_Line alone gets the tag, the fact and the path, not the full how-to.
-- R-02: `panel_preflight.py` runs the Stop gates on drafts with no session id, so its blocks land in `<Detail_Ledger>/adhoc/` and overwrite each other's latest file there; `blocks.jsonl` keeps every row.
+- R-02: `panel_preflight.py` runs the Stop gates on drafts with no session id; it names its own `OCTO_STOP_BLOCK_SESSION=preflight-<uuid>` per run, so each preflight writes to its own detail folder and concurrent runs never overwrite each other.
 - R-03: The display behavior of a block reason is not measured in the TUI here; the change rests on the operator's report that full reasons reach his screen and on the docs cited in Step 0.
 - R-04: The Detail_File of a gate holds only its latest block per session; earlier ones stay in `blocks.jsonl`, which grows until its session directory is pruned after 7 days.
