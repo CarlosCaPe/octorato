@@ -60,7 +60,9 @@ def _session(payload) -> str:
     sid = ""
     if isinstance(payload, dict):
         sid = str(payload.get("session_id") or "")
-    sid = sid or os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
+    # OCTO_STOP_BLOCK_SESSION: a caller with no session (panel_preflight) names
+    # its own, so concurrent runs never share one `adhoc` detail file.
+    sid = sid or os.environ.get("OCTO_STOP_BLOCK_SESSION") or os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
     sid = _SAFE.sub("_", sid).strip("._")[:80]
     return sid or "adhoc"
 
@@ -81,10 +83,20 @@ def one_line(short: str, cap: int = _SHORT_CAP) -> str:
 
 
 def _prune(root: Path, keep: Path) -> None:
+    """Remove stale session directories of THIS ledger only. Never runs under
+    an OCTO_STOP_BLOCK_DIR override, never through a symlinked root, and only
+    touches real directories shaped like a session name that hold a blocks.jsonl."""
+    if os.environ.get("OCTO_STOP_BLOCK_DIR") or root.is_symlink():
+        return
     cutoff = time.time() - PRUNE_DAYS * 86400
     try:
         for d in root.iterdir():
             if d == keep or d.is_symlink() or not d.is_dir():
+                continue
+            if _SAFE.search(d.name) or d.name != d.name.strip("._"):
+                continue
+            marker = d / "blocks.jsonl"
+            if marker.is_symlink() or not marker.is_file():
                 continue
             if d.stat().st_mtime < cutoff:
                 shutil.rmtree(d, ignore_errors=True)
@@ -95,10 +107,12 @@ def _prune(root: Path, keep: Path) -> None:
 def _write_detail(gate: str, rule: str, payload, full: str) -> Path:
     """Write the full text; return the detail file path. Raises on any failure."""
     root = ledger_root()
+    if root.is_symlink():
+        raise OSError(f"ledger root is a symlink: {root}")
     sdir = root / _session(payload)
     fresh = not sdir.exists()
     sdir.mkdir(parents=True, exist_ok=True)
-    if sdir.is_symlink() or not sdir.is_dir():
+    if root.is_symlink() or sdir.is_symlink() or not sdir.is_dir():
         raise OSError(f"not a directory: {sdir}")
     now = time.time()
     ts = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)) + f".{int(now * 1000) % 1000:03d}Z"
@@ -106,9 +120,18 @@ def _write_detail(gate: str, rule: str, payload, full: str) -> Path:
     header = f"gate: {name}\nrule: {rule or '-'}\nsession: {sdir.name}\nts: {ts}\n\n"
     body = header + full + "\n"
     path = sdir / f"{name}.txt"
-    tmp = sdir / f".{name}.txt.{os.getpid()}.tmp"
-    tmp.write_text(body, encoding="utf-8")
-    os.replace(tmp, path)
+    import tempfile
+    fd, tname = tempfile.mkstemp(prefix=f".{name}.", suffix=".tmp", dir=str(sdir))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        os.replace(tname, path)
+    except BaseException:
+        try:
+            os.unlink(tname)
+        except OSError:
+            pass
+        raise
     rec = {"v": 1, "ts": ts, "gate": name, "rule": rule or "", "session": sdir.name,
            "detail": str(path), "reason": full}
     with (sdir / "blocks.jsonl").open("a", encoding="utf-8") as fh:
@@ -173,6 +196,33 @@ def _selftest() -> int:
         line = shown("g__stop__x.py", "X", full, {"session_id": "../../evil"})
         if ".." in line.split("detail: ", 1)[-1].replace(str(tmp), ""):
             fails.append("session id escaped the ledger root")
+        # a symlinked ledger root is refused (full reason back) and the prune
+        # never deletes through it
+        victim = tmp / "victim"
+        (victim / "olddir").mkdir(parents=True)
+        (victim / "olddir" / "blocks.jsonl").write_text("{}", encoding="utf-8")
+        past = time.time() - (PRUNE_DAYS + 3) * 86400
+        os.utime(victim / "olddir", (past, past))
+        link = tmp / "linkroot"
+        link.symlink_to(victim, target_is_directory=True)
+        os.environ["OCTO_STOP_BLOCK_DIR"] = str(link)
+        if shown("g__stop__x.py", "X", full, {"session_id": "new1"}) != full:
+            fails.append("symlinked ledger root was not refused")
+        _prune(link, link / "new1")
+        if not (victim / "olddir").is_dir():
+            fails.append("prune deleted through a symlinked root")
+        # the prune keeps foreign directories (no blocks.jsonl) and old sessions
+        # are removed only without an override
+        real = tmp / "real"
+        for n in ("oldsess", "foreign"):
+            (real / n).mkdir(parents=True)
+            os.utime(real / n, (past, past))
+        (real / "oldsess" / "blocks.jsonl").write_text("{}", encoding="utf-8")
+        os.utime(real / "oldsess", (past, past))
+        os.environ.pop("OCTO_STOP_BLOCK_DIR", None)
+        _prune(real, real / "keep")
+        if (real / "oldsess").exists() or not (real / "foreign").is_dir():
+            fails.append("prune did not keep to stale session directories")
     finally:
         if old is None:
             os.environ.pop("OCTO_STOP_BLOCK_DIR", None)

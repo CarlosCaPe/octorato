@@ -118,6 +118,10 @@ def _child_env() -> dict:
     env = dict(os.environ)
     for k in ("CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"):
         env.pop(k, None)
+    # Its own detail folder per preflight run (scripts/stop_block.py), so a
+    # concurrent preflight elsewhere never overwrites the text the model reads.
+    import uuid
+    env["OCTO_STOP_BLOCK_SESSION"] = f"preflight-{uuid.uuid4().hex[:12]}"
     return env
 
 

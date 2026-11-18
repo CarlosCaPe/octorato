@@ -767,8 +767,7 @@ def _short(message: str) -> str:
     if m:
         c = _CLASS_RE.search(message)
         cls = f" ({c.group(1)})" if c else ""
-        return (f"REPLY PANEL {m.group(2)}/{m.group(1)}{cls}: reviewer PASS receipts "
-                f"missing for this exact reply")
+        return f"REPLY PANEL {m.group(2)}/{m.group(1)}{cls}"
     return message
 
 
@@ -790,7 +789,8 @@ def _quiet(message: str, payload=None) -> str:
 def _scrubbed_env(sandbox: Path) -> dict:
     import gate_selftest
     env = dict(os.environ)
-    for k in gate_selftest._OVERRIDE_ENV + (_OFF_ENV,):
+    for k in gate_selftest._OVERRIDE_ENV + (_OFF_ENV, "OCTO_STOP_BLOCK_DIR",
+                                             "OCTO_STOP_BLOCK_SESSION"):
         env.pop(k, None)
     for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR",
               "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
@@ -918,6 +918,12 @@ def _run_case(path: Path, fdir: Path) -> list:
                 fails.append(f"{path.name}: shown reason names no detail file in the sandbox")
             else:
                 err = dpath.read_text(encoding="utf-8")
+            # AC-05: a missing-receipt block shows `REPLY PANEL <have>/<need> (<class>)`
+            # and then only the detail path.
+            if _SHORT_RE.search(err) and not re.fullmatch(
+                    r"REPLY PANEL \d+/\d+ \((?:INPUT|SELF|SOURCED)\) · detail: \S.*", line):
+                fails.append(f"{path.name}: missing-receipt line is not "
+                             f"`REPLY PANEL <have>/<need> (<class>)` + path: {line[:160]!r}")
         for s in fx.get("stderr_has") or []:
             if s not in err:
                 fails.append(f"{path.name}: stderr lacks {s!r}")

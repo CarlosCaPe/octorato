@@ -154,8 +154,7 @@ class GateSplitTest(unittest.TestCase):
         msg = ("REPLY PANEL (FLOW.panel-before-reply): this reply is SELF (source class) and "
                "needs PASS receipts from 3 distinct reviewer(s) for its exact text, newer "
                "than the operator's prompt, with a PASS deciding; it has 0 of 3. More.")
-        self.assertEqual(mod._short(msg), "REPLY PANEL 0/3 (SELF): reviewer PASS receipts "
-                                          "missing for this exact reply")
+        self.assertEqual(mod._short(msg), "REPLY PANEL 0/3 (SELF)")
 
     def test_every_blocking_stop_hook_is_covered(self):
         hooks = json.loads((ROOT / "hooks.json").read_text(encoding="utf-8"))
