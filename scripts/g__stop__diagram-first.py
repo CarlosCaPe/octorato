@@ -381,6 +381,17 @@ def run_turn(data: dict) -> str:
     return build_reason(detail) if detail else ""
 
 
+def _quiet(short: str, full: str, payload=None) -> str:
+    """The block reason to print: one short line naming the detail file the
+    full text was written to (scripts/stop_block.py), or the FULL reason when
+    that write fails, so the instructions always reach the model."""
+    try:
+        import stop_block
+        return stop_block.shown(__file__, short, full, payload, 'COMMS.diagram-first')
+    except Exception:
+        return full
+
+
 def main() -> int:
     try:
         data = json.loads(sys.stdin.read())
@@ -391,7 +402,9 @@ def main() -> int:
     try:
         reason = run_turn(data)
         if reason:
-            print(json.dumps({"decision": "block", "reason": reason}))
+            fact = reason.split(": ", 1)[-1].split(". Rule (", 1)[0]
+            short = f"🗺 {SIGNATURE}: {fact}"
+            print(json.dumps({"decision": "block", "reason": _quiet(short, reason, data)}))
             _journal_deny(reason, data)
     except Exception:
         pass

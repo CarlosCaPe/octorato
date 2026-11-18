@@ -19,6 +19,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import sys
 import unittest
 from pathlib import Path
@@ -55,10 +56,15 @@ class HookStdinUtf8(unittest.TestCase):
         payload = {k: v for k, v in fx.items() if k != "_fixture"}
         payload["transcript_path"] = str(FIXTURES / fx["transcript_path"])
         env = {k: v for k, v in os.environ.items() if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
-        r = subprocess.run([sys.executable, str(SCRIPTS / "g__stop__reply-panel.py")],
-                           input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                           capture_output=True, env=env, timeout=60)
-        err = r.stderr.decode("utf-8", "replace")
+        with tempfile.TemporaryDirectory() as ledger:
+            env["OCTO_STOP_BLOCK_DIR"] = ledger
+            r = subprocess.run([sys.executable, str(SCRIPTS / "g__stop__reply-panel.py")],
+                               input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                               capture_output=True, env=env, timeout=60)
+            err = r.stderr.decode("utf-8", "replace")
+            # The screen gets one line naming the detail file (scripts/stop_block.py).
+            if " · detail: " in err:
+                err = Path(err.strip().rsplit(" · detail: ", 1)[1]).read_text(encoding="utf-8")
         m = re.search(r"Digest: ([0-9a-f]{64})", err)
         self.assertIsNotNone(m, err)
         self.assertEqual(m.group(1), panel_digest.digest(text, recipients=["operator"]))

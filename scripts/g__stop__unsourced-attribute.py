@@ -528,6 +528,17 @@ def find_attributes(text: str) -> list:
     return hits
 
 
+def _quiet(short: str, full: str, payload=None) -> str:
+    """The block reason to print: one short line naming the detail file the
+    full text was written to (scripts/stop_block.py), or the FULL reason when
+    that write fails, so the instructions always reach the model."""
+    try:
+        import stop_block
+        return stop_block.shown(__file__, short, full, payload, 'COMMS.unsourced-attribute')
+    except Exception:
+        return full
+
+
 def main() -> int:
     try:
         data = json.loads(sys.stdin.read())
@@ -553,20 +564,20 @@ def main() -> int:
 
     listing = "; ".join(f"«{f}»" for f in attrs[:6])
     extra = f" (+{len(attrs) - 6} más)" if len(attrs) > 6 else ""
+    full = (
+        f"🏷 ATRIBUTO-SIN-FUENTE: lo que va a salir clasifica algo de la "
+        f"contraparte con una categoría que ella no dijo ({listing}{extra}). "
+        f"Una circunstancia (dónde está, quién lo usa) no autoriza la "
+        f"categoría (de quién es, qué es), y en un consentimiento ese "
+        f"adjetivo decide QUIÉN firma. Para cada uno: pega su frase "
+        f"textual, conviértelo en pregunta dentro del mismo mensaje, o "
+        f"quítalo. Nunca viaja adentro. Para dejarlo a propósito, pon "
+        f"'attribute-ok' en la línea. Ver CLAUDE.md 'Unsourced-attribute'."
+    )
+    short = (f"🏷 ATRIBUTO-SIN-FUENTE: {len(attrs)} unsourced attribute(s) in outward text; "
+             f"quote, ask, or remove")
     try:
-        print(json.dumps({
-            "decision": "block",
-            "reason": (
-                f"🏷 ATRIBUTO-SIN-FUENTE: lo que va a salir clasifica algo de la "
-                f"contraparte con una categoría que ella no dijo ({listing}{extra}). "
-                f"Una circunstancia (dónde está, quién lo usa) no autoriza la "
-                f"categoría (de quién es, qué es), y en un consentimiento ese "
-                f"adjetivo decide QUIÉN firma. Para cada uno: pega su frase "
-                f"textual, conviértelo en pregunta dentro del mismo mensaje, o "
-                f"quítalo. Nunca viaja adentro. Para dejarlo a propósito, pon "
-                f"'attribute-ok' en la línea. Ver CLAUDE.md 'Unsourced-attribute'."
-            ),
-        }))
+        print(json.dumps({"decision": "block", "reason": _quiet(short, full, data)}))
         _journal_deny(f"outward draft carries an unsourced attribute: {listing}", data)
     except Exception:
         pass

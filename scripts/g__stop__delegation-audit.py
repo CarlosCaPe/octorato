@@ -138,6 +138,17 @@ def _is_fetch(tool: str) -> bool:
     return not action.startswith(_WRITE_VERBS)
 
 
+def _quiet(short: str, full: str, payload=None) -> str:
+    """The block reason to print: one short line naming the detail file the
+    full text was written to (scripts/stop_block.py), or the FULL reason when
+    that write fails, so the instructions always reach the model."""
+    try:
+        import stop_block
+        return stop_block.shown(__file__, short, full, payload, 'FLOW.bulk-fetch-delegation')
+    except Exception:
+        return full
+
+
 def main() -> int:
     data = json.loads(sys.stdin.read() or "{}")
     # Consume the ledger on EVERY Stop fire, including the stop_hook_active
@@ -162,9 +173,7 @@ def main() -> int:
         return 0
     if WAIVER in _last_assistant_text(data.get("transcript_path", "")):
         return 0
-    print(json.dumps({
-        "decision": "block",
-        "reason": (
+    full = (
             f"FLOW.bulk-fetch-delegation: this turn made {n} external fetch calls "
             f"(~{total // 1024} KB) in the MAIN loop with zero delegation "
             "(no Agent/Task/Workflow). Ladder rule: bulk fetch goes to a cheap-tier "
@@ -173,8 +182,10 @@ def main() -> int:
             "keeping it consciously with `delegation-ok <reason>` in the reply "
             "(e.g. sensitive-content triage that needs judgment tier). "
             "This gate blocks only once per turn."
-        ),
-    }))
+    )
+    short = (f"FLOW.bulk-fetch-delegation: {n} fetch calls (~{total // 1024} KB) in the "
+             f"main loop, no delegation")
+    print(json.dumps({"decision": "block", "reason": _quiet(short, full, data)}))
     _journal_deny(f"{n} bulk fetch call(s) (~{total // 1024} KB) ran in the main loop "
                   f"with no delegation", data)
     return 0

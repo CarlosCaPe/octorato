@@ -38,14 +38,28 @@ def _load(path, name):
     return mod
 
 
+_LEDGER = tempfile.mkdtemp(prefix="stop-block-ledger-")  # never the live cache
+
+
+def _full(obj):
+    """The gate prints one short line naming a detail file (scripts/stop_block.py);
+    the full text the model reads lives there."""
+    if not obj or " · detail: " not in str(obj.get("reason", "")):
+        return obj.get("reason") if obj else None
+    text = Path(obj["reason"].rsplit(" · detail: ", 1)[1]).read_text(encoding="utf-8")
+    return text.split("\n\n", 1)[1]
+
+
 def _run(payload) -> dict:
     env = dict(os.environ)
     env.pop("OCTO_KERNEL_OPEN", None)
+    env["OCTO_STOP_BLOCK_DIR"] = _LEDGER
     data = payload if isinstance(payload, str) else json.dumps(payload)
     cp = subprocess.run([sys.executable, str(GATE)], input=data, capture_output=True,
                         text=True, env=env, encoding="utf-8")
     out = cp.stdout.strip()
-    return {"rc": cp.returncode, "json": json.loads(out) if out else None}
+    obj = json.loads(out) if out else None
+    return {"rc": cp.returncode, "json": obj, "full": _full(obj)}
 
 
 def _transcript(tmp: Path, text: str, prompt: str = "explain it") -> str:
@@ -201,7 +215,8 @@ class ProcessTest(unittest.TestCase):
         self.assertEqual(r["rc"], 0)
         self.assertEqual(r["json"]["decision"], "block")
         self.assertIn("DIAGRAM-FIRST", r["json"]["reason"])
-        self.assertIn("diagram-ok", r["json"]["reason"])
+        self.assertIn("diagram-ok", r["full"])
+        self.assertNotIn("\n", r["json"]["reason"])
 
     def test_stop_hook_active_passes(self):
         with tempfile.TemporaryDirectory() as d:

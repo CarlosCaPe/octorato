@@ -213,6 +213,17 @@ def find_promises(text: str) -> list:
     return hits
 
 
+def _quiet(short: str, full: str, payload=None) -> str:
+    """The block reason to print: one short line naming the detail file the
+    full text was written to (scripts/stop_block.py), or the FULL reason when
+    that write fails, so the instructions always reach the model."""
+    try:
+        import stop_block
+        return stop_block.shown(__file__, short, full, payload, 'COMMS.deliverable-complete-before-send')
+    except Exception:
+        return full
+
+
 def main() -> int:
     try:
         data = json.loads(sys.stdin.read())
@@ -243,18 +254,18 @@ def main() -> int:
 
     listing = "; ".join(f"…{frag[:60]}…" for frag in promises[:6])
     extra = f" (+{len(promises) - 6} more)" if len(promises) > 6 else ""
+    full = (
+        f"✍ DRAFT-PROMISE: a paste-ready draft in your reply promises future "
+        f"work ({listing}{extra}). Execute or disprove that action NOW, then "
+        f"rewrite the draft around the RESULT (data found, or a verified "
+        f"blocker). Messages ship with everything possible already done. "
+        f"Offers stay ('happy to pair if you want'); promises go. See "
+        f"CLAUDE.md 'Deliverable-complete-before-send'."
+    )
+    short = (f"✍ DRAFT-PROMISE: {len(promises)} future-work promise(s) in a paste-ready "
+             f"draft; execute first, then redraft")
     try:
-        print(json.dumps({
-            "decision": "block",
-            "reason": (
-                f"✍ DRAFT-PROMISE: a paste-ready draft in your reply promises future "
-                f"work ({listing}{extra}). Execute or disprove that action NOW, then "
-                f"rewrite the draft around the RESULT (data found, or a verified "
-                f"blocker). Messages ship with everything possible already done. "
-                f"Offers stay ('happy to pair if you want'); promises go. See "
-                f"CLAUDE.md 'Deliverable-complete-before-send'."
-            ),
-        }))
+        print(json.dumps({"decision": "block", "reason": _quiet(short, full, data)}))
         _journal_deny(f"paste-ready draft promises future work: {listing}", data)
     except Exception:
         pass

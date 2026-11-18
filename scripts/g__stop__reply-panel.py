@@ -751,9 +751,36 @@ def main() -> int:
         code, message = 2, (f"REPLY PANEL (FLOW.panel-before-reply) cannot decide: "
                             f"{type(e).__name__}: {e}")
     if code == 2:
-        print(message, file=sys.stderr)
+        print(_quiet(message, data), file=sys.stderr)
         _journal_deny(message[:300], data)
     return code
+
+
+_SHORT_RE = re.compile(r"needs PASS receipts from (\d+) distinct.*?it has (\d+) of \d+", re.S)
+_CLASS_RE = re.compile(r"this reply is (\w+) \(source class\)")
+
+
+def _short(message: str) -> str:
+    """The measured fact of a block, for the one line the operator sees:
+    `REPLY PANEL <have>/<need> (<class>)`, or the cannot-decide cause."""
+    m = _SHORT_RE.search(message or "")
+    if m:
+        c = _CLASS_RE.search(message)
+        cls = f" ({c.group(1)})" if c else ""
+        return (f"REPLY PANEL {m.group(2)}/{m.group(1)}{cls}: reviewer PASS receipts "
+                f"missing for this exact reply")
+    return message
+
+
+def _quiet(message: str, payload=None) -> str:
+    """One short line naming the detail file the full text was written to
+    (scripts/stop_block.py), or the FULL message when that write fails."""
+    try:
+        import stop_block
+        return stop_block.shown(__file__, _short(message), message,
+                                payload if isinstance(payload, dict) else None, _KERNEL_RULE)
+    except Exception:
+        return message
 
 
 # ---------------------------------------------------------------------------
@@ -872,9 +899,25 @@ def _run_case(path: Path, fdir: Path) -> list:
                             input=json.dumps(data), capture_output=True, text=True,
                             encoding="utf-8", errors="replace", cwd=str(sandbox),
                             env=env, timeout=30)
-        err = cp.stderr or ""
+        shown = cp.stderr or ""
         if cp.returncode != want:
-            fails.append(f"{path.name}: exit {cp.returncode}, want {want} ({err.strip()[:160]})")
+            fails.append(f"{path.name}: exit {cp.returncode}, want {want} ({shown.strip()[:160]})")
+        # A block shows ONE short line naming the detail file; the model reads
+        # the full text there (scripts/stop_block.py). The text assertions run
+        # on that full text, and the shown line is held to one line under the cap.
+        err = shown
+        if want == 2:
+            import stop_block
+            line = shown.strip()
+            if "\n" in line or stop_block.words(line) > stop_block.WORD_CAP:
+                fails.append(f"{path.name}: shown reason is not one line under "
+                             f"{stop_block.WORD_CAP} words: {line[:160]!r}")
+            det = line.rsplit(" · detail: ", 1)
+            dpath = Path(det[1]) if len(det) == 2 else None
+            if dpath is None or not dpath.is_file() or sandbox.resolve() not in dpath.resolve().parents:
+                fails.append(f"{path.name}: shown reason names no detail file in the sandbox")
+            else:
+                err = dpath.read_text(encoding="utf-8")
         for s in fx.get("stderr_has") or []:
             if s not in err:
                 fails.append(f"{path.name}: stderr lacks {s!r}")

@@ -101,7 +101,9 @@ def _run_gate(payload: dict, home: Path, extra_env: dict | None = None) -> tuple
     env.update(HOME=str(home), USERPROFILE=str(home), **(extra_env or {}))
     cp = subprocess.run([sys.executable, str(GATE)], input=json.dumps(payload), capture_output=True,
                         text=True, env=env, timeout=60)
-    return cp.returncode, cp.stdout
+    # A block names its detail file under this run's HOME (scripts/stop_block.py);
+    # the decision is what is compared, so the HOME path is normalised.
+    return cp.returncode, cp.stdout.replace(str(home), "<HOME>")
 
 
 class LiveSession:

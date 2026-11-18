@@ -334,6 +334,17 @@ def find_absence_claims(text: str, mask_quotes: bool = True) -> list:
     return hits
 
 
+def _quiet(short: str, full: str, payload=None) -> str:
+    """The block reason to print: one short line naming the detail file the
+    full text was written to (scripts/stop_block.py), or the FULL reason when
+    that write fails, so the instructions always reach the model."""
+    try:
+        import stop_block
+        return stop_block.shown(__file__, short, full, payload, 'COMMS.unsourced-absence')
+    except Exception:
+        return full
+
+
 def main() -> int:
     try:
         data = json.loads(sys.stdin.read())
@@ -363,22 +374,22 @@ def main() -> int:
 
     listing = "; ".join(f"«{c}»" for c in claims[:6])
     extra = f" (+{len(claims) - 6} más)" if len(claims) > 6 else ""
+    full = (
+        f"🔎 AUSENCIA-SIN-BÚSQUEDA: lo que va a salir afirma que algo no "
+        f"tiene origen o no se reconoce ({listing}{extra}) y en este turno "
+        f"no hubo ninguna búsqueda que pudiera refutarlo. Un 'no lo "
+        f"reconozco' del operador es hipótesis, no dato. Antes de mandar: "
+        f"query_connectome.py memory \"<monto o concepto>\", list_messages "
+        f"con el monto (con y sin coma) en las fechas del cargo, y el "
+        f"expediente del arm. Si los tres vienen vacíos, redáctalo como "
+        f"pregunta a la contraparte, no como afirmación. Para dejarlo a "
+        f"propósito, pon 'absence-ok' en la línea. Ver CLAUDE.md "
+        f"'Unsourced-absence'."
+    )
+    short = (f"🔎 AUSENCIA-SIN-BÚSQUEDA: {len(claims)} absence claim(s) in outward text "
+             f"with no search this turn")
     try:
-        print(json.dumps({
-            "decision": "block",
-            "reason": (
-                f"🔎 AUSENCIA-SIN-BÚSQUEDA: lo que va a salir afirma que algo no "
-                f"tiene origen o no se reconoce ({listing}{extra}) y en este turno "
-                f"no hubo ninguna búsqueda que pudiera refutarlo. Un 'no lo "
-                f"reconozco' del operador es hipótesis, no dato. Antes de mandar: "
-                f"query_connectome.py memory \"<monto o concepto>\", list_messages "
-                f"con el monto (con y sin coma) en las fechas del cargo, y el "
-                f"expediente del arm. Si los tres vienen vacíos, redáctalo como "
-                f"pregunta a la contraparte, no como afirmación. Para dejarlo a "
-                f"propósito, pon 'absence-ok' en la línea. Ver CLAUDE.md "
-                f"'Unsourced-absence'."
-            ),
-        }))
+        print(json.dumps({"decision": "block", "reason": _quiet(short, full, data)}))
         _journal_deny(f"outward draft claims an absence with no seek this turn: {listing}", data)
     except Exception:
         pass
