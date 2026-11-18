@@ -160,6 +160,17 @@ def find_deferrals(text: str, raw: str) -> list:
     return hits
 
 
+def _quiet(short: str, full: str, payload=None) -> str:
+    """The block reason to print: one short line naming the detail file the
+    full text was written to (scripts/stop_block.py), or the FULL reason when
+    that write fails, so the instructions always reach the model."""
+    try:
+        import stop_block
+        return stop_block.shown(__file__, short, full, payload, 'FLOW.do-it-today')
+    except Exception:
+        return full
+
+
 def main() -> int:
     try:
         data = json.loads(sys.stdin.read())
@@ -187,19 +198,19 @@ def main() -> int:
 
     listing = "; ".join(f"…{frag[:60]}…" for frag in deferrals[:6])
     extra = f" (+{len(deferrals) - 6} más)" if len(deferrals) > 6 else ""
+    full = (
+        f"⏳ HOY-NO-MAÑANA: estás cerrando el turno aplazando trabajo tuyo "
+        f"({listing}{extra}). Hazlo ahora. Si de verdad no se puede, el "
+        f"pendiente solo vale cuando es un paso irreducible del operador "
+        f"(consentimiento, contraseña, permiso) o un bloqueo MEDIDO, y en "
+        f"ambos casos viaja con su comando exacto para pegar. Reportar un "
+        f"pendiente que tú podías ejecutar es la forma sutil de aplazar. "
+        f"Ver CLAUDE.md 'Do-it-today'."
+    )
+    short = (f"⏳ HOY-NO-MAÑANA: turn closes deferring own work ({len(deferrals)} hit(s)); "
+             f"do it now")
     try:
-        print(json.dumps({
-            "decision": "block",
-            "reason": (
-                f"⏳ HOY-NO-MAÑANA: estás cerrando el turno aplazando trabajo tuyo "
-                f"({listing}{extra}). Hazlo ahora. Si de verdad no se puede, el "
-                f"pendiente solo vale cuando es un paso irreducible del operador "
-                f"(consentimiento, contraseña, permiso) o un bloqueo MEDIDO, y en "
-                f"ambos casos viaja con su comando exacto para pegar. Reportar un "
-                f"pendiente que tú podías ejecutar es la forma sutil de aplazar. "
-                f"Ver CLAUDE.md 'Do-it-today'."
-            ),
-        }))
+        print(json.dumps({"decision": "block", "reason": _quiet(short, full, data)}))
         _journal_deny(f"turn closed deferring the agent's own work: {listing}", data)
     except Exception:
         pass

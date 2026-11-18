@@ -173,6 +173,11 @@ THE FILE SET, and why each one is an arming surface.
       tree-owners. Protecting a gate and leaving the library it executes
       writable protects nothing, so the closure is in the set, not just the
       entry points.
+  scripts/stop_block.py
+      The library every blocking Stop gate prints its reason through: it
+      writes the full text to the detail ledger and returns the one line the
+      operator sees. A doctored copy could drop the instructions a block
+      carries, so it sits in the closure with the other run-time imports.
   scripts/brain_doctor.py
       The prover. RULE #1 is wired BY brain_doctor: it runs every gate's
       --selftest and .githooks/pre-push blocks on its exit code. A doctored
@@ -893,6 +898,7 @@ _SCRIPT_PATTERNS = ("g__pretool*.py", "g__stop__*.py", "r__*.py",
                     "gate_selftest.py", "brain_doctor.py", "receipt_ledger.py",
                     "external_review.py",
                     "kernel_proc.py", "dimension-awareness-hook.py",
+                    "stop_block.py",
                     "merge-hooks.py", "check-generic.py",
                     "commit_msg_language_gate.py")
 _SCRIPT_WHY = ("the body of a fail-closed gate, a RECORDER whose output a "

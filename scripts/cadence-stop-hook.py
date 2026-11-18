@@ -111,6 +111,17 @@ def _strip_non_prose(text: str) -> str:
     return "\n".join(kept)
 
 
+def _quiet(short: str, full: str, payload=None) -> str:
+    """The block reason to print: one short line naming the detail file the
+    full text was written to (scripts/stop_block.py), or the FULL reason when
+    that write fails, so the instructions always reach the model."""
+    try:
+        import stop_block
+        return stop_block.shown(__file__, short, full, payload, 'COMMS.human-cadence')
+    except Exception:
+        return full
+
+
 def main() -> int:
     try:
         data = json.loads(sys.stdin.read())
@@ -143,17 +154,17 @@ def main() -> int:
         f"rule {n} ({label}): …{frag[:48]}…" for n, label, _ln, frag in hits[:12]
     )
     extra = f" (+{len(hits) - 12} more)" if len(hits) > 12 else ""
+    full = (
+        f"✍ CADENCE on your reply: {len(hits)} violation(s) of the human-cadence "
+        f"no-rules the operator explicitly banned. {listing}{extra}. "
+        f"REWRITE the reply now applying skills/human-cadence: same meaning, "
+        f"no em-dashes, no AI filler, no contrast frames, no rigid transitions, "
+        f"no filler openers, no summary tails. Then deliver the rewritten version."
+    )
+    short = (f"✍ CADENCE on your reply: {len(hits)} violation(s); rewrite it per "
+             f"skills/human-cadence")
     try:
-        print(json.dumps({
-            "decision": "block",
-            "reason": (
-                f"✍ CADENCE on your reply: {len(hits)} violation(s) of the human-cadence "
-                f"no-rules the operator explicitly banned. {listing}{extra}. "
-                f"REWRITE the reply now applying skills/human-cadence: same meaning, "
-                f"no em-dashes, no AI filler, no contrast frames, no rigid transitions, "
-                f"no filler openers, no summary tails. Then deliver the rewritten version."
-            ),
-        }))
+        print(json.dumps({"decision": "block", "reason": _quiet(short, full, data)}))
     except Exception:
         pass
     return 0

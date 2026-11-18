@@ -28,6 +28,10 @@ sys.path.insert(0, str(SCRIPTS))
 import panel_digest  # noqa: E402
 import panel_preflight  # noqa: E402
 
+# The preflight runs the real Stop gates; their block detail goes to a temp
+# ledger, never the live ~/.claude/.cache/stop-blocks (scripts/stop_block.py).
+os.environ.setdefault("OCTO_STOP_BLOCK_DIR", tempfile.mkdtemp(prefix="stop-block-ledger-"))
+
 # A clean reply to the operator opens with a diagram and keeps its text in
 # bullets (COMMS.diagram-first runs in the preflight like every Stop gate).
 CLEAN = ("```\nbranch ──► tests ──► ✓\n```\n\n- The tests pass on the branch.\n\n"

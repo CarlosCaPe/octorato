@@ -32,15 +32,29 @@ def _load_gate():
     return mod
 
 
+_LEDGER = tempfile.mkdtemp(prefix="stop-block-ledger-")  # never the live cache
+
+
+def _full(obj):
+    """The gate prints one short line naming a detail file (scripts/stop_block.py);
+    the full text the model reads lives there."""
+    if not obj or " · detail: " not in str(obj.get("reason", "")):
+        return obj.get("reason") if obj else None
+    text = Path(obj["reason"].rsplit(" · detail: ", 1)[1]).read_text(encoding="utf-8")
+    return text.split("\n\n", 1)[1]
+
+
 def _run(payload: dict, env_extra: dict = None) -> dict:
     env = dict(os.environ)
     env.pop("OCTO_KERNEL_OPEN", None)
+    env["OCTO_STOP_BLOCK_DIR"] = _LEDGER
     if env_extra:
         env.update(env_extra)
     cp = subprocess.run([sys.executable, str(GATE)], input=json.dumps(payload),
                         capture_output=True, text=True, env=env)
     out = cp.stdout.strip()
-    return {"rc": cp.returncode, "json": json.loads(out) if out else None}
+    obj = json.loads(out) if out else None
+    return {"rc": cp.returncode, "json": obj, "full": _full(obj)}
 
 
 def _transcript(tmp: Path, text: str) -> str:
@@ -378,6 +392,8 @@ class GateProcessTest(unittest.TestCase):
         self.assertEqual(first["json"]["decision"], "block")
         self.assertIn("/choice", first["json"]["reason"])
         self.assertIn("SIN-MENÚ", first["json"]["reason"])
+        self.assertNotIn("\n", first["json"]["reason"])
+        self.assertIn("menu-ok", first["full"])
         self.assertIsNone(second["json"])
 
     def test_last_assistant_message_fallback(self):

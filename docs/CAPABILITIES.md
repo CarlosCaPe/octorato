@@ -9,7 +9,7 @@
 | Skills | 247 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 145 |
+| Scripts: wired | 146 |
 | Scripts: orphan | 7 |
 | Rules | 108 |
 | Hook entries | 63 |
@@ -500,7 +500,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (152)
+## Scripts (153)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -646,6 +646,7 @@
 | source-attribution-check.py | source-attribution-check.py: Stop hook, every answer MUST end with its provenance. | wired |
 | spec_lint.py | spec_lint.py: the deterministic reader of a v9 spec (Spec-Format: ears-1). | wired |
 | statusline.py | statusline.py: one short line for Claude Code's statusLine slot. | wired |
+| stop_block.py | stop_block.py: one short line on the operator's screen, the full text for the model. | wired |
 | sync-ai-docs.ps1 |  | orphan |
 | sync-readme-counts.py | Sync the skill/agent counts cited in README.md + FAQ.md to the numbers on disk. | wired |
 | trace-hook.py | trace-hook.py , observability surface 1 , capture hook. Reads a Claude Code hook event from stdin an... | wired |

@@ -817,6 +817,17 @@ def run_turn(data: dict) -> str:
     return reason
 
 
+def _quiet(short: str, full: str, payload=None) -> str:
+    """The block reason to print: one short line naming the detail file the
+    full text was written to (scripts/stop_block.py), or the FULL reason when
+    that write fails, so the instructions always reach the model."""
+    try:
+        import stop_block
+        return stop_block.shown(__file__, short, full, payload, 'FLOW.root-goal-anchor')
+    except Exception:
+        return full
+
+
 def main() -> int:
     try:
         data = json.loads(sys.stdin.read())
@@ -843,7 +854,9 @@ def main() -> int:
         else:
             reason = run_turn(data)
             if reason:
-                print(json.dumps({"decision": "block", "reason": reason}))
+                short = ("⚓ ANCLA: closure claimed without naming the session root "
+                         "goal; state its status and next step")
+                print(json.dumps({"decision": "block", "reason": _quiet(short, reason, data)}))
                 sys.stdout.flush()
                 _journal_deny(reason, data)
     except Exception:

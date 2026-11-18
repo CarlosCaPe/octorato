@@ -636,6 +636,17 @@ def find_menu(raw: str, cfg: dict) -> tuple:
     return (sentence, reason) if reason else ("", "")
 
 
+def _quiet(short: str, full: str, payload=None) -> str:
+    """The block reason to print: one short line naming the detail file the
+    full text was written to (scripts/stop_block.py), or the FULL reason when
+    that write fails, so the instructions always reach the model."""
+    try:
+        import stop_block
+        return stop_block.shown(__file__, short, full, payload, 'COMMS.no-menu-question')
+    except Exception:
+        return full
+
+
 def main() -> int:
     try:
         data = json.loads(sys.stdin.read())
@@ -661,10 +672,7 @@ def main() -> int:
     if not reason:
         return 0
 
-    try:
-        print(json.dumps({
-            "decision": "block",
-            "reason": (
+    full = (
                 f"🔀 SIN-MENÚ: el turno cierra con una pregunta de opción múltiple al "
                 f"operador (…{sentence[:90]}…). Directiva canónica 2026-10-15: 0% de "
                 f"preguntas de opción múltiple. Corre /choice (desarrolla, debate, "
@@ -674,8 +682,10 @@ def main() -> int:
                 f"corte de versión, login), y viaja como paso con su comando, no como "
                 f"pregunta. Para dejar la pregunta a propósito, pon `{HATCH}` en la línea. "
                 f"Ver CLAUDE.md 'No menu questions'."
-            ),
-        }))
+    )
+    short = "🔀 SIN-MENÚ: turn ends on a choice question to the operator; decide with /choice"
+    try:
+        print(json.dumps({"decision": "block", "reason": _quiet(short, full, data)}))
         _journal_deny(f"turn closed on a choice question to the operator: {sentence[:90]}", data)
     except Exception:
         pass
