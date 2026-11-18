@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "status of the PRs"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Two pull requests touch the same gate and they cannot both merge as they are.\n\ninput-needed: which of the two should merge first?\n\nProvenance: Basis: scripts/g__stop__diagram-first.py · Engine: build · Touched: none · Verified: selftest"}]}}

@@ -6,7 +6,9 @@ impact-radius and surface every OTHER file that references the same concept, so
 the agent reconciles them in the SAME change instead of leaving stale references
 — the "pixelation" failure (codify in one place, leave refs stale), the #1
 recurrent miss. Involuntary: it fires on the write itself, not on the agent
-remembering to scan. Advisory (systemMessage), exits 0 — never blocks the edit.
+remembering to scan. Advisory, exits 0 — never blocks the edit. The advisory goes
+to the MODEL as hookSpecificOutput.additionalContext, never to the operator's screen
+(systemMessage is shown to the user; the operator's rule: hooks stay for the agent).
 
 This is the feedforward⇄feedback loop's feedback half made autonomic: the 4D
 Gate Manifest predicts the target file-set (feedforward); this hook + the
@@ -66,10 +68,12 @@ def main():
     files = [f for f in files if f != rel]
     if files:
         shown = ", ".join(files[:6]) + (" …" if len(files) > 6 else "")
-        print(json.dumps({"systemMessage":
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": ev.get("hook_event_name") or "PostToolUse",
+            "additionalContext":
             f"♥ Impact Radius — concept '{term}' is referenced in {len(files)} other "
             f"file(s): {shown}. Reconcile your Provenance `Touched` against these "
-            f"(update each, or consciously skip) — don't leave stale refs."}))
+            f"(update each, or consciously skip) — don't leave stale refs."}}))
     sys.exit(0)
 
 

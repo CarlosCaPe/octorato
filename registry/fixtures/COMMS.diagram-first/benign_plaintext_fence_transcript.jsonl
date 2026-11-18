@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "how?"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "```plaintext\nhook ──► ledger ──► receipt\n```\n\n- The hook reads the staged files.\n- The ledger records one digest."}]}}

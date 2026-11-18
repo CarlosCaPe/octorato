@@ -566,7 +566,7 @@
 | g__shim__hook.py | g__shim__hook.py: run an Octorato gate under a second harness (v11 AC-05). | wired |
 | g__stop__defer-today.py | g__stop__defer-today.py: Stop gate: "no dejes para mañana lo que puedas hacer hoy" (do not put off u... | wired |
 | g__stop__delegation-audit.py | g__stop__delegation-audit.py: Stop gate for FLOW.bulk-fetch-delegation. | wired |
-| g__stop__diagram-first.py | g__stop__diagram-first.py: Stop gate: an explanatory reply opens with a diagram. | wired |
+| g__stop__diagram-first.py | g__stop__diagram-first.py: Stop gate: every reply to the operator opens with a flow. | wired |
 | g__stop__draft-promise.py | g__stop__draft-promise.py , Stop gate: no future-tense promises in paste-ready drafts. | wired |
 | g__stop__goal-anchor.py | g__stop__goal-anchor.py: Stop gate: the goal stack does not erode. | wired |
 | g__stop__no-menu-question.py | g__stop__no-menu-question.py: Stop gate: a reply never ENDS on a menu for the operator. | wired |

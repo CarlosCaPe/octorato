@@ -1,25 +1,32 @@
 #!/usr/bin/env python3
-"""g__stop__diagram-first.py: Stop gate: an explanatory reply opens with a diagram.
+"""g__stop__diagram-first.py: Stop gate: every reply to the operator opens with a flow.
 
-A reply that explains a flow, a before/after, the status of several items or a
-structure in paragraphs makes the reader rebuild the picture in their head. The
-rule (CLAUDE.md "Diagram-first", HOW in skills/human-cadence/SKILL.md): such a
-reply OPENS with an ASCII diagram in a code block, and prose covers only what
-the diagram does not say. Memory alone did not hold it under load, so it is a
-ganglion: a hook that fires on its own.
+Operator decision (2026-11-17): 100% of replies to the operator in the terminal
+are flows. A reply OPENS with an ASCII diagram in a code block; the text after
+it is short and in bullets; more detail is given only when the operator asks,
+or offered in one closing line. Rule: CLAUDE.md "Diagram-first", HOW in
+skills/human-cadence/SKILL.md. Memory alone did not hold it under load, so it
+is a ganglion: a hook that fires on its own.
 
-Fires on the conjunction (the spec's Blocking_Condition):
-  A. the Prose reaches WORD_FLOOR words,
-  B. the Prose carries an explanatory shape (flow, before/after, status, structure),
-  C. no exemption applies (paste-ready ask, trailing `input-needed:` line, hatch),
-  D. the reply has no opening diagram (a fenced block first, or after one short
-     lead line, whose body holds a diagram glyph).
+Blocks when no exemption applies and EITHER check fails:
+  1. FLOW: the reply has no opening diagram (a fenced block first, or after
+     one short lead line, whose info string is empty/text/txt/ascii/plaintext/text-plain and whose
+     body holds a diagram glyph: an arrow, a box-drawing branch, or an ASCII
+     table row such as `| a | b |` or `+---+`). Status lines included. A fenced
+     2D Delegate summary may lead; the diagram then follows it.
+  2. SHORT TEXT: the Prose exceeds PROSE_MAX_WORDS (120), or holds a paragraph
+     (a run of consecutive non-bullet, non-table lines) of more than
+     PARAGRAPH_MAX_WORDS (40) words.
+
+Exemptions: a paste-ready ask in the operator's prompt; an input-needed-only
+reply (the last Prose line is `input-needed:` and the rest of the Prose is a
+lead of at most INPUT_LEAD_MAX_WORDS, 30); the `diagram-ok` hatch;
+stop_hook_active.
 
 Prose is the reply minus fenced code, inline code, blockquotes, quoted spans,
-the Provenance footer and the Disclose one-liners, so a shape that lives only
-inside code or a quote never fires.
-
-When in doubt, PASS: a gate that shouts gets ignored, and that kills the others.
+the Provenance footer and the Disclose one-liners. The four shape detectors
+(flow, before/after, status, structure) survive only as diagnostic text in the
+block reason; they do not gate the decision.
 
 Hatch: `diagram-ok` on any line of the reply exempts the turn.
 Loop safety: stop_hook_active=true means we already blocked this turn, pass.
@@ -29,7 +36,7 @@ Stdin:  {"transcript_path": str, "stop_hook_active": bool, ...}
 Stdout: {"decision": "block", "reason": "..."} on a hit, else nothing.
 Exit:   always 0.
 
-Spec: docs/specs/202611151120-diagram-first/.
+Spec: docs/specs/202611172031-diagram-always/ (supersedes docs/specs/202611151120-diagram-first/).
 """
 from __future__ import annotations
 
@@ -47,7 +54,9 @@ for _stream in (sys.stdin, sys.stdout, sys.stderr):
 
 HATCH = "diagram-ok"
 SIGNATURE = "DIAGRAM-FIRST"
-WORD_FLOOR = 80          # words of Prose; a status line (<=30) and an INPUT reply (<=60) sit below it
+PROSE_MAX_WORDS = 120    # cap on the Prose outside the diagram, footer and Disclose lines
+PARAGRAPH_MAX_WORDS = 40 # a non-bullet paragraph longer than this is a wall of text
+INPUT_LEAD_MAX_WORDS = 30
 LEAD_LINE_MAX_WORDS = 20
 MIN_ARROWS = 2
 MIN_NUMBERED = 3
@@ -79,8 +88,10 @@ _STATE_GLYPHS = ("✓", "✗", "✅", "❌", "⚠")
 _STATE_WORDS = re.compile(
     r"\b(?:done|pending|blocked|open|merged|failing|passing|green|red|"
     r"listo|pendiente|bloqueado|hecho|abierto|cerrado)\b")
-_DIAGRAM_GLYPH = re.compile(r"─►|►|├─|└─|│|▼|→|->")
-_DIAGRAM_INFO = ("", "text", "txt", "ascii")
+_DIAGRAM_GLYPH = re.compile(
+    r"─►|►|◄|├─|└─|┌|┐|┘|│|─{2,}|═|║|▼|▲|→|←|->|<-|=>|"
+    r"^\s*\|.*\|\s*$|^\s*\+-[-+]*\+\s*$", re.MULTILINE)
+_DIAGRAM_INFO = ("", "text", "txt", "ascii", "plaintext", "text-plain")  # not mermaid: the terminal shows it raw
 
 _RE_SYSTEM_REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
 _RE_COMMAND_TAG = re.compile(r"<command-(?:name|message|args)>.*?</command-\w+>", re.DOTALL)
@@ -200,12 +211,27 @@ def count_words(prose: list) -> int:
                if _WORD.search(tok) and not _LIST_MARKER.match(tok))
 
 
+def _is_2d_summary(fence: dict) -> bool:
+    """The fenced 2D Delegate summary (skills/4d-paradigm-protocol, Mandatory Output
+    Format). It may lead a reply; the diagram follows it."""
+    if fence["info"] not in _DIAGRAM_INFO:
+        return False
+    first = next((ln.strip() for ln in fence["body"].splitlines() if ln.strip()), "")
+    return first.startswith("2D Delegate")
+
+
 def has_opening_diagram(lines: list, fences: list) -> bool:
-    """A diagram fence is the first non-blank element, or follows one short lead line."""
+    """A diagram fence is the first non-blank element, or follows one short lead line.
+    A leading fenced 2D Delegate summary is skipped before that check."""
     nonblank = [i for i, ln in enumerate(lines) if ln.strip()]
     if not nonblank:
         return False
     by_start = {f["start"]: f for f in fences}
+    if nonblank[0] in by_start and _is_2d_summary(by_start[nonblank[0]]):
+        end = by_start[nonblank[0]]["end"]
+        nonblank = [i for i in nonblank if i > end]
+        if not nonblank:
+            return False
     first = nonblank[0]
     if first in by_start:
         return is_diagram_fence(by_start[first])
@@ -281,6 +307,27 @@ def explanatory_shape(prose: list) -> str:
 
 # ── verdict ──────────────────────────────────────────────────────────────────
 
+def _paragraph_words(prose: list) -> int:
+    """Words in the longest paragraph: a run of consecutive non-blank lines that
+    are not list items or table rows. A line indented under a list item is that
+    item's continuation, not a paragraph."""
+    best = run = 0
+    in_item = False
+    for ln in prose:
+        if not ln.strip():
+            run, in_item = 0, False
+            continue
+        if _LIST_ITEM.match(ln) or _TABLE_ROW.match(ln):
+            run, in_item = 0, bool(_LIST_ITEM.match(ln))
+            continue
+        if in_item and ln[:1].isspace():
+            continue
+        in_item = False
+        run += count_words([ln])
+        best = max(best, run)
+    return best
+
+
 def find_violation(prompt: str, reply: str, paste_rx=None) -> str:
     """The block detail, or '' (the spec's Blocking_Condition, in full)."""
     if not reply or not reply.strip():
@@ -293,28 +340,32 @@ def find_violation(prompt: str, reply: str, paste_rx=None) -> str:
     fences = parse_fences(lines)
     prose = prose_lines(lines, fences)
     tail = [ln for ln in prose if ln.strip()]
-    if tail and _INPUT_LABEL.match(tail[-1]):
-        return ""
-    if count_words(prose) < WORD_FLOOR:
+    if tail and _INPUT_LABEL.match(tail[-1]) and count_words(tail[:-1]) <= INPUT_LEAD_MAX_WORDS:
         return ""
     shape = explanatory_shape(prose)
-    if not shape:
-        return ""
-    if has_opening_diagram(lines, fences):
-        return ""
-    late = any(is_diagram_fence(f) for f in fences)
-    if late:
-        return f"{shape}; a diagram is in the reply but not at the top, move it to the top"
-    return f"{shape}; the reply has no opening diagram"
+    what = f" (it carries a {shape})" if shape else ""
+    if not has_opening_diagram(lines, fences):
+        if any(is_diagram_fence(f) for f in fences):
+            return f"a diagram is in the reply but not at the top{what}; move it to the top"
+        return f"the reply has no opening diagram{what}"
+    words = count_words(prose)
+    if words > PROSE_MAX_WORDS:
+        return f"the text after the diagram is {words} words, over the {PROSE_MAX_WORDS}-word cap"
+    para = _paragraph_words(prose)
+    if para > PARAGRAPH_MAX_WORDS:
+        return (f"the text holds a {para}-word paragraph, over the {PARAGRAPH_MAX_WORDS}-word "
+                f"limit for non-bullet text")
+    return ""
 
 
 def build_reason(detail: str) -> str:
     return (
-        f"🗺 {SIGNATURE}: this reply explains a {detail}. Rule (CLAUDE.md 'Diagram-first'): "
-        f"open with an ASCII diagram in a code block, then prose only for what the diagram "
-        f"does not say. Grammar: `──►` steps, `├─` / `└─` branches, ✓ / ? / ✗ state, "
-        f"`1°` / `2°` order and owner (skills/human-cadence/SKILL.md). Rewrite the reply that "
-        f"way. To keep it as is, put `{HATCH}` on a line."
+        f"🗺 {SIGNATURE}: {detail}. Rule (CLAUDE.md 'Diagram-first'): flow first; text short "
+        f"and in bullets; offer more detail in one line instead of writing it. Open with an "
+        f"ASCII diagram in a code block (`──►` steps, `├─` / `└─` branches, ✓ / ? / ✗ state, "
+        f"a plain `| a | b |` table also counts), then at most {PROSE_MAX_WORDS} words of short "
+        f"bullets, no paragraph over {PARAGRAPH_MAX_WORDS} words (skills/human-cadence/SKILL.md). "
+        f"Rewrite the reply that way. To keep it as is, put `{HATCH}` on a line."
     )
 
 

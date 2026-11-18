@@ -160,6 +160,8 @@ After all 3, follow the COMBINED recommendation:
   Q3 Delegate:  ACTIVATE / LOAD / SELF — [reason]
 ```
 
+In a reply to the operator, keep this block fenced: it may lead the reply, and the opening ASCII diagram follows it (Diagram-first, `scripts/g__stop__diagram-first.py`). Unfenced, it counts as prose and the gate blocks.
+
 ### Exceptions (abbreviated 3Q OK)
 
 - Trivial tasks (single grep, file read, quick answer)
