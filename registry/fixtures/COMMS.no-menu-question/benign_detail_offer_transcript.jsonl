@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "how does it work?"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "```\nhook ──► ledger ──► receipt\n```\n\n- The hook reads the staged files.\n- The ledger records one digest.\n\n¿Más detalle del ledger?\n\nProvenance: Basis: scripts/g__stop__no-menu-question.py · Engine: build · Touched: none · Verified: selftest"}]}}

@@ -196,6 +196,17 @@ def _recent_transcript_text(transcript_path: str, max_bytes: int = 8192) -> str:
         return ""
 
 
+def _quiet(short: str, full: str, payload=None) -> str:
+    """The block reason to print: one short line naming the detail file the
+    full text was written to (scripts/stop_block.py), or the FULL reason when
+    that write fails, so the instructions always reach the model."""
+    try:
+        import stop_block
+        return stop_block.shown(__file__, short, full, payload, 'CODE.adversarial-verify-operator')
+    except Exception:
+        return full
+
+
 def main() -> int:
     try:
         data = json.loads(sys.stdin.read())
@@ -232,7 +243,9 @@ def main() -> int:
             recent = _recent_transcript_text(transcript, max_bytes=8192)
             if not _RE_EVIDENCE.search(recent):
                 # Both conditions met, no evidence: block once
-                print(json.dumps({"decision": "block", "reason": _BLOCK_REASON}))
+                print(json.dumps({"decision": "block", "reason": _quiet(
+                    "You claimed verified/done on a visual or runtime change with no "
+                    "proof in the transcript", _BLOCK_REASON, data)}))
                 return 0
 
         # ── claim class 2: total coverage asserted while the turn truncated ──
@@ -242,7 +255,9 @@ def main() -> int:
         if coverage_claim(last_text) and not _RE_COVERAGE_DECLARED.search(last_text):
             recent_wide = _recent_transcript_text(transcript, max_bytes=16384)
             if _RE_TRUNCATION.search(recent_wide):
-                print(json.dumps({"decision": "block", "reason": _BLOCK_REASON_COVERAGE}))
+                print(json.dumps({"decision": "block", "reason": _quiet(
+                    "You asserted TOTAL coverage while this turn truncated, and never "
+                    "declared the cut", _BLOCK_REASON_COVERAGE, data)}))
                 return 0
 
     except Exception:

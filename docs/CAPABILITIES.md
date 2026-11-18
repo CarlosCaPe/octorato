@@ -9,7 +9,7 @@
 | Skills | 248 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 145 |
+| Scripts: wired | 146 |
 | Scripts: orphan | 7 |
 | Rules | 108 |
 | Hook entries | 63 |
@@ -501,7 +501,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (152)
+## Scripts (153)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -567,7 +567,7 @@
 | g__shim__hook.py | g__shim__hook.py: run an Octorato gate under a second harness (v11 AC-05). | wired |
 | g__stop__defer-today.py | g__stop__defer-today.py: Stop gate: "no dejes para mañana lo que puedas hacer hoy" (do not put off u... | wired |
 | g__stop__delegation-audit.py | g__stop__delegation-audit.py: Stop gate for FLOW.bulk-fetch-delegation. | wired |
-| g__stop__diagram-first.py | g__stop__diagram-first.py: Stop gate: an explanatory reply opens with a diagram. | wired |
+| g__stop__diagram-first.py | g__stop__diagram-first.py: Stop gate: every reply to the operator opens with a flow. | wired |
 | g__stop__draft-promise.py | g__stop__draft-promise.py , Stop gate: no future-tense promises in paste-ready drafts. | wired |
 | g__stop__goal-anchor.py | g__stop__goal-anchor.py: Stop gate: the goal stack does not erode. | wired |
 | g__stop__no-menu-question.py | g__stop__no-menu-question.py: Stop gate: a reply never ENDS on a menu for the operator. | wired |
@@ -647,6 +647,7 @@
 | source-attribution-check.py | source-attribution-check.py: Stop hook, every answer MUST end with its provenance. | wired |
 | spec_lint.py | spec_lint.py: the deterministic reader of a v9 spec (Spec-Format: ears-1). | wired |
 | statusline.py | statusline.py: one short line for Claude Code's statusLine slot. | wired |
+| stop_block.py | stop_block.py: one short line on the operator's screen, the full text for the model. | wired |
 | sync-ai-docs.ps1 |  | orphan |
 | sync-readme-counts.py | Sync the skill/agent counts cited in README.md + FAQ.md to the numbers on disk. | wired |
 | trace-hook.py | trace-hook.py , observability surface 1 , capture hook. Reads a Claude Code hook event from stdin an... | wired |

@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "which PRs are open?"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Open pull requests:\n\n```\n| PR  | state   |\n|-----|---------|\n| one | review  |\n| two | blocked |\n```\n\n- The second one waits on the parser fix.\n- Both carry the same reviewer.\n\nProvenance: Basis: scripts/g__stop__diagram-first.py · Engine: build · Touched: none · Verified: selftest"}]}}

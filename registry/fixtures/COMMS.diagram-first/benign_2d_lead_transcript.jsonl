@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "change the gate"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "```\n2D Delegate: gate change\n  Q1 Ventosas:  Code Reviewer (score 0.4) + 3 skills via connectome\n  Q2 MCP/API:   N/A\n  Q3 Delegate:  LOAD, technique only\n```\n\n```\nhook ──► ledger ──► receipt\n```\n\n- The hook reads the staged files.\n- The ledger records one digest."}]}}

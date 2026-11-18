@@ -92,6 +92,17 @@ _BLOCK_REASON = (
 )
 
 
+def _quiet(short: str, full: str, payload=None) -> str:
+    """The block reason to print: one short line naming the detail file the
+    full text was written to (scripts/stop_block.py), or the FULL reason when
+    that write fails, so the instructions always reach the model."""
+    try:
+        import stop_block
+        return stop_block.shown(__file__, short, full, payload, 'CODE.cite-sources')
+    except Exception:
+        return full
+
+
 def main() -> int:
     try:
         data = json.loads(sys.stdin.read() or "{}")
@@ -123,7 +134,9 @@ def main() -> int:
         return 0  # fail-open: a broken hook never holds the conversation
 
     try:
-        print(json.dumps({"decision": "block", "reason": _BLOCK_REASON}))
+        print(json.dumps({"decision": "block", "reason": _quiet(
+            "Reply has no provenance footer; close it with a Provenance line",
+            _BLOCK_REASON, data)}))
     except Exception:
         pass
     return 0

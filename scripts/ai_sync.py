@@ -870,6 +870,33 @@ def _cotenants_on_tree(ttl: int, tree: str) -> list:
         return []  # fail-open: unreadable registry → no guard, never brick ai-push
 
 
+def _caller_session_id() -> str:
+    """Session id of the Claude Code session that launched this process, or ''.
+
+    The harness exports it to every Bash subprocess; an operator terminal has none.
+    """
+    return (os.environ.get("CLAUDE_CODE_SESSION_ID")
+            or os.environ.get("CLAUDE_SESSION_ID") or "").strip()
+
+
+def _cotenancy_conflict(seen: list) -> bool:
+    """True when another writer shares this tree.
+
+    The old test was `len(seen) > 1`, which assumes the caller is one of the
+    sessions registered on this tree. A session auto-forked to its own dimension
+    worktree is registered THERE, so when it ran ai-sync on the live root it saw
+    only the other session (1 entry), the guard passed, and the runner committed
+    that session's uncommitted files. With a known caller id, count everyone
+    except the caller and stop on the first one. Without one (an operator
+    terminal), keep the old threshold: the operator's own session is the one
+    expected on the tree.
+    """
+    me = _caller_session_id()
+    if me:
+        return any(sid != me for sid, _branch, _age in seen)
+    return len(seen) > 1
+
+
 def hooks_drift_ok(verb: str) -> bool:
     """FATAL hooks-drift guard shared by push and cycle. False (with the
     adopt/discard message) when settings.json hooks diverged from hooks.json,
@@ -893,7 +920,7 @@ def push(args) -> int:
     window = _cotenant_window()
     tree = _this_tree()
     seen = _cotenants_on_tree(window, tree)
-    if len(seen) > 1 and os.environ.get("OCTO_ALLOW_SHARED") != "1":
+    if _cotenancy_conflict(seen) and os.environ.get("OCTO_ALLOW_SHARED") != "1":
         err(f"⚠ ai-push aborted: {len(seen)} sessions live in the SAME working tree "
             f"(co-tenancy window {window}s):")
         err(f"     tree: {tree}")
@@ -1120,7 +1147,7 @@ def cycle(args) -> int:
     window = _cotenant_window()
     tree = _this_tree()
     seen = _cotenants_on_tree(window, tree)
-    if len(seen) > 1 and os.environ.get("OCTO_ALLOW_SHARED") != "1":
+    if _cotenancy_conflict(seen) and os.environ.get("OCTO_ALLOW_SHARED") != "1":
         err(f"⚠ ai-sync aborted: {len(seen)} sessions live in the SAME working tree "
             f"(co-tenancy window {window}s):")
         err(f"     tree: {tree}")
@@ -1297,6 +1324,37 @@ def selftest() -> int:
         registro({"s1": {"branch": "x", "worktree": A, "host": host, "heartbeat": "no-es-fecha"}})
         chk("heartbeat ilegible no revienta el guardia",
             _cotenants_on_tree(1800, A) == [])
+
+        # ---- the caller counts itself out. A session forked to its own
+        # worktree that runs ai-sync on a tree held by ONE other session saw
+        # len(seen) == 1 and passed the old `> 1` test.
+        env_before = {k: os.environ.get(k) for k in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID")}
+        try:
+            os.environ.pop("CLAUDE_SESSION_ID", None)
+            registro({"other": {"branch": "no-branch", "worktree": A, "host": host,
+                                "heartbeat": hb(10)},
+                      "me": {"branch": "dim/me", "worktree": B, "host": host,
+                             "heartbeat": hb(5)}})
+            os.environ["CLAUDE_CODE_SESSION_ID"] = "me"
+            chk("caller registered elsewhere + 1 other on this tree -> blocks",
+                _cotenancy_conflict(_cotenants_on_tree(1800, A)))
+
+            registro({"me": {"branch": "dim/me", "worktree": A, "host": host,
+                             "heartbeat": hb(5)}})
+            chk("caller alone on its own tree -> does not block",
+                not _cotenancy_conflict(_cotenants_on_tree(1800, A)))
+
+            registro({"other": {"branch": "no-branch", "worktree": A, "host": host,
+                                "heartbeat": hb(10)}})
+            os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+            chk("unknown caller (operator terminal) + 1 session -> old threshold",
+                not _cotenancy_conflict(_cotenants_on_tree(1800, A)))
+        finally:
+            for k, v in env_before.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
         globals()["SESSIONS_REGISTRY"] = Path("/no/existe/registro.json")
         chk("registro ausente es fail-open, devuelve vacio",

@@ -248,6 +248,10 @@ The heartbeat (`scripts/connectome-heartbeat.py`) makes Q1 involuntary, like the
 
 Read-aloud test: if a sentence sounds like a LinkedIn thought-leader wrote it, rewrite it. The Provenance footer is exempt (machine receipt, not prose). Mechanical enforcement, two reflexes: `scripts/cadence-lint.py` flags rules 1/2/3/5/6/9 as a PostToolUse reflex on prose writes and as a CLI (`--file`/stdin, exit 1) for arm pipelines and CI; `scripts/cadence-stop-hook.py` (Stop) lints every CHAT reply before delivery and blocks once for a rewrite.
 
+### Stop block reasons: one line on screen, full text for the model
+
+Claude Code prints the whole reason of every Stop hook that blocks on the operator's terminal, and the Stop hook reference (https://code.claude.com/docs/en/hooks, "Stop decision control") documents no field that reaches the model while staying off screen: `reason` (or exit-2 stderr) "tells Claude why it should continue", and `hookSpecificOutput.additionalContext` "is shown in the transcript as hook feedback". So every blocking Stop gate prints its reason through `scripts/stop_block.py`: one line of at most 25 words, the gate tag plus the measured fact, ending in `· detail: <absolute path>`. The full instructions, unchanged, are written first to `~/.claude/.cache/stop-blocks/<session>/<gate>.txt` (latest block of that gate) and appended to `blocks.jsonl` in the same directory; the model reads the file before acting. When the ledger cannot be written or read back, the gate prints the FULL reason instead, so a block never loses its instructions. Only the text changes; every decision path, the fail-closed `cannot decide` of the reply panel included, is the gate's own. Session directories older than 7 days are pruned when a new one is created. Spec: `docs/specs/202611180737-quiet-stop-blocks/`.
+
 ### Headroom cut (moved from CLAUDE.md)
 
 Cut from `CLAUDE.md` so the constitution has token headroom under its 12,000 ceiling. Each item is the removed text as written, with em-dashes normalised to commas. The rule it explained, with its trigger, script and hatch, stays in `CLAUDE.md`; line numbers refer to `CLAUDE.md` before the cut.

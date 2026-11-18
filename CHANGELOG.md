@@ -15,8 +15,29 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-11-18]: v12.0.0
 ### Features
 - feat(gates): `COMMS.diagram-first`: Stop gate, a reply that explains a flow, a before/after, a multi-item status or a structure opens with an ASCII diagram in a code block; short, paste-ready and `input-needed:` replies exempt, hatch `diagram-ok`
+
+## [2026-11-17]: v11.12.1
+### Features
+- feat(gates): `COMMS.diagram-first`: Stop gate, a reply that explains a flow, a before/after, a multi-item status or a structure opens with an ASCII diagram in a code block; short, paste-ready and `input-needed:` replies exempt, hatch `diagram-ok`
+
+---
+
+### Fixes
+- fix(ai-sync): count the caller out of the co-tenancy guard (#464)
+
+## [2026-11-17]: v11.12.0
+### Features
+- feat(gates): `COMMS.diagram-first`: Stop gate, a reply that explains a flow, a before/after, a multi-item status or a structure opens with an ASCII diagram in a code block; short, paste-ready and `input-needed:` replies exempt, hatch `diagram-ok`
+
+---
+
+### Features
+- feat(gates): diagram-first Stop gate (COMMS.diagram-first) (#462)
+### Other
+- docs(changelog): backfill v11.11.10 (#461)
 
 ## [2026-11-11]: v11.11.10
 ### Fixes

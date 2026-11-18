@@ -28,7 +28,14 @@ sys.path.insert(0, str(SCRIPTS))
 import panel_digest  # noqa: E402
 import panel_preflight  # noqa: E402
 
-CLEAN = "The tests pass on the branch.\n\nProvenance: Basis: git log origin/master · Engine: main loop\n"
+# The preflight runs the real Stop gates; their block detail goes to a temp
+# ledger, never the live ~/.claude/.cache/stop-blocks (scripts/stop_block.py).
+os.environ.setdefault("OCTO_STOP_BLOCK_DIR", tempfile.mkdtemp(prefix="stop-block-ledger-"))
+
+# A clean reply to the operator opens with a diagram and keeps its text in
+# bullets (COMMS.diagram-first runs in the preflight like every Stop gate).
+CLEAN = ("```\nbranch ──► tests ──► ✓\n```\n\n- The tests pass on the branch.\n\n"
+         "Provenance: Basis: git log origin/master · Engine: main loop\n")
 CLEAN_SELF = "The tests pass on the branch.\n\nProvenance: Basis: own reasoning\n"
 NO_FOOTER = "The tests pass on the branch.\n"
 EM_DASH = "The tests pass — all of them.\n\nProvenance: Basis: git log\n"

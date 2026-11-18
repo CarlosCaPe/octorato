@@ -390,6 +390,17 @@ def _selftest() -> int:
     return gate_selftest.run_gate_selftest(__file__, fixture)
 
 
+def _quiet(short: str, full: str, payload=None) -> str:
+    """The block reason to print: one short line naming the detail file the
+    full text was written to (scripts/stop_block.py), or the FULL reason when
+    that write fails, so the instructions always reach the model."""
+    try:
+        import stop_block
+        return stop_block.shown(__file__, short, full, payload, 'FLOW.wa-guardia-on-pending')
+    except Exception:
+        return full
+
+
 def main():
     if not should_run(HOOK_ID):
         return
@@ -465,7 +476,10 @@ def main():
         "dilo en una linea y sigue: este aviso no se repite para ese chat.",
     ]
 
-    print(json.dumps({"decision": "block", "reason": "\n".join(lineas)}))
+    short = (f"GUARDIA SIN ARMAR: {len(faltantes)} chat(s) messaged with no watcher "
+             f"for the reply")
+    print(json.dumps({"decision": "block",
+                      "reason": _quiet(short, "\n".join(lineas), payload)}))
 
 
 if __name__ == "__main__":

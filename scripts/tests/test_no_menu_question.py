@@ -32,15 +32,29 @@ def _load_gate():
     return mod
 
 
+_LEDGER = tempfile.mkdtemp(prefix="stop-block-ledger-")  # never the live cache
+
+
+def _full(obj):
+    """The gate prints one short line naming a detail file (scripts/stop_block.py);
+    the full text the model reads lives there."""
+    if not obj or " · detail: " not in str(obj.get("reason", "")):
+        return obj.get("reason") if obj else None
+    text = Path(obj["reason"].rsplit(" · detail: ", 1)[1]).read_text(encoding="utf-8")
+    return text.split("\n\n", 1)[1]
+
+
 def _run(payload: dict, env_extra: dict = None) -> dict:
     env = dict(os.environ)
     env.pop("OCTO_KERNEL_OPEN", None)
+    env["OCTO_STOP_BLOCK_DIR"] = _LEDGER
     if env_extra:
         env.update(env_extra)
     cp = subprocess.run([sys.executable, str(GATE)], input=json.dumps(payload),
                         capture_output=True, text=True, env=env)
     out = cp.stdout.strip()
-    return {"rc": cp.returncode, "json": json.loads(out) if out else None}
+    obj = json.loads(out) if out else None
+    return {"rc": cp.returncode, "json": obj, "full": _full(obj)}
 
 
 def _transcript(tmp: Path, text: str) -> str:
@@ -314,14 +328,35 @@ class QaRoundThreeTest(unittest.TestCase):
         ])
 
     def test_near_miss_inputs_stay_linear(self):
+        # Linearity is a RATIO of CPU time, not a wall-clock budget: a fixed
+        # 0.2 s limit failed on a heavily loaded machine (load avg ~15) for
+        # unchanged code, and even a wall-clock ratio swung to 22x there.
+        # process_time() ignores scheduler waits; ReDoS is CPU-bound.
+        # Time each shape at size k and 8k (best of 5 to drop scheduler
+        # noise); linear scan grows ~8x, quadratic ~64x, so a 20x bound
+        # separates them with margin. The 2 s ceiling still catches
+        # catastrophic backtracking outright.
         import time
-        for txt in ("¿te " + "a" * 20000 + " o b?", "do you " + "x" * 20000 + " or y?",
-                    "¿ves " + "a o " * 5000 + "b?", "do you " + "see " * 5000 + "or b?",
-                    "¿se " + "se " * 7000 + "abre o b?"):
-            with self.subTest(n=len(txt)):
-                t0 = time.perf_counter()
+        shapes = (lambda k: "¿te " + "a" * k + " o b?",
+                  lambda k: "do you " + "x" * k + " or y?",
+                  lambda k: "¿ves " + "a o " * (k // 4) + "b?",
+                  lambda k: "do you " + "see " * (k // 4) + "or b?",
+                  lambda k: "¿se " + "se " * (k // 3) + "abre o b?")
+
+        def best(txt):
+            cpu, wall = [], []
+            for _ in range(5):
+                c0, w0 = time.process_time(), time.perf_counter()
                 self.g.find_menu("Listo. " + txt, self.cfg)
-                self.assertLess(time.perf_counter() - t0, 0.2)
+                cpu.append(time.process_time() - c0)
+                wall.append(time.perf_counter() - w0)
+            return min(cpu), min(wall)
+
+        for i, shape in enumerate(shapes):
+            with self.subTest(shape=i):
+                (small, _), (large, large_wall) = best(shape(2500)), best(shape(20000))
+                self.assertLess(large_wall, 2.0)
+                self.assertLess(large, 20 * max(small, 1e-3))
 
 
 class ConfigTest(unittest.TestCase):
@@ -357,6 +392,8 @@ class GateProcessTest(unittest.TestCase):
         self.assertEqual(first["json"]["decision"], "block")
         self.assertIn("/choice", first["json"]["reason"])
         self.assertIn("SIN-MENÚ", first["json"]["reason"])
+        self.assertNotIn("\n", first["json"]["reason"])
+        self.assertIn("menu-ok", first["full"])
         self.assertIsNone(second["json"])
 
     def test_last_assistant_message_fallback(self):

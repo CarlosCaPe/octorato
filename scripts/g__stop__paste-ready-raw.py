@@ -370,6 +370,17 @@ def run_turn(data: dict) -> str:
     return build_reason(detail) if detail else ""
 
 
+def _quiet(short: str, full: str, payload=None) -> str:
+    """The block reason to print: one short line naming the detail file the
+    full text was written to (scripts/stop_block.py), or the FULL reason when
+    that write fails, so the instructions always reach the model."""
+    try:
+        import stop_block
+        return stop_block.shown(__file__, short, full, payload, 'COMMS.paste-ready-raw-message')
+    except Exception:
+        return full
+
+
 def main() -> int:
     try:
         data = json.loads(sys.stdin.read())
@@ -394,7 +405,9 @@ def main() -> int:
     try:
         reason = run_turn(data)
         if reason:
-            print(json.dumps({"decision": "block", "reason": reason}))
+            short = ("📋 PASTE-READY: the paste-ready message is not one raw fenced block "
+                     "placed last")
+            print(json.dumps({"decision": "block", "reason": _quiet(short, reason, data)}))
             _journal_deny(reason, data)
     except Exception:
         pass  # fail-open: un gate roto jamas secuestra la conversacion
