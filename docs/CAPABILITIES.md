@@ -6,7 +6,7 @@
 
 | Metric | Count |
 |---|---|
-| Skills | 247 |
+| Skills | 248 |
 | Agents | 167 |
 | Divisions | 13 |
 | Scripts: wired | 146 |
@@ -14,7 +14,7 @@
 | Rules | 108 |
 | Hook entries | 63 |
 
-## Skills (247)
+## Skills (248)
 
 | Name | Description |
 |---|---|
@@ -134,6 +134,7 @@
 | model-routing-by-complexity | Routes work by complexity across the model ladder (mechanical, bulk, build, judgment), vendor-agnostic. Load when fannin... |
 | multi-object-rename-convergence | Multi-Object Rename Convergence |
 | multi-specialist-doc-audit | Audit a long technical document for hallucinations and uncited claims by dispatching N specialist agents in parallel, ea... |
+| narrative-3d-prose | Narrative voice for book prose, nonfiction and fiction: turn a flat (2D) first draft into a 3D one by showing the same i... |
 | netlify-deploy | Deploy web projects to Netlify using the Netlify CLI (`npx netlify`). Use when the user asks to deploy, host, publish, o... |
 | news-article-curation | Daily loop over AI RSS feeds (Willison, OpenAI, DeepMind, arXiv cs.AI): filters the articles that teach something the br... |
 | no-history-in-docs | Documents carry only current content; git is the version history. Never strikethrough to mark what is done, never old te... |
