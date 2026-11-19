@@ -15,6 +15,16 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-11-18]: v12.1.0
+### Features
+- feat(skills): add narrative-3d-prose voice skill with VOZ-3D QA rubric (#463)
+
+## [2026-11-18]: v12.0.1
+### Fixes
+- fix(gates): one-line Stop block reasons, full text in a detail ledger (#467)
+### Other
+- docs(changelog): backfill v12.0.0 (#466)
+
 ## [2026-11-18]: v12.0.0
 ### Features
 - feat(gates): `COMMS.diagram-first`: Stop gate, a reply that explains a flow, a before/after, a multi-item status or a structure opens with an ASCII diagram in a code block; short, paste-ready and `input-needed:` replies exempt, hatch `diagram-ok`
