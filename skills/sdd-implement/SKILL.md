@@ -60,9 +60,12 @@ document) and record each run in `feature.md` under `## Run evidence`, one line 
 - RUN-01 [AC-01, AC-02] `<the exact command or action>`: <exit code and what you observed>
 ```
 
-Write the exact command, not a description of it: the verifier pastes it. The linter
-refuses the template left unfilled, `TODO` and the like, a `RUN-##` line without its `- `
-bullet, and any heading other than exactly `## Run evidence`.
+Write the exact command, not a description of it: the verifier pastes it. The section is a
+machine grammar, not prose. Under `## Run evidence` the linter allows only blank lines and
+receipt lines in exactly that shape, one line each, and reports anything else: a note, a
+fenced block, a comment, an indented or nested line, another bullet style. Notes about the
+runs go under another heading. A receipt left as the template, or filled with `TODO` and
+the like, is refused, and nothing in the section counts until every line passes.
 
 A receipt is a claim the verifier reproduces, not a grade: it says what you ran and what
 came back, never that a criterion is met. Reading the code is not a run. When a run shows a

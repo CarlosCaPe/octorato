@@ -38,8 +38,9 @@ When every criterion is met and the excellence pass says `EXCELLENT`, you write 
 2. `plan.md`: which tasks claim which criteria, and any earlier Convergence sections.
 3. The code and tests those tasks name.
 4. `## Run evidence` in `feature.md`: the builder's run receipts, one
-   `- RUN-## [AC-##] `<what was executed>`: <what was observed>` line per run. They are
-   claims for you to reproduce, not evidence.
+   `- RUN-## [AC-##] `<what was executed>`: <what was observed>` line per run and nothing
+   else in the section (the linter of Step 1 enforces that). They are claims for you to
+   reproduce, not evidence.
 
 Run `python3 ~/.claude/scripts/spec_lint.py <spec-directory>` first, and take
 `sha256sum plan.md` now: you only know which branch of Step 3 applies after judging.

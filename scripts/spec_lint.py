@@ -30,24 +30,28 @@ What it checks, per spec directory (a `feature.md`, optionally a `plan.md`):
     - at most 3 NEEDS CLARIFICATION markers; with --ready, zero. A marker is
       `[NEEDS CLARIFICATION]` or `[NEEDS CLARIFICATION: ...]`, any case, and
       may span lines
-    - a `## Run evidence` section is optional until the spec converges. When it
-      is there, every line in it that carries a `RUN-##` id is a run receipt
-      `- RUN-## [AC-##, AC-##] `<what was executed>`: <what was observed>`,
-      with a unique id and criteria that exist. A receipt records one real
-      execution of the shipped artifact (the CLI, the app, the endpoint, the
-      rendered document), never a reading of its code
-    - a `RUN-##` line with no `- ` bullet (bare, numbered, starred, quoted, a
-      checkbox, a table row) is a finding, never a skip
-    - a receipt whose executed text or observation is a placeholder (the
-      template's own `<...>`, TODO, TBD, an ellipsis) is a finding and is not
-      a receipt: the grammar the gate prints must not satisfy the gate
-    - the heading is exactly `## Run evidence`. Any other heading that names
-      run evidence (another case, another level, trailing text) is a finding,
-      and the lines under it are still read, as are those of a second section
-    - a receipt counts only outside a fenced block and outside an HTML
-      comment. For receipts an opening fence or `<!--` that never closes hides
-      everything after it: the reader of the rendered spec sees no receipt
-      there, so the gate counts none
+    - a `## Run evidence` section is optional until the spec converges. It is a
+      strict machine grammar, not Markdown. Under the heading, up to the next
+      `#` or `##` heading at column 0, only blank lines and exact receipt lines
+        - RUN-## [AC-##, AC-##] `<what was executed>`: <what was observed>
+      are allowed, with a unique id and criteria that exist. A receipt records
+      one real execution of the shipped artifact (the CLI, the app, the
+      endpoint, the rendered document), never a reading of its code
+    - ANY other line in the section is a finding that names it: a fence, a
+      comment, an indented line, prose, a nested or numbered or starred bullet,
+      a checkbox, a heading in another form. Nothing in the section counts
+      until the section is clean
+    - a receipt whose executed text or observation is a placeholder is a
+      finding: the value, with brackets, quotes and punctuation around it
+      stripped, is empty, a word of PLACEHOLDERS, a run of `x`, or only
+      angle-bracket groups. A value that merely starts with such a word is real
+    - the heading is exactly `## Run evidence`, once. Any other line that names
+      run evidence as a heading, and a second section, are findings
+    - above the section a fenced block must be in the plain form (opener and
+      bare closer at column 0, same character), no comment opener or raw-text
+      element (script, style, pre, textarea, CDATA, processing instruction) may
+      be left open, and the line right above the heading is blank, so nothing a
+      renderer does can hide the section from a reader
 
   plan.md (when present)
     - every task line is `- [ ] T## [AC-##, AC-##] <path>, <path>: <action>`;
@@ -107,6 +111,7 @@ the push check against it.
 from __future__ import annotations
 
 import argparse
+import bisect
 import datetime as _dt
 import json
 import os
@@ -134,13 +139,21 @@ _CANON_STATUS = re.compile(r"^> \*\*Status:\*\* (draft|approved|converged)\s*$")
 # Only `ears-1` opts in: a header naming another version (`ears-2`) does not declare
 # this format, so the file is skipped like a legacy spec (AC-16). The push gate still
 # refuses a spec that LEAVES ears-1 in a push.
+# One character class per gap, never two unbounded runs side by side: the earlier
+# spelling (`\s*(?:[>*+|-]\s*)*[*_]*\s*`) took seconds on a line of 16,000 spaces.
+# Each class is a superset of what it replaces, so every line that read as a header
+# still does, and a few more now must be canonical too. It never reads fewer.
 _LOOSE_FORMAT = re.compile(
-    r"^\s*(?:[>*+|-]\s*)*[*_]*\s*spec[-_ ]?format\s*[*_]*\s*[:|]\s*[*_]*\s*ears-1\b", re.IGNORECASE)
+    r"^[\s>*+|\-_]*spec[-_ ]?format[\s*_]*[:|][\s*_]*ears-1\b", re.IGNORECASE)
 _LOOSE_STATUS = re.compile(
-    r"^\s*(?:[>*+|-]\s*)*[*_]*\s*status\s*[*_]*\s*[:|]\s*[*_]*\s*(?:draft|approved|converged)\b", re.IGNORECASE)
+    r"^[\s>*+|\-_]*status[\s*_]*[:|][\s*_]*(?:draft|approved|converged)\b", re.IGNORECASE)
 _GLOSSARY_ENTRY = re.compile(r"^- \*\*([A-Za-z][\w-]*)\*\*:")
 _AC_ITEM = re.compile(r"^- \[[ xX]\] (AC-\d+): (.*)$")
-_MARKER = re.compile(r"\[\s*NEEDS\s+CLARIFICATION\s*(?::[^\]]*)?\]", re.IGNORECASE)
+# The start of a marker. Its tail (`]`, or `: ... ]` over any number of lines) is found
+# by `_marker_spans` with an index of the closing brackets: as one regex
+# (`\[\s*NEEDS\s+CLARIFICATION\s*(?::[^\]]*)?\]`) every unclosed start scanned to the
+# end of the text.
+_MARKER_HEAD = re.compile(r"\[\s*NEEDS\s+CLARIFICATION\s*", re.IGNORECASE)
 _INLINE_CODE = re.compile(r"`[^`\n]*`")
 _EARS = [
     ("ubiquitous", re.compile(r"^THE ([\w-]+) SHALL\b")),
@@ -155,29 +168,41 @@ _TASK = re.compile(
 )
 _CONVERGENCE = re.compile(r"^## Convergence\b")
 RUN_SECTION = "Run evidence"
-_RUN_HEADING = re.compile(r"^## Run evidence\s*$")
-# Any heading that names run evidence, whatever its level, case or tail.
-_RUN_HEADING_LOOSE = re.compile(r"^\s{0,3}#{1,6}\s*[*_`]*\s*run[ _-]*evidence\b", re.IGNORECASE)
-_SECTION_END = re.compile(r"^#{1,2} ")
-# A line that carries a RUN id where a receipt would: behind any list, quote,
-# table or checkbox markup, or none at all. Everything it matches must be a receipt.
-_RUN_START = re.compile(
-    r"^\s*(?:[>|]\s*)*(?:(?:[-*+]|\d+[.)])\s+)?(?:\[[ xX]?\]\s*)?[*_`]*RUN-\d+\b", re.IGNORECASE)
-_RUN = re.compile(r"^- (RUN-\d{2,}) \[(AC-\d+(?:, AC-\d+)*)\] `([^`]*\S[^`]*)`: (\S.*)$")
-# Text that stands where a command or an observation should be. `<...>` alone is
-# the template the gate and the skills print; a command that merely CONTAINS an
-# angle-bracket argument is not a placeholder.
-_PLACEHOLDER = re.compile(
-    r"^(?:(?:<[^<>]*>\s*)+|(?:todo|tbd|fixme|pending|placeholder)\b.*"
-    r"|what was (?:executed|observed)|(?:the )?(?:exact )?command(?: or action)?"
-    r"|x{3,}|\.{3,}|…+|n/?a|none|-+|\?+)$",
-    re.IGNORECASE)
-# CommonMark fences: up to three spaces, then three or more of one fence character.
-_FENCE_OPEN = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
-# An inline code span (kept as it is) or an HTML comment (blanked). The span comes
-# first so a spec can write `<!--` in backticks without opening a comment.
-_CODE_OR_COMMENT = re.compile(r"`[^`\n]*`|<!--.*?(?:-->|\Z)", re.S)
-
+RUN_HEADING = "## Run evidence"
+RUN_GRAMMAR = "- RUN-## [AC-##] `<what was executed>`: <what was observed>"
+# Every pattern below is anchored and has no nested or adjacent unbounded
+# quantifier, and the receipt itself is parsed with str.find, so a line of any
+# length costs time linear in its length (test_spec_lint pins 200,000 characters).
+_SECTION_END = re.compile(r"^#{1,2}(?: |$)")
+_RUN_ID = re.compile(r"- (RUN-\d{2,}) \[")
+_AC_ID = re.compile(r"AC-\d+")
+_ANGLE_GROUP = re.compile(r"<[^<>]*>")
+# What a renderer hides or shows raw until its closer, whatever comes between, blank
+# lines included. If the last opener above the section has no closer after it, the
+# section may sit inside it. Plain string search, in or out of a code span: where
+# the linter cannot know, it reports.
+# An element opener is the name followed by a space, `>`, `/` or the end of the line,
+# so `<previous>` and `<prefix>` are not `<pre`.
+_HIDERS = tuple((re.compile(opener), closer, what) for opener, closer, what in (
+    (r"<!--", "-->", "comment opener"),
+    (r"<script(?=[\s>/]|$)", "</script>", "`<script` element"),
+    (r"<style(?=[\s>/]|$)", "</style>", "`<style` element"),
+    (r"<pre(?=[\s>/]|$)", "</pre>", "`<pre` element"),
+    (r"<textarea(?=[\s>/]|$)", "</textarea>", "`<textarea` element"),
+    (r"<!\[cdata\[", "]]>", "CDATA opener"),
+    (r"<\?", "?>", "processing instruction opener"),
+))
+# What a value may be wrapped in and still be the same placeholder: `TODO.`,
+# `[TODO]`, `(tbd)`, `**`.
+_WRAPPING = " \t`*_\"'()[]{}<>.,;:!?…-"
+# Compared with the WHOLE value, never with its first word: `todo add milk` and
+# `pending migrations 0, exit 0` are a real command and a real observation.
+PLACEHOLDERS = frozenset((
+    "", "todo", "tbd", "fixme", "pending", "placeholder", "n/a", "na", "none",
+    "what was executed", "what was observed", "command", "the command",
+    "the exact command or action", "exit code and what you observed",
+    "exit code and what was observed", "observation", "the observation",
+))
 
 @dataclass
 class Report:
@@ -203,6 +228,38 @@ def _readable_lines(text: str) -> list:
     return [(i + 1, "" if i in hidden else line) for i, line in enumerate(lines)]
 
 
+def _marker_spans(text: str) -> list:
+    """(start, end) of every NEEDS CLARIFICATION marker, leftmost first and never
+    overlapping: what `finditer` of the one-regex form returned."""
+    closes = [i for i, ch in enumerate(text) if ch == "]"]
+    spans, pos = [], text.find("[")
+    while pos >= 0:
+        end = -1
+        m = _MARKER_HEAD.match(text, pos)
+        if m:
+            tail = m.end()
+            if text.startswith("]", tail):
+                end = tail + 1
+            elif text.startswith(":", tail):
+                k = bisect.bisect_left(closes, tail)
+                end = closes[k] + 1 if k < len(closes) else -1
+        if end > 0:
+            spans.append((pos, end))
+            pos = text.find("[", end)
+        else:
+            pos = text.find("[", pos + 1)
+    return spans
+
+
+def _without_markers(text: str) -> str:
+    out, last = [], 0
+    for a, b in _marker_spans(text):
+        out.append(text[last:a])
+        last = b
+    out.append(text[last:])
+    return "".join(out)
+
+
 def _sections(lines: list) -> dict:
     """'## Heading' -> [(line_no, line), ...] for the lines under it."""
     secs, cur = {}, None
@@ -224,86 +281,161 @@ def _ears_subject(sentence: str):
     return None
 
 
-def _run_lines(text: str) -> tuple:
-    """(headings, body) of the run evidence of a feature.md.
-
-    headings: (line_no, line) of every heading that names run evidence, canonical or
-    not. body: (line_no, line) of the lines under them, with HTML comments and fenced
-    blocks blanked. Unlike `_readable_lines`, a fence or a comment that never closes
-    hides everything after it: that reader keeps headers visible so a spec cannot
-    skip the lint, this one decides what counts as evidence, and text a rendered
-    spec shows as code or not at all is not evidence."""
-    kept, fence = [], ""
-    for line in (text or "").splitlines():
-        m = _FENCE_OPEN.match(line)
-        if not fence:
-            fence = m.group(1) if m else ""
-            kept.append("" if m else line)
-            continue
-        # Only a run of the SAME character, at least as long and alone on its line,
-        # closes: a `~~~` line inside a backtick fence is content, not a close.
-        bare = line.strip()
-        if m and bare[0] == fence[0] and len(bare) >= len(fence) and set(bare) == {fence[0]}:
-            fence = ""
-        kept.append("")
-    shown = _CODE_OR_COMMENT.sub(
-        lambda m: m.group() if m.group().startswith("`") else "\n" * m.group().count("\n"),
-        "\n".join(kept))
-    headings, body, inside = [], [], False
-    for i, line in enumerate(shown.split("\n"), 1):
-        if _RUN_HEADING_LOOSE.match(line):
-            headings.append((i, line))
-            inside = True
-        elif _SECTION_END.match(line):
-            inside = False
-        elif inside:
-            body.append((i, line))
-    return headings, body
-
-
 def _is_placeholder(value: str) -> bool:
-    return bool(_PLACEHOLDER.match(value.strip().strip("`*_ ").strip()))
+    """True when the whole value, with any wrapping stripped, is a placeholder word,
+    is empty, is only angle-bracket groups, or is a run of `x`."""
+    bare = " ".join(value.casefold().split()).strip(_WRAPPING)
+    if bare in PLACEHOLDERS or (len(bare) >= 2 and set(bare) == {"x"}):
+        return True
+    return not _ANGLE_GROUP.sub("", value).strip(_WRAPPING)
 
 
-def _receipt(line: str):
-    """The match of a filled, well-formed receipt line, else None."""
-    m = _RUN.match(line)
-    if m and not _is_placeholder(m.group(3)) and not _is_placeholder(m.group(4)):
-        return m
-    return None
+def _parse_receipt(line: str):
+    """(id, [criteria], executed, observed) of an exact receipt line, else None.
+    The shape is fixed to the character: `- RUN-## [AC-##, AC-##] `executed`: observed`."""
+    line = line.rstrip()
+    m = _RUN_ID.match(line)
+    if not m:
+        return None
+    close = line.find("]", m.end())
+    if close < 0:
+        return None
+    acs = line[m.end():close].split(", ")
+    if not all(_AC_ID.fullmatch(a) for a in acs):
+        return None
+    if not line.startswith(" `", close + 1):
+        return None
+    start = close + 3
+    end = line.find("`", start)
+    if end < 0 or not line.startswith(": ", end + 1):
+        return None
+    executed, observed = line[start:end], line[end + 3:]
+    if not executed.strip() or not observed or observed[0].isspace():
+        return None
+    return m.group(1), acs, executed, observed
+
+
+def _names_run_evidence(line: str) -> bool:
+    """A line that reads as a run evidence heading in any form: another level, another
+    case, a tail, an indent, bold text, a setext title."""
+    words = " ".join(line.strip().lstrip("#").strip().strip("*_`").casefold()
+                     .replace("-", " ").replace("_", " ").split())
+    if not words.startswith("run evidence"):
+        return False
+    return line.lstrip().startswith("#") or words.rstrip(":.") == "run evidence"
+
+
+def _fences_before(lines: list, upto: int) -> list:
+    """Findings for the fenced blocks above the section. The linter pairs fence lines
+    one after the other, a Markdown renderer pairs them by character, length and
+    indent, and where the two can disagree the section may sit inside a block the
+    reader sees as code. So above the section only the plain form is accepted: an
+    opener at column 0 with no backtick after its run, then a bare closer at column
+    0 of the same character and at least the same length."""
+    out, opened = [], None
+    for i, line in enumerate(lines[:upto], 1):
+        if not line.lstrip().startswith(("```", "~~~")):
+            continue
+        ch = line[0]
+        run = len(line) - len(line.lstrip(ch)) if ch in "`~" else 0
+        if opened is None:
+            if run < 3 or (ch == "`" and "`" in line[run:]):
+                out.append((i, f"fence line above `{RUN_HEADING}` must start at column 0 "
+                               f"and carry no backtick after its run"))
+            else:
+                opened = (i, ch, run)
+        elif run >= opened[2] and ch == opened[1] and line.strip() == ch * run:
+            opened = None
+        else:
+            out.append((i, f"fence line above `{RUN_HEADING}` does not close the block "
+                           f"opened at line {opened[0]}: a closer is the same character, "
+                           f"at least as long, alone at column 0"))
+    if opened:
+        out.append((opened[0], f"fenced block is not closed above `{RUN_HEADING}`"))
+    return out
+
+
+def run_evidence(text) -> tuple:
+    """(receipts, findings) of a feature.md.
+
+    receipts: (line_no, id, [criteria]) of every receipt, in order. findings:
+    (line_no, message). The section is a strict machine grammar, not Markdown: under
+    the one `## Run evidence` heading only blank lines and exact receipt lines are
+    allowed, up to the next `#` or `##` heading at column 0. Anything else there (a
+    fence, a comment, an indent, prose, another bullet style, a heading in another
+    form) is a finding. The section is found the way every other section is
+    (`_readable_lines`: a closed fenced block hides a quoted heading), and what sits
+    above it must not be able to hide it from a reader: fenced blocks in the plain
+    form only, no comment or raw-text element (`_HIDERS`) left open, and a blank line
+    right above the heading, which ends any other HTML block."""
+    text = text or ""
+    raw = text.splitlines()
+    readable = _readable_lines(text)
+    findings, heads = [], []
+    for i, line in readable:
+        if line.rstrip() == RUN_HEADING:
+            heads.append(i)
+        elif _names_run_evidence(line):
+            findings.append((i, f"run evidence heading must be exactly `{RUN_HEADING}`"))
+    for i in heads[1:]:
+        findings.append((i, f"more than one `{RUN_HEADING}` section; keep exactly one"))
+    if not heads:
+        return [], findings
+    head = heads[0]
+    end = next((i for i, line in readable if i > head and _SECTION_END.match(line)), len(raw) + 1)
+    findings += _fences_before(raw, head - 1)
+    if head > 1 and raw[head - 2].strip():
+        findings.append((head, f"the line above `{RUN_HEADING}` must be blank"))
+    above = "\n".join(raw[:head - 1]).casefold()
+    for opener, closer, what in _HIDERS:
+        at = max((m.start() for m in opener.finditer(above)), default=-1)
+        if at > above.rfind(closer):
+            findings.append((above.count("\n", 0, at) + 1,
+                             f"{what} above `{RUN_HEADING}` is not closed before the "
+                             f"section; close it with `{closer}`, or write it another way"))
+    receipts, seen = [], {}
+    for i in range(head + 1, end):
+        line = raw[i - 1]
+        if not line.strip():
+            continue
+        parsed = _parse_receipt(line)
+        if parsed is None:
+            if "run-" in line[:40].casefold():
+                findings.append((i, f"run receipt does not follow `{RUN_GRAMMAR}`"))
+            else:
+                findings.append((i, f"only blank lines and run receipts are allowed under "
+                                    f"`{RUN_HEADING}`"))
+            continue
+        rid, acs, executed, observed = parsed
+        if "<!--" in line:
+            findings.append((i, f"{rid} holds a comment opener; write it another way"))
+        if _is_placeholder(executed) or _is_placeholder(observed):
+            findings.append((i, f"{rid} is an unfilled template: write the command "
+                                f"that was executed and what was observed"))
+        if rid in seen:
+            findings.append((i, f"{rid} duplicates line {seen[rid]}"))
+        seen[rid] = i
+        receipts.append((i, rid, acs))
+    return receipts, findings
 
 
 def run_receipts(text) -> list:
-    """The ids of the filled, well-formed run receipts of a feature.md, in order."""
-    return [m.group(1) for _i, line in _run_lines(text)[1] if (m := _receipt(line))]
+    """The receipt ids the gate counts. None counts until the section is clean: one
+    finding anywhere in the run evidence and the list is empty."""
+    receipts, findings = run_evidence(text)
+    return [] if findings else [rid for _i, rid, _acs in receipts]
 
 
 def _lint_run_evidence(feature: Path, text: str, criteria: dict, report: Report) -> None:
     """Shape only: a receipt names what was executed and what was observed. Whether a
     spec NEEDS one is decided at the push that flips it to converged."""
-    headings, body = _run_lines(text)
-    for i, line in headings:
-        if not _RUN_HEADING.match(line):
-            report.add(feature, i, f"run evidence heading must be exactly `## {RUN_SECTION}`")
-    seen: dict = {}
-    for i, line in body:
-        if not _RUN_START.match(line):
-            continue
-        m = _RUN.match(line)
-        if not m:
-            report.add(feature, i, "run receipt does not follow "
-                                   "`- RUN-## [AC-##] `<what was executed>`: <what was observed>`")
-            continue
-        rid = m.group(1)
-        if _is_placeholder(m.group(3)) or _is_placeholder(m.group(4)):
-            report.add(feature, i, f"{rid} is an unfilled template: write the command "
-                                   f"that was executed and what was observed")
-        if rid in seen:
-            report.add(feature, i, f"{rid} duplicates line {seen[rid]}")
-        seen[rid] = i
-        for ac in m.group(2).split(", "):
+    receipts, findings = run_evidence(text)
+    for i, rid, acs in receipts:
+        for ac in acs:
             if ac not in criteria:
-                report.add(feature, i, f"{rid} references unknown criterion {ac}")
+                findings.append((i, f"{rid} references unknown criterion {ac}"))
+    for i, msg in sorted(findings):
+        report.add(feature, i, msg)
 
 
 def _header_lines(text: str, loose: re.Pattern) -> list:
@@ -379,7 +511,7 @@ def lint_feature(feature: Path, report: Report, ready: bool) -> set:
             report.add(feature, i, f"{ac} duplicates line {ids[ac]}")
             continue
         ids[ac] = i
-        bare = _MARKER.sub("", sentence).strip()
+        bare = _without_markers(sentence).strip()
         subject = _ears_subject(bare)
         if subject is None:
             report.add(feature, i, f"{ac} matches no EARS pattern")
@@ -393,8 +525,11 @@ def lint_feature(feature: Path, report: Report, ready: bool) -> set:
 
     # Markers are counted over the joined text so one split across lines counts.
     body = "\n".join(_INLINE_CODE.sub("", line) for _i, line in lines)
-    markers = [(body.count("\n", 0, m.start()) + 1, 1) for m in _MARKER.finditer(body)]
-    total = len(markers)
+    spans = _marker_spans(body)
+    total = len(spans)
+    # Line numbers only for the few a message names: counting newlines per marker
+    # made a text full of markers cost its length times their number.
+    markers = [(body.count("\n", 0, a) + 1, 1) for a, _b in spans[:MAX_MARKERS + 1]]
     if total > MAX_MARKERS:
         report.add(feature, markers[0][0],
                    f"{total} NEEDS CLARIFICATION markers, the cap is {MAX_MARKERS}")
@@ -726,10 +861,9 @@ def push_findings(repo: Path, base: str, head: str) -> list:
         # the run receipt and the verdict is told both.
         if not run_receipts(feature_now):
             findings.append(f"{sd}: Status becomes converged, but feature.md has no run "
-                            f"receipt under `## {RUN_SECTION}` (a filled one, outside any "
-                            f"fence or comment). Run the shipped artifact for real and "
-                            f"record it as `- RUN-## [AC-##] `<what was executed>`: <what "
-                            f"was observed>`, then run /sdd-converge.")
+                            f"receipt under `## {RUN_SECTION}` (a filled one, in a section "
+                            f"with no other finding). Run the shipped artifact for real "
+                            f"and record it as `{RUN_GRAMMAR}`, then run /sdd-converge.")
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import receipt_ledger
         receipt = receipt_ledger.converge_latest_for(sd)

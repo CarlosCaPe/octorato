@@ -58,7 +58,17 @@ Spec: `docs/specs/202611202139-build-loop-excellence/`. "Every criterion met" wa
 
 The loop is not a LARGE-only thing any more. `skills/4d-spec/SKILL.md` applies it to anything built for another entity at any score: TRIVIAL and MEDIUM run a light loop (test, run receipt, an independent verifier's `BUILD-VERDICT: EXCELLENT | ITERATE`).
 
-What is mechanical: `spec_lint.py` checks every line under the heading that starts with a `RUN-##` id, whatever markup precedes it (the `- ` bullet, the executed text in backticks, an observation, a unique id, criteria that exist), and the push gate refuses a flip to `converged` with no receipt. Three things do not count as one. A placeholder: the template itself (text wholly inside angle brackets), `TODO`, `TBD`, an ellipsis, so the grammar the gate prints cannot satisfy the gate. A receipt a reader of the rendered spec would not see as evidence: inside a fenced block or an HTML comment, and for receipts one that never closes hides everything after it. And a receipt under any other heading. The heading is exactly `## Run evidence`; another case, level or tail is a finding that names the line, and the lines under it, or under a second section, are still read. Fixtures: `registry/fixtures/FLOW.build-loop-excellence`.
+What is mechanical. The `## Run evidence` section is a strict machine grammar, not Markdown. From the one heading that is exactly `## Run evidence` at column 0 to the next `#` or `##` heading at column 0, only two kinds of line are allowed: a blank line, and a receipt that is, to the character, a dash and a space at column 0, `RUN-` and two or more digits, the criteria in brackets joined by a comma and a space, the executed text in one code span, a colon, a space and the observation. Any other line is a finding that names it: a fence, a comment, prose, an indent, a nested, numbered or starred bullet, a checkbox, a heading in another form. Nothing in the section counts until the section is clean, and the push gate refuses a flip to `converged` with no counted receipt. Fixtures: `registry/fixtures/FLOW.build-loop-excellence`.
+
+Why a grammar and not a Markdown reader: the first two converge passes each found inputs a renderer shows as code, or hides, that the reader still counted (a fence that never closes, a tilde line inside a backtick fence, a tab-indented fence, a comment opener in a double-backtick span). Following a renderer with patterns loses that race, so the reader stopped interpreting. Where it could disagree with a renderer, it reports a finding.
+
+Three more rules follow from that.
+
+- A placeholder is not a receipt. The value, with brackets, quotes, emphasis marks and punctuation around it stripped, is compared whole with a fixed set (`todo`, `tbd`, `pending`, `n/a`, the templates' own words), or it is empty, a run of `x`, or only angle-bracket groups. `TODO.` and `[TODO]` are placeholders. `todo add milk` is a command.
+- The heading is exact and single. Another level, case, tail or indent, a bold or setext title, and a second section are findings.
+- Nothing above the section may hide it. A fenced block above it must be in the plain form (opener and bare closer at column 0, same character, closer at least as long). The last opener of anything a renderer hides or shows raw up to its closer (an HTML comment, a `script`, `style`, `pre` or `textarea` element, a CDATA section, a processing instruction) must have its closer before the section. And the line right above the heading is blank, which ends every other HTML block. What sits below the section is not looked at.
+
+Every pattern the linter runs is linear in the length of a line; a test lints lines of 200,000 characters under one second each.
 
 What is not, stated:
 
@@ -66,6 +76,8 @@ What is not, stated:
 |---|---|
 | A TRIVIAL or MEDIUM build has no spec, so nothing forces its loop | The rule in `CLAUDE.md` and the `4d-spec` skill carry it. A small build that skipped its run is not detected |
 | The linter reads a receipt's shape and a fixed list of placeholders, not whether the command ran | A made-up receipt that reads like a real one passes it. The converge verifier re-runs each receipt; one that does not reproduce is a gap |
+| The reader does not interpret Markdown | It blocks things a renderer shows harmlessly above the section: a fence inside a list item, a comment or `pre` opener mentioned in a code span with no closer after it. Move the section above them or reword. It does not model what a host adds on top of Markdown: a `details` element still folds what follows it on some hosts, and a stylesheet can hide anything |
+| The section holds nothing but receipts | A note about the runs goes under another heading, and a receipt is one line |
 | The gate asks for one receipt, not one per behavioural criterion | Which criteria are behavioural is the verifier's judgment (`unrun`) |
 | `CONVERGE-EXCELLENCE` is not parsed by the receipt hook | The skill ties `CONVERGED` to `EXCELLENT`; a verifier that prints `CONVERGED` after `NOT-YET` is still recorded as converged |
 | `BUILD-VERDICT` of the light loop is recorded by no hook | A convention of the skill |
