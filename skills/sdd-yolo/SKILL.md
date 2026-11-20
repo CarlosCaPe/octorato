@@ -99,7 +99,7 @@ Follow the full `sdd-implement` process:
 4. Do not introduce new dependencies without flagging them to the user.
 5. After all tasks, run the full test suite once and print the completion summary (files
    created and modified, test result). Then run the shipped artifact for real and record
-   each run under `## Run evidence` in `feature.md`. Do not grade the criteria yourself.
+   each run in `run-evidence.txt` next to `feature.md`. Do not grade the criteria yourself.
 
 ### Converge loop
 

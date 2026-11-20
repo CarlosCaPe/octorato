@@ -52,20 +52,21 @@ decides completion.
 ### 5b. Run It for Real
 Tests passing is not the artifact working. Before you hand over, execute what you built the
 way its consumer will (the CLI with real arguments, the app, the endpoint, the rendered
-document) and record each run in `feature.md` under `## Run evidence`, one line per run:
+document) and record each run in `run-evidence.txt`, a plain-text file next to
+`feature.md`, one line per run:
 
-```markdown
-## Run evidence
-
-- RUN-01 [AC-01, AC-02] `<the exact command or action>`: <exit code and what you observed>
+```text
+# runs made from the repository root
+RUN-01 [AC-01, AC-02] `<the exact command or action>`: <exit code and what you observed>
 ```
 
-Write the exact command, not a description of it: the verifier pastes it. The section is a
-machine grammar, not prose. Under `## Run evidence` the linter allows only blank lines and
-receipt lines in exactly that shape, one line each, and reports anything else: a note, a
-fenced block, a comment, an indented or nested line, another bullet style. Notes about the
-runs go under another heading. A receipt left as the template, or filled with `TODO` and
-the like, is refused, and nothing in the section counts until every line passes.
+Write the exact command, not a description of it: the verifier pastes it. The file is a
+machine grammar, not Markdown: a line is blank, a comment that starts with `#` at column 0,
+or a receipt in exactly that shape, and the linter reports anything else. No bullets, no
+indent, no tabs, one line per receipt, ids in plain digits. A receipt left as the template,
+or filled with `TODO` and the like, is refused, and no receipt counts until every line of
+the file passes. Receipts never go in `feature.md`: a `## Run evidence` heading there is a
+finding.
 
 A receipt is a claim the verifier reproduces, not a grade: it says what you ran and what
 came back, never that a criterion is met. Reading the code is not a run. When a run shows a

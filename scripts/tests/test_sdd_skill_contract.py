@@ -94,7 +94,7 @@ CONTRACT = [
     ("BL AC-07", "sdd-converge",
      [r"you RAN the shipped artifact and observed the behaviour hold",
       r"`unrun` is a gap too",
-      r"Re-run every receipt under `## Run evidence`",
+      r"Re-run every receipt in `run-evidence\.txt`",
       r"All five `pass` is `EXCELLENT`",
       r"CONVERGE-EXCELLENCE: EXCELLENT \| NOT-YET",
       r"`CONVERGED` only when every criterion is `met` and the excellence pass says `EXCELLENT`"],
@@ -108,7 +108,8 @@ CONTRACT = [
       r"nothing mechanical forces its loop"],
      []),
     ("BL AC-11", "sdd-implement",
-     [r"record each run in `feature\.md` under `## Run evidence`",
+     [r"record each run in `run-evidence\.txt`, a plain-text file next to `feature\.md`",
+      r"Receipts never go in `feature\.md`",
       r"Reading the code is not a run"],
      []),
 ]

@@ -2482,7 +2482,7 @@ rules:
   strength: GATE
   gateable: true
   enforcement: fail-closed
-  v7_decision: 'Forced only where a spec exists: the push gate refuses a converged flip with no run receipt under `## Run evidence`. The linter reads the receipt shape and cannot tell whether the command ran; the converge verifier re-runs it. A TRIVIAL or MEDIUM build carries no spec, so its loop is covered by the CLAUDE.md anchor and the 4d-spec skill, not forced.'
+  v7_decision: 'Forced only where a spec exists: the push gate refuses a converged flip with no run receipt in `run-evidence.txt`, the plain-text file next to feature.md. The linter reads the receipt shape and cannot tell whether the command ran; the converge verifier re-runs it. A TRIVIAL or MEDIUM build carries no spec, so its loop is covered by the CLAUDE.md anchor and the 4d-spec skill, not forced.'
   firing_mode:
   - cli
   - git-hook

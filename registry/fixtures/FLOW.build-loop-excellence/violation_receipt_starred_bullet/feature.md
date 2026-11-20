@@ -20,11 +20,6 @@ A fixture spec.
 - [ ] AC-04: WHERE the retry option is enabled, THE Scheduler SHALL retry once.
 - [ ] AC-05: IF the disk is full, THEN THE Exporter SHALL NOT truncate the previous report.
 
-## Run evidence
-
-* RUN-01 [AC-01, AC-02] `python3 src/job.py --export out.csv`: exit 0, out.csv holds 3 rows in UTF-8
-- RUN-02 [AC-05] `python3 src/job.py --export /full/out.csv`: exit 1, the previous report is intact
-
 ## Revision History
 
 | Date | Change Summary |

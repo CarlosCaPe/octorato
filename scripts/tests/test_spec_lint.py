@@ -377,17 +377,16 @@ RUN_FIXTURES = ROOT / "registry" / "fixtures" / "FLOW.build-loop-excellence"
 
 class RunEvidenceTest(unittest.TestCase):
     """FLOW.build-loop-excellence: a spec converges only with a run receipt, and the
-    `## Run evidence` section is a strict grammar: blank lines and exact receipts."""
+    receipts live in run-evidence.txt, a plain-text file with one reading."""
 
-    LINE = "- RUN-01 [AC-01] `tool --flag`: exit 0, wrote out.csv"
-    HEAD = "## Run evidence\n\n"
+    LINE = "RUN-01 [AC-01] `tool --flag`: exit 0, wrote out.csv"
 
     def _red_without(self, message: str) -> None:
         """Drop one kind of finding from the reader and require the ladder to go red."""
         real = spec_lint.run_evidence
 
-        def blind(text):
-            receipts, findings = real(text)
+        def blind(data, criteria=None):
+            receipts, findings = real(data, criteria)
             return receipts, [f for f in findings if message not in f[1]]
         with mock.patch.object(spec_lint, "run_evidence", blind):
             self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1, message)
@@ -397,35 +396,57 @@ class RunEvidenceTest(unittest.TestCase):
 
     def test_selftest_goes_red_when_any_spec_counts_as_run(self):
         # Break the thing the gate guards: every flip reads as carrying a receipt.
-        with mock.patch.object(spec_lint, "run_receipts", lambda text: ["RUN-01"]):
+        with mock.patch.object(spec_lint, "run_receipts", lambda data, criteria=None: ["RUN-01"]):
             self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
 
-    def test_selftest_goes_red_when_the_receipt_shape_is_not_read(self):
+    def test_selftest_goes_red_when_a_missing_file_is_let_through(self):
+        with mock.patch.object(spec_lint, "_show_bytes", lambda repo, rev, path: b"RUN-01 [AC-01] `x y`: ok\n"):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_when_a_converged_spec_may_drop_its_receipts(self):
+        with mock.patch.object(spec_lint, "_needs_evidence", lambda flip, had, has: flip):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_when_the_file_is_not_linted(self):
         with mock.patch.object(spec_lint, "_lint_run_evidence", lambda *a, **k: None):
             self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
 
-    def test_selftest_goes_red_when_a_dirty_section_still_counts(self):
-        # "Nothing counts until the section is clean."
-        def lenient(text):
-            return [rid for _i, rid, _acs in spec_lint.run_evidence(text)[0]]
+    def test_selftest_goes_red_when_a_file_with_a_finding_still_counts(self):
+        # "No receipt counts while the file has one finding."
+        def lenient(data, criteria=None):
+            return [rid for _i, rid, _acs in spec_lint.run_evidence(data, criteria)[0]]
         with mock.patch.object(spec_lint, "run_receipts", lenient):
             self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
 
     def test_selftest_goes_red_when_one_kind_of_finding_is_dropped(self):
-        for message in ("only blank lines and run receipts are allowed",
+        for message in ("line is neither blank, a `#` comment nor a run receipt",
                         "run receipt does not follow",
                         "is an unfilled template",
-                        "heading must be exactly",
-                        "more than one `## Run evidence` section",
-                        "is not closed before the section",
-                        "must be blank",
-                        "holds a comment opener",
+                        "holds the character",
+                        "not valid UTF-8",
+                        "references unknown criterion",
                         "duplicates line"):
             with self.subTest(message):
                 self._red_without(message)
 
-    def test_selftest_goes_red_when_fences_above_the_section_are_not_checked(self):
-        with mock.patch.object(spec_lint, "_fences_before", lambda lines, upto: []):
+    def test_selftest_goes_red_when_a_change_to_the_file_alone_is_not_gated(self):
+        with mock.patch.object(spec_lint, "SPEC_FILES", ("feature.md", "plan.md")):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_when_a_markdown_section_is_tolerated(self):
+        with mock.patch.object(spec_lint, "_names_run_evidence", lambda line: False):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_when_unsafe_characters_are_let_through(self):
+        with mock.patch.object(spec_lint, "_UNSAFE", re.compile(r"(?!)")):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_when_ids_take_any_unicode_digit(self):
+        # `\d` also matches the digits of other scripts: two ids that look alike
+        # would be two ids, and a criterion could be named in digits nobody can type.
+        with mock.patch.object(spec_lint, "_RUN_ID", re.compile(r"(RUN-\d{2,}) \[")):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+        with mock.patch.object(spec_lint, "_AC_REF", re.compile(r"AC-\d+")):
             self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
 
     def test_selftest_goes_red_when_a_placeholder_counts_as_a_receipt(self):
@@ -448,97 +469,106 @@ class RunEvidenceTest(unittest.TestCase):
         with mock.patch.object(spec_lint, "_WRAPPING", " "):
             self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
 
-    def test_selftest_goes_red_when_other_heading_forms_are_not_seen(self):
-        with mock.patch.object(spec_lint, "_names_run_evidence", lambda line: False):
-            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
-
     def test_what_counts_as_a_receipt(self):
-        line, head = self.LINE, self.HEAD
+        line = self.LINE
         two = line.replace("RUN-01", "RUN-02")
         cases = {
-            "one receipt": (head + line, ["RUN-01"]),
-            "two receipts, blank lines between": (f"{head}{line}\n\n\n{two}\n", ["RUN-01", "RUN-02"]),
-            "trailing spaces": (f"{head}{line}   \n", ["RUN-01"]),
-            "crlf": ((head + line + "\n").replace("\n", "\r\n"), ["RUN-01"]),
-            "section ends at the next heading": (f"{head}{line}\n\n## Notes\n\nprose\n", ["RUN-01"]),
-            "section ends at a level-one heading": (f"{head}{line}\n\n# Notes\n\nprose\n", ["RUN-01"]),
-            "angle-bracket argument": (head + "- RUN-01 [AC-01] `tool --repo <tmp>`: exit 0", ["RUN-01"]),
-            "plain fenced block above": (f"```\nx\n```\n\n{head}{line}", ["RUN-01"]),
-            "tilde block with an info string above": (f"~~~text\nx\n~~~\n\n{head}{line}", ["RUN-01"]),
-            "longer closer above": (f"```\nx\n`````\n\n{head}{line}", ["RUN-01"]),
-            "fenced block below": (f"{head}{line}\n\n## Notes\n\n```\n{line}\n```\n", ["RUN-01"]),
-            "comment closed above": (f"<!-- note -->\n\n{head}{line}", ["RUN-01"]),
-            "comment below": (f"{head}{line}\n\n## Notes\n\n<!-- open\n", ["RUN-01"]),
-            "script element closed above": (f"<SCRIPT>x</SCRIPT>\n\n{head}{line}", ["RUN-01"]),
-            "pre element closed above": (f"<pre>\nx\n</pre>\n\n{head}{line}", ["RUN-01"]),
-            "a word that starts like pre above": (f"Use <previous> and <prefix>.\n\n{head}{line}", ["RUN-01"]),
-            "script element below": (f"{head}{line}\n\n## Notes\n\n<script>\n", ["RUN-01"]),
-            # everything below is refused, and one refused line empties the section
-            "prose in the section": (f"{head}Ran on a clean checkout.\n\n{line}", []),
-            "closed fence in the section": (f"{head}```\n{line}\n```\n{two}\n", []),
-            "unclosed fence in the section": (f"{head}```\n{line}\n", []),
-            "tilde fence in the section": (f"{head}~~~\n{line}\n~~~\n", []),
-            "comment in the section": (f"{head}<!--\n{line}\n-->\n", []),
-            "one-line comment in the section": (f"{head}<!-- note -->\n{line}\n", []),
-            "comment opener inside a receipt": (head + line + " <!-- and more\n" + two, []),
-            "nested bullet": (f"{head}{line}\n  - detail\n", []),
-            "indented receipt": (f"{head}  {line}\n", []),
-            "tab-indented receipt": (f"{head}\t{line}\n", []),
-            "no bullet": (head + line[2:], []),
-            "numbered": (head + "1. " + line[2:], []),
-            "starred": (head + "*" + line[1:], []),
-            "plus": (head + "+" + line[1:], []),
-            "checkbox": (head + "- [x] " + line[2:], []),
-            "quoted": (head + "> " + line, []),
-            "lower-case id": (head + line.replace("RUN", "run"), []),
-            "one-digit id": (head + line.replace("RUN-01", "RUN-1"), []),
-            "tab after the id": (head + line.replace("RUN-01 ", "RUN-01\t"), []),
-            "no-break space after the id": (head + line.replace("RUN-01 ", "RUN-01\u00a0"), []),
-            "criteria joined by a bare comma": (head + line.replace("[AC-01]", "[AC-01,AC-02]"), []),
-            "no observation": (head + "- RUN-01 [AC-01] `tool`: ", []),
-            "no command": (head + "- RUN-01 [AC-01] ``: exit 0", []),
-            "indented heading after the receipt": (f"{head}{line}\n\n ## Notes\n", []),
-            "tab heading after the receipt": (f"{head}{line}\n\n##\tNotes\n", []),
-            "setext heading after the receipt": (f"{head}{line}\n\nNotes\n-----\n", []),
-            "level-three heading after the receipt": (f"{head}{line}\n\n### Notes\n", []),
-            "duplicate id": (f"{head}{line}\n{line}\n", []),
-            "template": (head + "- RUN-01 [AC-01] `<what was executed>`: <what was observed>", []),
-            "another heading": (f"## Notes\n\n{line}\n", []),
-            "miscased heading": (f"## run EVIDENCE\n\n{line}\n", []),
-            "heading with a colon": (f"## Run evidence:\n\n{line}\n", []),
-            "indented heading": (f" ## Run evidence\n\n{line}\n", []),
-            "level-three heading": (f"### Run evidence\n\n{line}\n", []),
-            "setext title": (f"Run evidence\n------------\n\n{line}\n", []),
-            "bold title": (f"**Run evidence**\n\n{line}\n", []),
-            "second miscased section": (f"{head}{line}\n\n## RUN EVIDENCE\n\n{two}\n", []),
-            "two sections": (f"{head}{line}\n\n## Notes\n\nx\n\n{head}{two}\n", []),
-            "heading quoted in a closed fence": (f"```\n{head}{line}\n```\n", []),
-            "unclosed fence above": (f"```\nx\n\n{head}{line}", []),
-            "space-indented fence above": (f" ```\nx\n ```\n\n{head}{line}", []),
-            "tab-indented fence above": (f"\t```\nx\n\t```\n\n{head}{line}", []),
-            "no-break-space fence above": (f"\u00a0```\nx\n\u00a0```\n\n{head}{line}", []),
-            "tilde closer on a backtick fence above": (f"```\nx\n~~~\n\n{head}{line}", []),
-            "shorter closer above": (f"````\n```\n{head}{line}\n\n## Next\n```\n````\n", []),
-            "info string on the closer above": (f"```\n```text\n{head}{line}\n\n## Next\n```\n```\n", []),
-            "backtick after the opener run above": (f"```a`b\nx\n```\n\n{head}{line}", []),
-            "comment opener above, never closed": (f"<!-- open\n\n{head}{line}", []),
-            "section wrapped in a comment": (f"<!--\n{head}{line}\n\n## Next\n-->\n", []),
-            "opener in a code span above": (f"Mentions `<!--` here.\n\n{head}{line}", []),
-            "opener in a double-backtick span above": (f"Mentions `` <!-- `` here.\n\n{head}{line}", []),
-            "reopened after a close above": (f"<!-- a --> <!-- b\n\n{head}{line}", []),
-            "script element left open above": (f"<script>\n\n{head}{line}\n\n## N\n</script>\n", []),
-            "style element left open above": (f"<style media=x>\n\n{head}{line}", []),
-            "pre element left open above": (f"<PRE>\n\n{head}{line}", []),
-            "textarea left open above": (f"<textarea>\n\n{head}{line}", []),
-            "processing instruction left open above": (f"<?x\n\n{head}{line}", []),
-            "cdata left open above": (f"<![CDATA[\n\n{head}{line}", []),
-            "html block with no blank line before the heading": (f"<div hidden>\n{head}{line}\n## N\n</div>\n", []),
-            "text right above the heading": (f"text\n{head}{line}", []),
-            "no text": (None, []),
+            "one receipt": (line + "\n", ["RUN-01"]),
+            "no final line feed": (line, ["RUN-01"]),
+            "two receipts, blank lines between": (f"{line}\n\n\n{two}\n", ["RUN-01", "RUN-02"]),
+            "comment lines": (f"# runs\n#\n## looks like a heading\n{line}\n# end\n", ["RUN-01"]),
+            "trailing spaces": (f"{line}   \n", ["RUN-01"]),
+            "a line of spaces": (f"   \n{line}\n", ["RUN-01"]),
+            "crlf line ends": (f"# runs\r\n{line}\r\n{two}\r\n", ["RUN-01", "RUN-02"]),
+            "angle-bracket argument": ("RUN-01 [AC-01] `tool --repo <tmp>`: exit 0\n", ["RUN-01"]),
+            "markup that means nothing here": ("RUN-01 [AC-01] `tool`: prints <!-- <script> ``` and exits 0\n", ["RUN-01"]),
+            "non-ASCII observation": ("RUN-01 [AC-01] `tool`: escribió 3 filas, 日本語\n", ["RUN-01"]),
+            "no-break space in an observation": ("RUN-01 [AC-01] `tool`: 3\u00a0rows\n", ["RUN-01"]),
+            "long id": (line.replace("RUN-01", "RUN-0123"), ["RUN-0123"]),
+            # everything below is refused, and one refused line empties the file
+            "empty file": ("", []),
+            "comments only": ("# nothing yet\n", []),
+            "prose line": (f"{line}\nRan on a clean checkout.\n", []),
+            "markdown bullet": ("- " + line, []),
+            "starred bullet": ("* " + line, []),
+            "numbered": ("1. " + line, []),
+            "checkbox": ("- [x] " + line, []),
+            "quoted": ("> " + line, []),
+            "indented receipt": ("  " + line, []),
+            "indented comment": (f" # runs\n{line}\n", []),
+            "fence line": (f"```\n{line}\n```\n", []),
+            "html comment line": (f"<!-- note -->\n{line}\n", []),
+            "lower-case id": (line.replace("RUN", "run"), []),
+            "one-digit id": (line.replace("RUN-01", "RUN-1"), []),
+            "arabic-indic digits in the id": (line.replace("RUN-01", "RUN-\u0660\u0661"), []),
+            "fullwidth digits in the id": (line.replace("RUN-01", "RUN-\uff10\uff11"), []),
+            "arabic-indic digits in a criterion": (line.replace("AC-01", "AC-\u0660\u0661"), []),
+            "no-break space after the id": (line.replace("RUN-01 ", "RUN-01\u00a0"), []),
+            "two spaces after the id": (line.replace("RUN-01 ", "RUN-01  "), []),
+            "criteria joined by a bare comma": (line.replace("[AC-01]", "[AC-01,AC-02]"), []),
+            "empty criteria": (line.replace("[AC-01]", "[]"), []),
+            "no observation": ("RUN-01 [AC-01] `tool`: ", []),
+            "no command": ("RUN-01 [AC-01] ``: exit 0", []),
+            "no code span": ("RUN-01 [AC-01] tool: exit 0", []),
+            "observation on the next line": ("RUN-01 [AC-01] `tool`:\nexit 0\n", []),
+            "duplicate id": (f"{line}\n{line}\n", []),
+            "template": ("RUN-01 [AC-01] `<what was executed>`: <what was observed>", []),
+            "tab in a command": (line.replace("tool --flag", "tool\t--flag"), []),
+            "tab-indented receipt": ("\t" + line, []),
+            "form feed line break": (f"x\x0c{line}\n", []),
+            "form feed in a comment": (f"# a\x0cb\n{line}\n", []),
+            "vertical tab": (f"{line}\n\x0b\n", []),
+            "file separator": (f"{line}\x1c{two}\n", []),
+            "group separator": (f"{line}\x1d{two}\n", []),
+            "record separator": (f"{line}\x1e{two}\n", []),
+            "unit separator": (f"{line}\x1f\n", []),
+            "next line character": (f"{line}\u0085{two}\n", []),
+            "line separator": (f"{line}\u2028{two}\n", []),
+            "paragraph separator": (f"{line}\u2029{two}\n", []),
+            "nul": (f"{line}\x00\n", []),
+            "escape": (f"{line}\x1b[2K\n", []),
+            "delete": (f"{line}\x7f\n", []),
+            "lone carriage return": (f"# hidden\r{line}\n", []),
+            "two carriage returns before the line feed": (f"{line}\r\r\n", []),
+            "zero-width space": (line.replace("RUN-01", "RUN-\u200b01"), []),
+            "zero-width joiner in an observation": (f"{line}\u200d\n", []),
+            "soft hyphen": (f"{line}\u00ad\n", []),
+            "right-to-left override": (f"{line}\u202e\n", []),
+            "isolate": (f"{line}\u2066\n", []),
+            "byte-order mark": (f"\ufeff{line}\n", []),
+            "tag character": (f"{line}\U000e0041\n", []),
+            "no file": (None, []),
         }
         for name, (text, want) in cases.items():
             with self.subTest(name):
-                self.assertEqual(spec_lint.run_receipts(text), want)
+                data = None if text is None else text.encode("utf-8")
+                self.assertEqual(spec_lint.run_receipts(data), want)
+        for name, data in {"latin-1 byte": self.LINE.encode() + b"\n# caf\xe9\n",
+                           "utf-16": ("\ufeff" + self.LINE).encode("utf-16"),
+                           "lone surrogate": self.LINE.encode() + b"\n# \xed\xa0\x80\n",
+                           "overlong slash": self.LINE.encode() + b"\n# \xc0\xaf\n"}.items():
+            with self.subTest(name):
+                self.assertEqual(spec_lint.run_receipts(data), [])
+                self.assertEqual(spec_lint.run_evidence(data)[1][0][1], "not valid UTF-8")
+
+    def test_lines_break_at_line_feeds_only(self):
+        # str.splitlines() also breaks at eleven other characters; the reader must not.
+        for ch in "\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029\r":
+            with self.subTest(f"U+{ord(ch):04X}"):
+                data = f"# a{ch}{self.LINE}\n".encode("utf-8")
+                receipts, findings = spec_lint.run_evidence(data)
+                self.assertEqual(receipts, [])  # never a new line that holds a receipt
+                self.assertEqual([i for i, _m in findings], [1])
+                self.assertIn(f"U+{ord(ch):04X}", findings[0][1])
+        # a carriage return is dropped only right before the line feed
+        self.assertEqual(spec_lint.run_evidence(f"{self.LINE}\r\n".encode()), ([(1, "RUN-01", ["AC-01"])], []))
+
+    def test_criteria_must_exist_when_they_are_known(self):
+        data = (self.LINE + "\n").encode()
+        self.assertEqual(spec_lint.run_receipts(data, {"AC-01"}), ["RUN-01"])
+        self.assertEqual(spec_lint.run_receipts(data, {"AC-02"}), [])
+        self.assertEqual(spec_lint.run_receipts(data, set()), [])
+        self.assertIn("references unknown criterion AC-01", spec_lint.run_evidence(data, set())[1][0][1])
 
     def test_a_placeholder_is_the_whole_value(self):
         wraps = ("{}", "{}.", "[{}]", "({})", "<{}>", "**{}**", "_{}_", '"{}"', "{}...", "  {} ", "{}!")
@@ -564,74 +594,68 @@ class RunEvidenceTest(unittest.TestCase):
             with self.subTest(f"{word} + more"):
                 self.assertFalse(spec_lint._is_placeholder(f"{word} and 3 rows written"))
 
-    def _findings(self, run_section: str, above: str = "") -> str:
+    FEATURE = ("# Feature\n\n> **Status:** draft\n> **Spec-Format:** ears-1\n\n"
+               "## Glossary\n\n- **Exporter**: writes.\n\n## Acceptance Criteria\n\n"
+               "- [ ] AC-01: THE Exporter SHALL write UTF-8.\n")
+
+    def _findings(self, evidence=None, feature_tail: str = "") -> str:
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "feature.md").write_text(
-                "# Feature\n\n> **Status:** draft\n> **Spec-Format:** ears-1\n\n" + above +
-                "## Glossary\n\n- **Exporter**: writes.\n\n## Acceptance Criteria\n\n"
-                "- [ ] AC-01: THE Exporter SHALL write UTF-8.\n\n" + run_section, encoding="utf-8")
+            (Path(d) / "feature.md").write_text(self.FEATURE + feature_tail, encoding="utf-8", newline="")
+            if evidence is not None:
+                data = evidence if isinstance(evidence, bytes) else evidence.encode("utf-8")
+                (Path(d) / "run-evidence.txt").write_bytes(data)
             return "\n".join(spec_lint.lint(Path(d)).findings)
 
     def test_lint_names_each_refused_line(self):
-        good = "- RUN-01 [AC-01] `tool`: exit 0, wrote out.csv\n"
-        head = self.HEAD
-        only = "only blank lines and run receipts are allowed under `## Run evidence`"
-        shape = "run receipt does not follow"
-        exact = "heading must be exactly `## Run evidence`"
-        self.assertEqual(self._findings(head + good), "")
-        self.assertEqual(self._findings(head + good, above="```\nquoted\n```\n\n<!-- ok -->\n\n"), "")
-        for name, section, want in (
-            ("template", head + "- RUN-01 [AC-01] `<what was executed>`: <what was observed>\n",
-             "RUN-01 is an unfilled template"),
-            ("template with a full stop", head + "- RUN-01 [AC-01] `what was executed.`: what was observed.\n",
-             "RUN-01 is an unfilled template"),
-            ("no bullet", head + good[2:], shape),
-            ("numbered", head + "1. " + good[2:], shape),
-            ("starred", head + "*" + good[1:], shape),
-            ("plus", head + "+" + good[1:], shape),
-            ("quoted", head + "> " + good, shape),
-            ("checkbox", head + "- [ ] " + good[2:], shape),
-            ("table row", head + "| RUN-01 | `tool` | exit 0 |\n", shape),
-            ("lower case id", head + good.replace("RUN", "run"), shape),
-            ("indented", head + "  " + good, shape),
-            ("prose", head + "Ran on a clean checkout.\n\n" + good, only),
-            ("fence", head + "```\n" + good + "```\n", only),
-            ("comment", head + "<!-- note -->\n" + good, only),
-            ("nested bullet", head + good + "  - detail\n", only),
-            ("indented heading", head + good + "\n ## Notes\n", only),
-            ("setext underline", head + good + "\nNotes\n-----\n", only),
-            ("level-three heading", head + good + "\n### Notes\n", only),
-            ("comment opener in a receipt", head + "- RUN-01 [AC-01] `tool`: prints <!-- and exits\n",
-             "RUN-01 holds a comment opener"),
-            ("duplicate id", head + good + good, "RUN-01 duplicates line"),
-            ("unknown criterion", head + "- RUN-01 [AC-77] `tool`: ran\n", "RUN-01 references unknown criterion AC-77"),
-            ("no blank line above", "stray\n" + head + good, "the line above `## Run evidence` must be blank"),
-            ("miscased heading", "## RUN EVIDENCE\n\n" + good, exact),
-            ("trailing colon", "## Run evidence:\n\n" + good, exact),
-            ("deeper level", "### Run evidence\n\n" + good, exact),
-            ("indented heading form", " ## Run evidence\n\n" + good, exact),
-            ("setext title", "Run evidence\n============\n\n" + good, exact),
-            ("two sections", head + good + "\n## Notes\n\nx\n\n" + head + good.replace("01", "02"),
-             "more than one `## Run evidence` section"),
+        good = self.LINE + "\n"
+        self.assertEqual(self._findings(), "")  # the file is optional until the flip
+        self.assertEqual(self._findings("# runs\n\n" + good), "")
+        only = "run-evidence.txt:2: line is neither blank, a `#` comment nor a run receipt"
+        shape = "run-evidence.txt:2: run receipt does not follow `RUN-## [AC-##] `<what was executed>`: <what was observed>`"
+        for name, second, want in (
+            ("prose", "Ran on a clean checkout.", only),
+            ("fence", "```", only),
+            ("indented comment", " # note", only),
+            ("markdown bullet", "- RUN-02 [AC-01] `tool`: ok", shape),
+            ("numbered", "1. RUN-02 [AC-01] `tool`: ok", shape),
+            ("lower case id", "run-02 [AC-01] `tool`: ok", shape),
+            ("one digit", "RUN-2 [AC-01] `tool`: ok", shape),
+            ("non-ASCII digits", "RUN-\u0660\u0662 [AC-01] `tool`: ok", shape),
+            ("template", "RUN-02 [AC-01] `<what was executed>`: <what was observed>",
+             "run-evidence.txt:2: RUN-02 is an unfilled template"),
+            ("template with a full stop", "RUN-02 [AC-01] `what was executed.`: what was observed.",
+             "run-evidence.txt:2: RUN-02 is an unfilled template"),
+            ("duplicate id", good.rstrip(), "run-evidence.txt:2: RUN-01 duplicates line 1"),
+            ("unknown criterion", "RUN-02 [AC-77] `tool`: ran",
+             "run-evidence.txt:2: RUN-02 references unknown criterion AC-77"),
+            ("form feed", "RUN-02 [AC-01] `tool`: ok\x0c", "run-evidence.txt:2: holds the character U+000C"),
+            ("line separator", "RUN-02 [AC-01] `tool`: ok\u2028x", "run-evidence.txt:2: holds the character U+2028"),
+            ("tab", "RUN-02 [AC-01] `a\tb`: ok", "run-evidence.txt:2: holds the character U+0009"),
         ):
             with self.subTest(name):
-                self.assertIn(want, self._findings(section))
-        for name, above, want in (
-            ("unclosed fence", "```\nx\n\n", "fenced block is not closed above"),
-            ("indented fence", "  ```\nx\n  ```\n\n", "must start at column 0"),
-            ("tilde closer", "```\nx\n~~~\n\n", "does not close the block opened at line"),
-            ("comment left open", "<!-- note\n\n", "comment opener above `## Run evidence` is not closed"),
-            ("script left open", "<script>\n\n", "`<script` element above `## Run evidence` is not closed"),
+                self.assertIn(want, self._findings(good + second + "\n"))
+        self.assertIn("run-evidence.txt:2: not valid UTF-8", self._findings(good.encode() + b"\xff\n"))
+        moved = "run evidence lives in `run-evidence.txt`"
+        for name, tail in (("the old section", "\n## Run evidence\n\n- " + good),
+                           ("miscased", "\n## RUN EVIDENCE\n"), ("deeper", "\n### Run evidence\n"),
+                           ("a tail", "\n## Run evidence (final)\n"), ("indented", "\n ## Run evidence\n"),
+                           ("setext", "\nRun evidence\n============\n"), ("bold", "\n**Run evidence**\n")):
+            with self.subTest(name):
+                self.assertIn(moved, self._findings(good, feature_tail=tail))
+        # A sentence that mentions the words, and a heading quoted in a fence, are not headings.
+        self.assertEqual(self._findings(good, feature_tail="\n## Notes\n\nThe run evidence is in the text file.\n"), "")
+        self.assertEqual(self._findings(good, feature_tail="\n## Notes\n\n```\n## Run evidence\n```\n"), "")
 
-            ("opener in a code span", "Mentions `` <!-- `` here.\n\n", "comment opener above"),
-        ):
-            with self.subTest(name):
-                self.assertIn(want, self._findings(head + good, above=above))
+    def test_a_directory_in_place_of_the_file_is_a_finding(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "feature.md").write_text(self.FEATURE, encoding="utf-8")
+            (Path(d) / "run-evidence.txt").mkdir()
+            self.assertIn("cannot be read", "\n".join(spec_lint.lint(Path(d)).findings))
 
     def test_a_long_line_costs_linear_time(self):
         # 200,000 characters per line, every shape that made an earlier pattern crawl.
         n = 200_000
-        good = "- RUN-01 [AC-01] `tool`: exit 0\n"
+        good = self.LINE + "\n"
         lines = {
             "hash then spaces": "#" + " " * n + "x",
             "spaces": " " * n + "x",
@@ -642,28 +666,28 @@ class RunEvidenceTest(unittest.TestCase):
             "status then spaces": "status" + " " * n + "x",
             "status colon then spaces": "status:" + " " * n + "x",
             "spec-format then stars": "spec-format" + "*" * n + "x",
-            "receipt with an open backtick": "- RUN-01 [AC-01] `" + " " * n,
-            "receipt with spaces before the colon": "- RUN-01 [AC-01] `tool`" + " " * n + ":",
-            "receipt of angle brackets": "- RUN-01 [AC-01] `" + "<" * n + "`: ok",
-            "receipt with a long criteria list": "- RUN-01 [" + "AC-1, " * (n // 6),
+            "receipt with an open backtick": "RUN-01 [AC-01] `" + " " * n,
+            "receipt with spaces before the colon": "RUN-01 [AC-01] `tool`" + " " * n + ":",
+            "receipt of angle brackets": "RUN-01 [AC-01] `" + "<" * n + "`: ok",
+            "receipt with a long criteria list": "RUN-01 [" + "AC-1, " * (n // 6),
+            "receipt with a long id": "RUN-" + "0" * n,
             "backticks": "`" * n,
             "run ids": "RUN-" * (n // 4),
             "unclosed markers": "[NEEDS CLARIFICATION:" * (n // 21),
             "marker then spaces": "[NEEDS" + " " * n,
             "brackets": "[" * n,
             "run evidence then spaces": "## Run evidence" + " " * n + "x",
-            "element openers": "<pre" * (n // 4),
-            "comment openers": "<!--" * (n // 4),
-            "instruction openers": "<?" * (n // 2),
+            "non-ASCII": "é" * n,
         }
         for name, line in lines.items():
-            for where in ("in the section", "in the head"):
-                section = self.HEAD + good + (line + "\n" if where == "in the section" else "")
-                above = line + "\n\n" if where == "in the head" else ""
+            for where in ("in the evidence file", "in feature.md"):
                 with self.subTest(f"{name}, {where}"):
                     began = time.perf_counter()
-                    self._findings(section, above=above)
-                    spec_lint.run_receipts(above + section)
+                    if where == "in the evidence file":
+                        self._findings(good + line + "\n")
+                        spec_lint.run_receipts((good + line + "\n").encode("utf-8"))
+                    else:
+                        self._findings(good, feature_tail="\n## Notes\n\n" + line + "\n")
                     self.assertLess(time.perf_counter() - began, 1.0)
 
     def test_linear_patterns_read_what_the_old_ones_read(self):
@@ -753,6 +777,65 @@ class RunEvidenceTest(unittest.TestCase):
             git("commit", "-qam", "a real command that starts with a placeholder word")
             honest = gate(base)
             self.assertNotIn("run receipt", honest.stdout)
+            self.assertNotIn("unfilled template", honest.stdout)
+
+    def test_the_cli_refuses_a_flip_until_a_receipt_is_committed(self):
+        # A real run of the shipped command against a throwaway repository.
+        case = RUN_FIXTURES / "violation_flip_without_the_evidence_file"
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as home:
+            env["HOME"] = env["USERPROFILE"] = home  # an empty receipt ledger
+
+            def git(*a):
+                return subprocess.run(["git", "-C", repo, *a], check=True, env=env,
+                                      capture_output=True, text=True).stdout.strip()
+
+            def gate(base):
+                return subprocess.run([sys.executable, str(ROOT / "scripts" / "spec_lint.py"),
+                                       "--repo", repo, "--push-range", base, "HEAD"],
+                                      env=env, capture_output=True, text=True)
+            sd = Path(repo) / "docs" / "specs" / "202611200000-toy"
+            sd.mkdir(parents=True)
+            for name in ("feature.md", "plan.md"):
+                (sd / name).write_text((case / name).read_text(encoding="utf-8"), encoding="utf-8")
+            git("init", "-q")
+            git("config", "core.autocrlf", "false")
+            git("add", "-A")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+            feature = sd / "feature.md"
+            evidence = sd / "run-evidence.txt"
+
+            def commit(msg, data: bytes):
+                evidence.write_bytes(data)
+                git("add", "-A")
+                git("commit", "-qm", msg)
+                return gate(base)
+            feature.write_text(feature.read_text(encoding="utf-8").replace(
+                "> **Status:** approved", "> **Status:** converged"), encoding="utf-8")
+            git("commit", "-qam", "flip")
+            first = gate(base)
+            self.assertEqual(first.returncode, 1)
+            self.assertIn("has no `run-evidence.txt`", first.stdout)
+            template = commit("template", b"RUN-01 [AC-01] `<what was executed>`: <what was observed>\n")
+            self.assertIn("holds no run receipt that counts", template.stdout)
+            self.assertIn("run-evidence.txt:1: RUN-01 is an unfilled template", template.stdout)
+            hidden = commit("a receipt behind a form feed", b"# runs\x0cRUN-01 [AC-01] `python3 app.py`: exit 0\n")
+            self.assertIn("holds no run receipt that counts", hidden.stdout)
+            self.assertIn("holds the character U+000C", hidden.stdout)
+            lone = commit("a receipt behind a lone carriage return", b"# runs\rRUN-01 [AC-01] `python3 app.py`: exit 0\n")
+            self.assertIn("holds the character U+000D", lone.stdout)
+            binary = commit("not text", b"RUN-01 [AC-01] `python3 app.py`: exit 0\n\xff\xfe\n")
+            self.assertEqual(binary.returncode, 1)
+            self.assertIn("run-evidence.txt:2: not valid UTF-8", binary.stdout)
+            filled = commit("receipt", b"# one run\r\nRUN-01 [AC-01] `python3 app.py`: exit 0, the report is written in UTF-8\r\n")
+            self.assertNotIn("run-evidence", filled.stdout)
+            self.assertNotIn("unfilled template", filled.stdout)
+            self.assertIn("holds no converge receipt", filled.stdout)  # the other half still asks
+            honest = commit("a real command that starts with a placeholder word",
+                            b"RUN-01 [AC-01] `todo add milk`: pending migrations 0, exit 0\n")
+            self.assertNotIn("run-evidence", honest.stdout)
             self.assertNotIn("unfilled template", honest.stdout)
 
 

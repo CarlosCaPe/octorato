@@ -37,10 +37,10 @@ When every criterion is met and the excellence pass says `EXCELLENT`, you write 
 1. `feature.md`: every `AC-##` criterion and the Glossary.
 2. `plan.md`: which tasks claim which criteria, and any earlier Convergence sections.
 3. The code and tests those tasks name.
-4. `## Run evidence` in `feature.md`: the builder's run receipts, one
-   `- RUN-## [AC-##] `<what was executed>`: <what was observed>` line per run and nothing
-   else in the section (the linter of Step 1 enforces that). They are claims for you to
-   reproduce, not evidence.
+4. `run-evidence.txt` in the spec directory: the builder's run receipts, one
+   `RUN-## [AC-##] `<what was executed>`: <what was observed>` line per run, with `#`
+   comment lines and nothing else (the linter of this step enforces that). They are claims
+   for you to reproduce, not evidence.
 
 Run `python3 ~/.claude/scripts/spec_lint.py <spec-directory>` first, and take
 `sha256sum plan.md` now: you only know which branch of Step 3 applies after judging.
@@ -72,7 +72,7 @@ real arguments, the app, the endpoint, the rendered document) and record the com
 what came back. If the artifact cannot be run where you are, the status is `unrun`, never
 `met`, and the gap task says what is needed to run it.
 
-Re-run every receipt under `## Run evidence`. A receipt that does not reproduce, or whose
+Re-run every receipt in `run-evidence.txt`. A receipt that does not reproduce, or whose
 observed text differs from what you see, is a gap against the criteria it names. No receipt
 at all on a spec with a behavioural criterion is a gap.
 

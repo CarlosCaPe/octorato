@@ -30,28 +30,30 @@ What it checks, per spec directory (a `feature.md`, optionally a `plan.md`):
     - at most 3 NEEDS CLARIFICATION markers; with --ready, zero. A marker is
       `[NEEDS CLARIFICATION]` or `[NEEDS CLARIFICATION: ...]`, any case, and
       may span lines
-    - a `## Run evidence` section is optional until the spec converges. It is a
-      strict machine grammar, not Markdown. Under the heading, up to the next
-      `#` or `##` heading at column 0, only blank lines and exact receipt lines
-        - RUN-## [AC-##, AC-##] `<what was executed>`: <what was observed>
-      are allowed, with a unique id and criteria that exist. A receipt records
-      one real execution of the shipped artifact (the CLI, the app, the
-      endpoint, the rendered document), never a reading of its code
-    - ANY other line in the section is a finding that names it: a fence, a
-      comment, an indented line, prose, a nested or numbered or starred bullet,
-      a checkbox, a heading in another form. Nothing in the section counts
-      until the section is clean
+    - a heading that names run evidence (`## Run evidence` in any form) is a
+      finding: receipts live in run-evidence.txt, never in Markdown
+
+  run-evidence.txt (when present; required at the flip to converged)
+    - plain text, read as bytes: UTF-8, lines end at a line feed (one carriage
+      return before it is dropped), and nothing else breaks a line
+    - a line is blank, a comment (`#` at column 0) or a run receipt, to the
+      character:
+        RUN-## [AC-##, AC-##] `<what was executed>`: <what was observed>
+      Any other line is a finding that names it
+    - an id is `RUN-` and two or more ASCII digits, unique in the file; every
+      criterion exists in feature.md
     - a receipt whose executed text or observation is a placeholder is a
       finding: the value, with brackets, quotes and punctuation around it
       stripped, is empty, a word of PLACEHOLDERS, a run of `x`, or only
       angle-bracket groups. A value that merely starts with such a word is real
-    - the heading is exactly `## Run evidence`, once. Any other line that names
-      run evidence as a heading, and a second section, are findings
-    - above the section a fenced block must be in the plain form (opener and
-      bare closer at column 0, same character), no comment opener or raw-text
-      element (script, style, pre, textarea, CDATA, processing instruction) may
-      be left open, and the line right above the heading is blank, so nothing a
-      renderer does can hide the section from a reader
+    - a control, format or line-separator character anywhere in the file is a
+      finding (tab, form feed, vertical tab, U+001C to U+001F, U+0085, U+2028,
+      U+2029, NUL, zero-width and direction marks, a byte-order mark)
+    - no receipt counts while the file has one finding
+    Why a text file: receipts used to sit in a `## Run evidence` section of
+    feature.md, and three converge passes each found Markdown that a renderer
+    shows as code, or hides, while the linter counted it. A plain-text file has
+    one reading
 
   plan.md (when present)
     - every task line is `- [ ] T## [AC-##, AC-##] <path>, <path>: <action>`;
@@ -77,9 +79,11 @@ Push gate (v9 phase 3, called by .githooks/pre-push once per pushed ref):
     - for every ears-1 spec whose `Status:` header becomes `converged` in the
       range, requires a plan.md and the latest anchored converge receipt for
       that spec directory to say CONVERGED, with a transcript timestamp newer
-      than the newest code commit on the branch (AC-14), and requires the
-      spec to carry at least one run receipt in `## Run evidence` (rule
-      FLOW.build-loop-excellence). Stated: the linter reads the receipt's
+      than the newest code commit on the branch (AC-14), and requires
+      run-evidence.txt with at least one run receipt and no finding (rule
+      FLOW.build-loop-excellence). A converged spec that has the file keeps
+      it: a later push may not remove it or leave it without a counted
+      receipt. Stated: the linter reads the receipt's
       shape, it cannot tell whether the command ran; the converge verifier
       re-runs the receipts, and a spec that converged before this check is
       not asked again
@@ -167,31 +171,24 @@ _TASK = re.compile(
     r"^- \[[ xX]\] (T\d{2,}) \[(AC-\d+(?:, AC-\d+)*)\] (\S[^:]*?): (\S.*)$"
 )
 _CONVERGENCE = re.compile(r"^## Convergence\b")
-RUN_SECTION = "Run evidence"
-RUN_HEADING = "## Run evidence"
-RUN_GRAMMAR = "- RUN-## [AC-##] `<what was executed>`: <what was observed>"
+EVIDENCE_FILE = "run-evidence.txt"
+RUN_GRAMMAR = "RUN-## [AC-##] `<what was executed>`: <what was observed>"
 # Every pattern below is anchored and has no nested or adjacent unbounded
 # quantifier, and the receipt itself is parsed with str.find, so a line of any
 # length costs time linear in its length (test_spec_lint pins 200,000 characters).
-_SECTION_END = re.compile(r"^#{1,2}(?: |$)")
-_RUN_ID = re.compile(r"- (RUN-\d{2,}) \[")
-_AC_ID = re.compile(r"AC-\d+")
+# ASCII digits only: `\d` also takes the digits of forty other scripts, and two ids
+# that look alike must be the same id.
+_RUN_ID = re.compile(r"(RUN-[0-9]{2,}) \[")
+_AC_REF = re.compile(r"AC-[0-9]+")
+# What may not sit in run-evidence.txt: every character that breaks a line for some
+# reader (Python's splitlines breaks at form feed, vertical tab, U+001C to U+001E,
+# U+0085, U+2028 and U+2029), hides (zero-width, soft hyphen, tag characters) or
+# reorders text (direction marks). Spelled as code points, not as Unicode
+# categories, so the answer does not move with the interpreter's Unicode tables.
+_UNSAFE = re.compile(
+    "[\x00-\x1f\x7f-\x9f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f"
+    "\ufeff\ufff9-\ufffb\U000e0001\U000e0020-\U000e007f]")
 _ANGLE_GROUP = re.compile(r"<[^<>]*>")
-# What a renderer hides or shows raw until its closer, whatever comes between, blank
-# lines included. If the last opener above the section has no closer after it, the
-# section may sit inside it. Plain string search, in or out of a code span: where
-# the linter cannot know, it reports.
-# An element opener is the name followed by a space, `>`, `/` or the end of the line,
-# so `<previous>` and `<prefix>` are not `<pre`.
-_HIDERS = tuple((re.compile(opener), closer, what) for opener, closer, what in (
-    (r"<!--", "-->", "comment opener"),
-    (r"<script(?=[\s>/]|$)", "</script>", "`<script` element"),
-    (r"<style(?=[\s>/]|$)", "</style>", "`<style` element"),
-    (r"<pre(?=[\s>/]|$)", "</pre>", "`<pre` element"),
-    (r"<textarea(?=[\s>/]|$)", "</textarea>", "`<textarea` element"),
-    (r"<!\[cdata\[", "]]>", "CDATA opener"),
-    (r"<\?", "?>", "processing instruction opener"),
-))
 # What a value may be wrapped in and still be the same placeholder: `TODO.`,
 # `[TODO]`, `(tbd)`, `**`.
 _WRAPPING = " \t`*_\"'()[]{}<>.,;:!?…-"
@@ -209,6 +206,7 @@ class Report:
     path: Path
     findings: list = field(default_factory=list)
     skipped: bool = False
+    criteria: set = field(default_factory=set)
 
     def add(self, file: Path, line: int, msg: str) -> None:
         self.findings.append(f"{file}:{line}: {msg}")
@@ -292,8 +290,7 @@ def _is_placeholder(value: str) -> bool:
 
 def _parse_receipt(line: str):
     """(id, [criteria], executed, observed) of an exact receipt line, else None.
-    The shape is fixed to the character: `- RUN-## [AC-##, AC-##] `executed`: observed`."""
-    line = line.rstrip()
+    The shape is fixed to the character: `RUN-## [AC-##, AC-##] `executed`: observed`."""
     m = _RUN_ID.match(line)
     if not m:
         return None
@@ -301,7 +298,7 @@ def _parse_receipt(line: str):
     if close < 0:
         return None
     acs = line[m.end():close].split(", ")
-    if not all(_AC_ID.fullmatch(a) for a in acs):
+    if not all(_AC_REF.fullmatch(a) for a in acs):
         return None
     if not line.startswith(" `", close + 1):
         return None
@@ -316,8 +313,8 @@ def _parse_receipt(line: str):
 
 
 def _names_run_evidence(line: str) -> bool:
-    """A line that reads as a run evidence heading in any form: another level, another
-    case, a tail, an indent, bold text, a setext title."""
+    """A line of feature.md that reads as a run evidence heading in any form: any
+    level, any case, a tail, an indent, bold text, a setext title."""
     words = " ".join(line.strip().lstrip("#").strip().strip("*_`").casefold()
                      .replace("-", " ").replace("_", " ").split())
     if not words.startswith("run evidence"):
@@ -325,117 +322,72 @@ def _names_run_evidence(line: str) -> bool:
     return line.lstrip().startswith("#") or words.rstrip(":.") == "run evidence"
 
 
-def _fences_before(lines: list, upto: int) -> list:
-    """Findings for the fenced blocks above the section. The linter pairs fence lines
-    one after the other, a Markdown renderer pairs them by character, length and
-    indent, and where the two can disagree the section may sit inside a block the
-    reader sees as code. So above the section only the plain form is accepted: an
-    opener at column 0 with no backtick after its run, then a bare closer at column
-    0 of the same character and at least the same length."""
-    out, opened = [], None
-    for i, line in enumerate(lines[:upto], 1):
-        if not line.lstrip().startswith(("```", "~~~")):
+def run_evidence(data, criteria=None) -> tuple:
+    """(receipts, findings) of a run-evidence.txt, given as the bytes of the file.
+
+    receipts: (line_no, id, [criteria]). findings: (line_no, message). The file is
+    plain text with one reading: decoded as UTF-8, split at line feeds only, one
+    carriage return dropped before each. A line is blank, a `#` comment at column 0
+    or an exact receipt; anything else is a finding. With `criteria` (the ids of
+    feature.md) a receipt that names another one is a finding too."""
+    if data is None:
+        return [], []
+    if isinstance(data, str):
+        data = data.encode("utf-8", "surrogatepass")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return [], [(data.count(b"\n", 0, exc.start) + 1, "not valid UTF-8")]
+    receipts, findings, seen = [], [], {}
+    for i, line in enumerate(text.split("\n"), 1):
+        if line.endswith("\r"):
+            line = line[:-1]
+        bad = _UNSAFE.search(line)
+        if bad:
+            findings.append((i, f"holds the character U+{ord(bad.group()):04X}; only printable "
+                                f"text is allowed, and a line ends at a line feed"))
             continue
-        ch = line[0]
-        run = len(line) - len(line.lstrip(ch)) if ch in "`~" else 0
-        if opened is None:
-            if run < 3 or (ch == "`" and "`" in line[run:]):
-                out.append((i, f"fence line above `{RUN_HEADING}` must start at column 0 "
-                               f"and carry no backtick after its run"))
-            else:
-                opened = (i, ch, run)
-        elif run >= opened[2] and ch == opened[1] and line.strip() == ch * run:
-            opened = None
-        else:
-            out.append((i, f"fence line above `{RUN_HEADING}` does not close the block "
-                           f"opened at line {opened[0]}: a closer is the same character, "
-                           f"at least as long, alone at column 0"))
-    if opened:
-        out.append((opened[0], f"fenced block is not closed above `{RUN_HEADING}`"))
-    return out
-
-
-def run_evidence(text) -> tuple:
-    """(receipts, findings) of a feature.md.
-
-    receipts: (line_no, id, [criteria]) of every receipt, in order. findings:
-    (line_no, message). The section is a strict machine grammar, not Markdown: under
-    the one `## Run evidence` heading only blank lines and exact receipt lines are
-    allowed, up to the next `#` or `##` heading at column 0. Anything else there (a
-    fence, a comment, an indent, prose, another bullet style, a heading in another
-    form) is a finding. The section is found the way every other section is
-    (`_readable_lines`: a closed fenced block hides a quoted heading), and what sits
-    above it must not be able to hide it from a reader: fenced blocks in the plain
-    form only, no comment or raw-text element (`_HIDERS`) left open, and a blank line
-    right above the heading, which ends any other HTML block."""
-    text = text or ""
-    raw = text.splitlines()
-    readable = _readable_lines(text)
-    findings, heads = [], []
-    for i, line in readable:
-        if line.rstrip() == RUN_HEADING:
-            heads.append(i)
-        elif _names_run_evidence(line):
-            findings.append((i, f"run evidence heading must be exactly `{RUN_HEADING}`"))
-    for i in heads[1:]:
-        findings.append((i, f"more than one `{RUN_HEADING}` section; keep exactly one"))
-    if not heads:
-        return [], findings
-    head = heads[0]
-    end = next((i for i, line in readable if i > head and _SECTION_END.match(line)), len(raw) + 1)
-    findings += _fences_before(raw, head - 1)
-    if head > 1 and raw[head - 2].strip():
-        findings.append((head, f"the line above `{RUN_HEADING}` must be blank"))
-    above = "\n".join(raw[:head - 1]).casefold()
-    for opener, closer, what in _HIDERS:
-        at = max((m.start() for m in opener.finditer(above)), default=-1)
-        if at > above.rfind(closer):
-            findings.append((above.count("\n", 0, at) + 1,
-                             f"{what} above `{RUN_HEADING}` is not closed before the "
-                             f"section; close it with `{closer}`, or write it another way"))
-    receipts, seen = [], {}
-    for i in range(head + 1, end):
-        line = raw[i - 1]
-        if not line.strip():
+        line = line.rstrip(" ")
+        if not line or line.startswith("#"):
             continue
         parsed = _parse_receipt(line)
         if parsed is None:
             if "run-" in line[:40].casefold():
                 findings.append((i, f"run receipt does not follow `{RUN_GRAMMAR}`"))
             else:
-                findings.append((i, f"only blank lines and run receipts are allowed under "
-                                    f"`{RUN_HEADING}`"))
+                findings.append((i, "line is neither blank, a `#` comment nor a run receipt"))
             continue
         rid, acs, executed, observed = parsed
-        if "<!--" in line:
-            findings.append((i, f"{rid} holds a comment opener; write it another way"))
         if _is_placeholder(executed) or _is_placeholder(observed):
             findings.append((i, f"{rid} is an unfilled template: write the command "
                                 f"that was executed and what was observed"))
         if rid in seen:
             findings.append((i, f"{rid} duplicates line {seen[rid]}"))
         seen[rid] = i
+        if criteria is not None:
+            for ac in acs:
+                if ac not in criteria:
+                    findings.append((i, f"{rid} references unknown criterion {ac}"))
         receipts.append((i, rid, acs))
     return receipts, findings
 
 
-def run_receipts(text) -> list:
-    """The receipt ids the gate counts. None counts until the section is clean: one
-    finding anywhere in the run evidence and the list is empty."""
-    receipts, findings = run_evidence(text)
+def run_receipts(data, criteria=None) -> list:
+    """The receipt ids the gate counts. None counts while the file has one finding."""
+    receipts, findings = run_evidence(data, criteria)
     return [] if findings else [rid for _i, rid, _acs in receipts]
 
 
-def _lint_run_evidence(feature: Path, text: str, criteria: dict, report: Report) -> None:
+def _lint_run_evidence(evidence: Path, criteria: set, report: Report) -> None:
     """Shape only: a receipt names what was executed and what was observed. Whether a
-    spec NEEDS one is decided at the push that flips it to converged."""
-    receipts, findings = run_evidence(text)
-    for i, rid, acs in receipts:
-        for ac in acs:
-            if ac not in criteria:
-                findings.append((i, f"{rid} references unknown criterion {ac}"))
-    for i, msg in sorted(findings):
-        report.add(feature, i, msg)
+    spec NEEDS the file is decided at the push that flips it to converged."""
+    try:
+        data = evidence.read_bytes()
+    except OSError as exc:
+        report.add(evidence, 1, f"cannot be read: {exc.strerror or exc}")
+        return
+    for i, msg in run_evidence(data, criteria)[1]:
+        report.add(evidence, i, msg)
 
 
 def _header_lines(text: str, loose: re.Pattern) -> list:
@@ -521,7 +473,12 @@ def lint_feature(feature: Path, report: Report, ready: bool) -> set:
     if "Acceptance Criteria" in secs and not ids:
         report.add(feature, 1, "`## Acceptance Criteria` holds no criterion")
 
-    _lint_run_evidence(feature, text, ids, report)
+    for i, line in lines:
+        if _names_run_evidence(line):
+            report.add(feature, i, f"run evidence lives in `{EVIDENCE_FILE}` next to "
+                                   f"feature.md, one receipt per line; a Markdown "
+                                   f"section is not read. Move the receipts there and "
+                                   f"remove this heading")
 
     # Markers are counted over the joined text so one split across lines counts.
     body = "\n".join(_INLINE_CODE.sub("", line) for _i, line in lines)
@@ -588,9 +545,13 @@ def lint(target: Path, ready: bool = False) -> Report:
     criteria = lint_feature(feature, report, ready)
     if report.skipped:
         return report
+    report.criteria = criteria
     plan = feature.parent / "plan.md"
     if plan.is_file():
         lint_plan(plan, criteria, report)
+    evidence = feature.parent / EVIDENCE_FILE
+    if evidence.exists():
+        _lint_run_evidence(evidence, criteria, report)
     return report
 
 
@@ -615,8 +576,17 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _show(repo: Path, rev: str, path: str):
+    # errors="replace": a spec file that is not valid text is a finding of its own
+    # reader, never a crash of the push check.
     cp = subprocess.run(["git", "-C", str(repo), "show", f"{rev}:{path}"],
-                        capture_output=True, text=True)
+                        capture_output=True, text=True, errors="replace")
+    return cp.stdout if cp.returncode == 0 else None
+
+
+def _show_bytes(repo: Path, rev: str, path: str):
+    """The blob as stored. run-evidence.txt is read as bytes: text mode would turn
+    a lone carriage return into a line break before the reader ever saw it."""
+    cp = subprocess.run(["git", "-C", str(repo), "show", f"{rev}:{path}"], capture_output=True)
     return cp.stdout if cp.returncode == 0 else None
 
 
@@ -700,7 +670,7 @@ def _newest_branch_code(repo: Path, head: str, spec_dir: str) -> str:
     return max(out, key=_parse_ts) if out else ""
 
 
-SPEC_FILES = ("feature.md", "plan.md")
+SPEC_FILES = ("feature.md", "plan.md", EVIDENCE_FILE)
 # A Git LFS pointer, current or legacy: the spec URL changed twice
 # (git-media.io, hawser.github.com, git-lfs.github.com), so the gate matches the
 # shape the pointer format fixes: a `version` line, optional `ext-` lines, then the oid.
@@ -760,6 +730,13 @@ def _on_spec_path(path: str) -> bool:
 def _parse_ts(value: str) -> _dt.datetime:
     ts = _dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     return ts if ts.tzinfo else ts.replace(tzinfo=_dt.timezone.utc)
+
+
+def _needs_evidence(flip: bool, had: bool, has: bool) -> bool:
+    """A converged spec needs counted receipts at the flip, and keeps them: once the
+    file exists (before the push or at its head) it may not go or go empty. A spec
+    that converged before this check never had the file and is left alone."""
+    return flip or had or has
 
 
 def push_findings(repo: Path, base: str, head: str) -> list:
@@ -840,10 +817,13 @@ def push_findings(repo: Path, base: str, head: str) -> list:
                             f"<yyyymmddHHMM>-<lowercase-slug>")
         # AC-15: lint the spec as it is at the pushed head.
         plan_now = _show(repo, head, f"{sd}/plan.md")
+        evidence_now = _show_bytes(repo, head, f"{sd}/{EVIDENCE_FILE}")
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "feature.md").write_text(feature_now, encoding="utf-8")
             if plan_now is not None:
                 (Path(tmp) / "plan.md").write_text(plan_now, encoding="utf-8")
+            if evidence_now is not None:
+                (Path(tmp) / EVIDENCE_FILE).write_bytes(evidence_now)
             rep = lint(Path(tmp))
             findings += [f.replace(tmp, sd) for f in rep.findings]
 
@@ -851,19 +831,30 @@ def push_findings(repo: Path, base: str, head: str) -> list:
             findings.append(f"{sd}: the spec says converged but has no plan.md; a converged "
                             f"spec keeps the plan it was judged against")
             continue
-        # AC-14: a status flip to converged needs a fresh CONVERGED receipt.
         if spec_status(feature_now) != "converged":
             continue
-        if spec_status(feature_before) == "converged":
-            continue
+        flip = spec_status(feature_before) != "converged"
         # FLOW.build-loop-excellence: "converged" claims the artifact was run, so the
-        # spec carries the receipt of that run. Not a `continue`: a flip missing both
-        # the run receipt and the verdict is told both.
-        if not run_receipts(feature_now):
-            findings.append(f"{sd}: Status becomes converged, but feature.md has no run "
-                            f"receipt under `## {RUN_SECTION}` (a filled one, in a section "
-                            f"with no other finding). Run the shipped artifact for real "
-                            f"and record it as `{RUN_GRAMMAR}`, then run /sdd-converge.")
+        # spec carries the receipts of that run: at the flip, and from then on. A spec
+        # that converged before this check has no file and is not asked for one; once a
+        # converged spec has the file, a push may not remove or empty it. Not a
+        # `continue`: a flip missing both the run receipt and the verdict is told both.
+        had = bool(before) and _show_bytes(repo, before, f"{sd}/{EVIDENCE_FILE}") is not None
+        if _needs_evidence(flip, had, evidence_now is not None):
+            verb = "becomes" if flip else "is"
+            how = (f"Run the shipped artifact for real and record each run in "
+                   f"{sd}/{EVIDENCE_FILE}, one line per run: `{RUN_GRAMMAR}`. Then run "
+                   f"/sdd-converge.")
+            if evidence_now is None:
+                findings.append(f"{sd}: Status {verb} converged, but the spec has no "
+                                f"`{EVIDENCE_FILE}`. {how}")
+            elif not run_receipts(evidence_now, rep.criteria):
+                findings.append(f"{sd}: Status {verb} converged, but `{EVIDENCE_FILE}` "
+                                f"holds no run receipt that counts (a filled one, in a file "
+                                f"with no finding). {how}")
+        # AC-14: a status flip to converged needs a fresh CONVERGED receipt.
+        if not flip:
+            continue
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import receipt_ledger
         receipt = receipt_ledger.converge_latest_for(sd)
@@ -914,6 +905,8 @@ def _push_selftest_case(case: Path) -> list:
         (repo / sd / "feature.md").write_text(feature, encoding="utf-8")
         (repo / sd / "plan.md").write_text((case / "plan.md").read_text(encoding="utf-8"),
                                            encoding="utf-8")
+        if (case / EVIDENCE_FILE).is_file():
+            (repo / sd / EVIDENCE_FILE).write_bytes((case / EVIDENCE_FILE).read_bytes())
         (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
         base = commit("base", "2026-09-30T10:00:00+00:00")
         pushed = base  # what the remote ref holds before the push
@@ -942,6 +935,9 @@ def _push_selftest_case(case: Path) -> list:
         if spec.get("replace_format"):
             text = text.replace("> **Spec-Format:** ears-1", spec["replace_format"])
         (repo / sd / "feature.md").write_text(text, encoding="utf-8")
+        if (case / "run-evidence.after.txt").is_file():
+            # the push itself changes the evidence file
+            (repo / sd / EVIDENCE_FILE).write_bytes((case / "run-evidence.after.txt").read_bytes())
         if spec.get("rename_spec_to"):
             shutil.move(str(repo / sd), str(repo / spec["rename_spec_to"]))
         for key, act in (("move_feature_to", shutil.move), ("copy_feature_to", shutil.copy)):
@@ -950,6 +946,8 @@ def _push_selftest_case(case: Path) -> list:
                 act(str(repo / sd / "feature.md"), str(repo / spec[key]))
         if spec.get("delete_plan"):
             (repo / sd / "plan.md").unlink()
+        if spec.get("delete_evidence"):
+            (repo / sd / EVIDENCE_FILE).unlink()
         if spec.get("delete_spec"):
             shutil.rmtree(repo / sd)
         if spec.get("new_lfs_spec"):

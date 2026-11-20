@@ -1,0 +1,4 @@
+# two runs of the exporter
+
+RUN-01 [AC-01, AC-02] `python3 src/job.py --export out.csv`: exit 0, escribió 3 filas (ñ, é) en out.csv
+RUN-02 [AC-05] `python3 src/job.py --export /full/out.csv`: exit 1, the previous report is intact

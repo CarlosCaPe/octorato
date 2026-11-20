@@ -1,0 +1,13 @@
+# Run receipts of this spec. One per line, read by scripts/spec_lint.py:
+#   RUN-## [AC-##, AC-##] `<what was executed>`: <what was observed>
+# Run from the repository root.
+
+RUN-01 [AC-01, AC-02, AC-03, AC-04, AC-05, AC-06, AC-10, AC-13, AC-14, AC-15, AC-16, AC-17, AC-18, AC-19, AC-20, AC-23] `python3 scripts/spec_lint.py --selftest registry/fixtures/FLOW.build-loop-excellence`: exit 0, prints "selftest PASS: 56 violation(s) block, 14 benign(s) allow"
+RUN-02 [AC-01, AC-03, AC-13, AC-14, AC-15, AC-16, AC-17, AC-18, AC-19, AC-20, AC-21, AC-22] `python3 -m unittest scripts.tests.test_spec_lint.RunEvidenceTest`: exit 0, 24 tests OK. Thirteen of them break one check each and assert the fixture ladder exits 1; one times 42 lints of a 200,000 character line, each under one second; one compares the three rewritten patterns with their old form on the repository's specs and fixtures plus seeded random text
+RUN-03 [AC-02, AC-04] `python3 scripts/spec_lint.py --selftest registry/fixtures/FLOW.done-is-a-verdict`: exit 0, prints "selftest PASS: 36 violation(s) block, 11 benign(s) allow"
+RUN-04 [AC-07, AC-08, AC-11] `python3 -m unittest scripts/tests/test_sdd_skill_contract.py`: exit 0, 5 tests OK
+RUN-05 [AC-05, AC-06, AC-16, AC-17] `python3 scripts/spec_lint.py docs/specs/202611202139-build-loop-excellence`: exit 0, prints "ok docs/specs/202611202139-build-loop-excellence/feature.md", so the linter accepts this file and finds no run evidence heading left in feature.md
+RUN-06 [AC-09, AC-10] `python3 scripts/brain_doctor.py --fast`: exit 0, claude-md-budget passes at 11,999 of 12,000 and registry-wiring reports all 109 rules wired
+RUN-07 [AC-01, AC-02, AC-03, AC-13, AC-14, AC-19, AC-20] `python3 -m unittest scripts.tests.test_spec_lint.RunEvidenceTest.test_the_cli_refuses_a_flip_until_a_receipt_is_committed`: exit 0. The test runs spec_lint.py --push-range as a subprocess against a repository it builds: exit 1 naming run-evidence.txt on a flip with no file, "holds no run receipt that counts" for the template line, for a receipt behind a form feed, behind a lone carriage return and in a file that is not UTF-8, and no run-evidence finding once a filled receipt is committed, with CRLF line ends, or for the command "todo add milk"
+RUN-08 [AC-12] `grep -c "FLOW.build-loop-excellence" docs/architecture/v9-done-is-a-verdict.md`: exit 0, prints 2
+RUN-09 [AC-22] `python3 scripts/spec_lint.py --selftest registry/fixtures/FLOW.spec-contract`: exit 0, prints "selftest PASS: 25 violation(s) block, 10 benign(s) allow", so the header and marker fixtures read the same with the rewritten patterns

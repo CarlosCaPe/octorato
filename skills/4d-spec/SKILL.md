@@ -95,8 +95,8 @@ runs the full loop through SDD, where `/sdd-converge` gives the verdict and `CON
 excellent.
 
 **What is forced and what is not.** On a spec, `.githooks/pre-push` refuses a
-`Status: converged` flip unless `feature.md` carries at least one run receipt under
-`## Run evidence` (rule `FLOW.build-loop-excellence`). A TRIVIAL or MEDIUM build has no spec,
+`Status: converged` flip unless the spec directory carries a `run-evidence.txt` with at
+least one run receipt and no finding (rule `FLOW.build-loop-excellence`). A TRIVIAL or MEDIUM build has no spec,
 so nothing mechanical forces its loop: it rests on this skill and on the rule in `CLAUDE.md`.
 
 Work nobody else consumes (a scratch script, a private note, an exploration) is outside the
@@ -146,7 +146,7 @@ the code, never a claim by the builder:
    back to step 1 or 3
 5. **4D Gate**: Change Manifest + spec summary + plan summary + analyze verdict
 6. **Execute**: `/sdd-implement` (follows plan, verifies each layer, grades nothing), then
-   RUN the shipped artifact and record each run under `## Run evidence` in `feature.md`
+   RUN the shipped artifact and record each run in `run-evidence.txt` next to `feature.md`
 7. **3D Converge**: `/sdd-converge` as an independent verifier subagent. It judges every
    criterion, re-runs the receipts and makes the excellence pass. `GAPS` appends a
    Convergence section to `plan.md`; go back to step 6. Loop until `CONVERGED`

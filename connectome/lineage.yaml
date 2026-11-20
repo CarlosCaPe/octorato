@@ -283,7 +283,7 @@ edges:
       repeatedly on 2026-06-02/03.
 
   - id: sdd-flow
-    concept: "sdd / spec-driven development / 4d+s / ears-1 spec / task grammar / analyze / converge / done is a verdict / build loop until excellence / run evidence"
+    concept: "sdd / spec-driven development / 4d+s / ears-1 spec / task grammar / analyze / converge / done is a verdict / build loop until excellence / run evidence / run-evidence.txt"
     appears_in:
       - skills/4d-spec/SKILL.md                               # the orchestrator: classifier + LARGE flow
       - skills/sdd-feature/SKILL.md                           # ears-1 spec, Glossary, markers
@@ -307,7 +307,7 @@ edges:
       - registry/rules.yaml                                   # FLOW.spec-contract, FLOW.done-is-a-verdict, FLOW.build-loop-excellence
       - scripts/brain_doctor.py                               # spec-contract check
       - scripts/tests/test_sdd_skill_contract.py              # pins the contract sentences of the skills above
-      - registry/fixtures/FLOW.build-loop-excellence          # run receipt ladder of the push gate
+      - registry/fixtures/FLOW.build-loop-excellence          # run-evidence.txt ladder of the push gate
     kind: appears_in
     note: >-
       Every ears-1 spec lives in docs/specs/<yyyymmddHHMM>-<name>/ from creation
