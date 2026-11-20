@@ -43,6 +43,7 @@ from pathlib import Path
 
 WORD_CAP = 25          # whole shown line, the detail path counted as one word
 _SUFFIX_WORDS = 3      # "· detail: <path>"
+_DETAIL_SEP = " · detail: "
 _SHORT_CAP = WORD_CAP - _SUFFIX_WORDS
 PRUNE_DAYS = 7         # session directories older than this are removed
 _SAFE = re.compile(r"[^A-Za-z0-9_.-]")
@@ -152,11 +153,16 @@ def shown(gate: str, short: str, full: str, payload=None, rule: str = "") -> str
         path = _write_detail(gate, rule, payload, full)
     except Exception:
         return full
-    return f"{one_line(short)} · detail: {path.resolve()}"
+    return f"{one_line(short)}{_DETAIL_SEP}{path.resolve()}"
 
 
 def words(text: str) -> int:
-    return len(str(text or "").split())
+    """Words in a shown line. The detail path counts as ONE word (see WORD_CAP), so a
+    home directory with a space in it ("C:/Users/First Last") cannot push a line over the cap."""
+    head, sep, path = str(text or "").partition(_DETAIL_SEP)
+    if not sep:
+        return len(head.split())
+    return len(head.split()) + 2 + (1 if path.strip() else 0)
 
 
 # ---------------------------------------------------------------------------
