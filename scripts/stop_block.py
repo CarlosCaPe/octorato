@@ -159,9 +159,10 @@ def shown(gate: str, short: str, full: str, payload=None, rule: str = "") -> str
 def words(text: str) -> int:
     """Words in a shown line. The detail path counts as ONE word (see WORD_CAP), so a
     home directory with a space in it ("C:/Users/First Last") cannot push a line over the cap."""
-    head, sep, path = str(text or "").partition(_DETAIL_SEP)
+    text = str(text or "")
+    head, sep, path = text.rpartition(_DETAIL_SEP)  # only the final suffix is discounted
     if not sep:
-        return len(head.split())
+        return len(text.split())
     return len(head.split()) + 2 + (1 if path.strip() else 0)
 
 
