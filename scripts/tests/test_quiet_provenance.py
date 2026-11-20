@@ -75,12 +75,13 @@ class LedgerCli(_Home):
         cli = [sys.executable, str(SCRIPTS / "provenance_ledger.py")]
         cp = subprocess.run(cli + ["record", "--basis", "git log", "--engine", "main loop",
                                    "--verdict", "LOAD"], capture_output=True, text=True,
-                            env=dict(os.environ))
+                            encoding="utf-8", env=dict(os.environ))
         self.assertEqual(cp.returncode, 0, cp.stderr)
         rows = provenance_ledger.entries(SESSION)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["verdict"], "LOAD")
-        cp = subprocess.run(cli + ["show"], capture_output=True, text=True, env=dict(os.environ))
+        cp = subprocess.run(cli + ["show"], capture_output=True, text=True, encoding="utf-8",
+                            env=dict(os.environ))
         self.assertEqual(cp.stdout.strip(), "Provenance: Basis: git log · Engine: main loop · 2D: LOAD")
 
     def test_record_without_session_fails(self):
