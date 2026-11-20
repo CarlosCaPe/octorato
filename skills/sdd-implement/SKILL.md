@@ -49,6 +49,22 @@ anywhere else. The process that wrote the code is the worst judge of whether it 
 the spec. Run the full test suite once at the end and report its result; `/sdd-converge`
 decides completion.
 
+### 5b. Run It for Real
+Tests passing is not the artifact working. Before you hand over, execute what you built the
+way its consumer will (the CLI with real arguments, the app, the endpoint, the rendered
+document) and record each run in `feature.md` under `## Run evidence`, one line per run:
+
+```markdown
+## Run evidence
+
+- RUN-01 [AC-01, AC-02] `<the exact command or action>`: <exit code and what you observed>
+```
+
+A receipt is a claim the verifier reproduces, not a grade: it says what you ran and what
+came back, never that a criterion is met. Reading the code is not a run. When a run shows a
+defect, fix it and run again before recording. The push gate refuses `Status: converged` on
+a spec with no receipt (rule `FLOW.build-loop-excellence`).
+
 If the plan carries a `## Convergence <n>` section with open tasks, work through those tasks
 the same way as the original ones.
 

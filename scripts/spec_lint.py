@@ -30,6 +30,12 @@ What it checks, per spec directory (a `feature.md`, optionally a `plan.md`):
     - at most 3 NEEDS CLARIFICATION markers; with --ready, zero. A marker is
       `[NEEDS CLARIFICATION]` or `[NEEDS CLARIFICATION: ...]`, any case, and
       may span lines
+    - a `## Run evidence` section is optional until the spec converges. When it
+      is there, every `RUN-##` bullet in it is a run receipt
+      `- RUN-## [AC-##, AC-##] `<what was executed>`: <what was observed>`,
+      with a unique id and criteria that exist. A receipt records one real
+      execution of the shipped artifact (the CLI, the app, the endpoint, the
+      rendered document), never a reading of its code
 
   plan.md (when present)
     - every task line is `- [ ] T## [AC-##, AC-##] <path>, <path>: <action>`;
@@ -55,7 +61,12 @@ Push gate (v9 phase 3, called by .githooks/pre-push once per pushed ref):
     - for every ears-1 spec whose `Status:` header becomes `converged` in the
       range, requires a plan.md and the latest anchored converge receipt for
       that spec directory to say CONVERGED, with a transcript timestamp newer
-      than the newest code commit on the branch (AC-14)
+      than the newest code commit on the branch (AC-14), and requires the
+      spec to carry at least one run receipt in `## Run evidence` (rule
+      FLOW.build-loop-excellence). Stated: the linter reads the receipt's
+      shape, it cannot tell whether the command ran; the converge verifier
+      re-runs the receipts, and a spec that converged before this check is
+      not asked again
     - refuses a spec that stops being ears-1, and a docs/specs/ directory not
       named <yyyymmddHHMM>-<slug>
     The pushed head is compared, as one tree diff, with its merge base with the
@@ -69,6 +80,7 @@ Usage:
   spec_lint.py --push-range <base> <head>
   spec_lint.py --selftest registry/fixtures/FLOW.spec-contract
   spec_lint.py --selftest registry/fixtures/FLOW.done-is-a-verdict
+  spec_lint.py --selftest registry/fixtures/FLOW.build-loop-excellence
 
 Exit: 0 clean or skipped, 1 findings, 2 usage error.
 
@@ -130,6 +142,9 @@ _TASK = re.compile(
     r"^- \[[ xX]\] (T\d{2,}) \[(AC-\d+(?:, AC-\d+)*)\] (\S[^:]*?): (\S.*)$"
 )
 _CONVERGENCE = re.compile(r"^## Convergence\b")
+RUN_SECTION = "Run evidence"
+_RUN_START = re.compile(r"^\s*[-*+] (?:\[[ xX]\] )?RUN-\d+\b")
+_RUN = re.compile(r"^- (RUN-\d{2,}) \[(AC-\d+(?:, AC-\d+)*)\] `([^`]*\S[^`]*)`: (\S.*)$")
 
 
 @dataclass
@@ -175,6 +190,43 @@ def _ears_subject(sentence: str):
         if m:
             return m.group(1)
     return None
+
+
+def _run_section(lines: list):
+    """The lines under `## Run evidence` (heading matched without regard to case),
+    or None when the spec has no such section."""
+    for name, body in _sections(lines).items():
+        if name.casefold() == RUN_SECTION.casefold():
+            return body
+    return None
+
+
+def run_receipts(text) -> list:
+    """The well-formed run receipt ids of a feature.md, in order. A receipt inside a
+    fenced block is quoted grammar, not a receipt."""
+    body = _run_section(_readable_lines(text or "")) or []
+    return [m.group(1) for _i, line in body if (m := _RUN.match(line))]
+
+
+def _lint_run_evidence(feature: Path, lines: list, criteria: dict, report: Report) -> None:
+    """Shape only: a receipt names what was executed and what was observed. Whether a
+    spec NEEDS one is decided at the push that flips it to converged."""
+    seen: dict = {}
+    for i, line in _run_section(lines) or []:
+        if not _RUN_START.match(line):
+            continue
+        m = _RUN.match(line)
+        if not m:
+            report.add(feature, i, "run receipt does not follow "
+                                   "`- RUN-## [AC-##] `<what was executed>`: <what was observed>`")
+            continue
+        rid = m.group(1)
+        if rid in seen:
+            report.add(feature, i, f"{rid} duplicates line {seen[rid]}")
+        seen[rid] = i
+        for ac in m.group(2).split(", "):
+            if ac not in criteria:
+                report.add(feature, i, f"{rid} references unknown criterion {ac}")
 
 
 def _header_lines(text: str, loose: re.Pattern) -> list:
@@ -259,6 +311,8 @@ def lint_feature(feature: Path, report: Report, ready: bool) -> set:
 
     if "Acceptance Criteria" in secs and not ids:
         report.add(feature, 1, "`## Acceptance Criteria` holds no criterion")
+
+    _lint_run_evidence(feature, lines, ids, report)
 
     # Markers are counted over the joined text so one split across lines counts.
     body = "\n".join(_INLINE_CODE.sub("", line) for _i, line in lines)
@@ -590,6 +644,14 @@ def push_findings(repo: Path, base: str, head: str) -> list:
             continue
         if spec_status(feature_before) == "converged":
             continue
+        # FLOW.build-loop-excellence: "converged" claims the artifact was run, so the
+        # spec carries the receipt of that run. Not a `continue`: a flip missing both
+        # the run receipt and the verdict is told both.
+        if not run_receipts(feature_now):
+            findings.append(f"{sd}: Status becomes converged, but feature.md has no run "
+                            f"receipt under `## {RUN_SECTION}`. Run the shipped artifact "
+                            f"for real and record it as `- RUN-## [AC-##] `<what was "
+                            f"executed>`: <what was observed>`, then run /sdd-converge.")
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import receipt_ledger
         receipt = receipt_ledger.converge_latest_for(sd)

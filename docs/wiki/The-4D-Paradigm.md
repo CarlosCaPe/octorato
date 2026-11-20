@@ -282,7 +282,8 @@ Score the task against these signals and sum the points:
 | 1D Describe | Becomes an ears-1 `feature.md`: EARS criteria, Glossary, at most 3 open markers | LARGE only |
 | 2D Delegate | No change — delegate-check still runs | Always |
 | 4D Gate | Manifest now *includes* the `plan.md` task list | MEDIUM+ |
-| 3D Diligent | Adds the converge loop (done is a verdict) and a 7-dimension quality review | LARGE only |
+| 3D Diligent | Adds the build loop: run the shipped artifact for real, keep the receipt, exit only on an independent verifier's `EXCELLENT` | Anything built for another entity, at any score |
+| 3D Diligent | Adds the converge loop (done is a verdict, and converged means excellent) and a 7-dimension quality review | LARGE only |
 | 4D Disclose | Adds an archive step for institutional memory | LARGE only |
 
 ### The LARGE pipeline (score 6+)
@@ -293,8 +294,8 @@ Score the task against these signals and sum the points:
 2S Plan             → /sdd-plan     → plan.md (max 20 tasks, T## [AC-##] grammar)
 2S Analyze          → /sdd-analyze  (independent verifier, READY or FIX-FIRST)
 4D Gate             → Change Manifest + spec summary + plan summary + analyze verdict
-Execute             → /sdd-implement (verifies each layer, grades nothing)
-3D Converge         → /sdd-converge (independent verifier, GAPS loops back to Execute)
+Execute             → /sdd-implement (verifies each layer, runs it for real, grades nothing)
+3D Converge         → /sdd-converge (independent verifier, re-runs the receipts, GAPS loops back to Execute)
 3D Review           → /sdd-review   (7 quality dimensions, quotes the converge verdict)
 4D Disclose         → impact radius + converge and review verdicts
 Archive             → /sdd-archive  (requires CONVERGED; the spec stays in docs/specs/<ts>-<name>/)

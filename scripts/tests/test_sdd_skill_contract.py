@@ -90,6 +90,27 @@ CONTRACT = [
     ("AC-22", "sdd-yolo",
      [r"The spec directory `docs/specs/<yyyymmddHHMM>-<feature-name>/` stays where it is"],
      []),
+    # Build loop until excellence (docs/specs/202611202139-build-loop-excellence).
+    ("BL AC-07", "sdd-converge",
+     [r"you RAN the shipped artifact and observed the behaviour hold",
+      r"`unrun` is a gap too",
+      r"Re-run every receipt under `## Run evidence`",
+      r"All five `pass` is `EXCELLENT`",
+      r"CONVERGE-EXCELLENCE: EXCELLENT \| NOT-YET",
+      r"`CONVERGED` only when every criterion is `met` and the excellence pass says `EXCELLENT`"],
+     [r"You ran or read something"]),
+    ("BL AC-08", "4d-spec",
+     [r"goes round this loop at any score",
+      r"imagine → think → plan → execute → test → RUN → verdict",
+      r"RUN is not test and not reading",
+      r"The builder never grades its own work",
+      r"TRIVIAL and MEDIUM run the light loop: test, run receipt, verifier verdict",
+      r"nothing mechanical forces its loop"],
+     []),
+    ("BL AC-11", "sdd-implement",
+     [r"record each run in `feature\.md` under `## Run evidence`",
+      r"Reading the code is not a run"],
+     []),
 ]
 
 # AC-18: the order the orchestrator names the steps in, inside its LARGE section.

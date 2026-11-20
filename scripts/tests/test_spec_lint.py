@@ -370,5 +370,31 @@ class LiveSpecTest(unittest.TestCase):
         self.assertGreaterEqual(checked, 1, "no ears-1 spec found in docs/specs or docs/specs-archive")
 
 
+RUN_FIXTURES = ROOT / "registry" / "fixtures" / "FLOW.build-loop-excellence"
+
+
+class RunEvidenceTest(unittest.TestCase):
+    """FLOW.build-loop-excellence: a spec converges only with a run receipt."""
+
+    def test_run_fixture_ladder_passes(self):
+        self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 0)
+
+    def test_selftest_goes_red_when_any_spec_counts_as_run(self):
+        # Break the thing the gate guards: every flip reads as carrying a receipt.
+        with mock.patch.object(spec_lint, "run_receipts", lambda text: ["RUN-01"]):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_when_the_receipt_shape_is_not_read(self):
+        with mock.patch.object(spec_lint, "_lint_run_evidence", lambda *a, **k: None):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_receipts_are_read_under_a_miscased_heading_and_never_in_a_fence(self):
+        line = "- RUN-01 [AC-01] `tool --flag`: exit 0, wrote out.csv"
+        self.assertEqual(spec_lint.run_receipts(f"## run EVIDENCE\n\n{line}\n"), ["RUN-01"])
+        self.assertEqual(spec_lint.run_receipts(f"## Run evidence\n\n```\n{line}\n```\n"), [])
+        self.assertEqual(spec_lint.run_receipts(f"## Notes\n\n{line}\n"), [])
+        self.assertEqual(spec_lint.run_receipts(None), [])
+
+
 if __name__ == "__main__":
     unittest.main()

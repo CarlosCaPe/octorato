@@ -260,17 +260,11 @@ The heartbeat (`scripts/connectome-heartbeat.py`) makes Q1 involuntary. It surfa
 
 ### 4D+S — Spec-Driven Enhancement
 
-For tasks above TRIVIAL complexity, 4D integrates with SDD via the `4d-spec` orchestrator skill:
+`4d-spec` scores a task: 0-2 TRIVIAL (4D only), 3-5 MEDIUM (4D + `plan.md`, max 20 tasks), 6+ LARGE (full SDD, implement ⇄ converge). Signals and workflow: `skills/4d-spec/SKILL.md`.
 
-| Score | Level | What activates |
-|---|---|---|
-| 0-2 | TRIVIAL | 4D only |
-| 3-5 | MEDIUM | 4D + `plan.md` |
-| 6+ | LARGE | 4D + full SDD (`feature.md` + `plan.md` + analyze + implement ⇄ converge + `review.md` + archive) |
+**Done is a verdict.** On LARGE tasks the builder never grades its own work. Specs declare `Spec-Format: ears-1`, live in `docs/specs/<yyyymmddHHMM>-<name>/` and pass `scripts/spec_lint.py`. `sdd-analyze` and `sdd-converge` run as independent judgment-tier verifiers, and `.githooks/pre-push` refuses a `Status: converged` flip without a newer CONVERGED receipt (rules `FLOW.spec-contract`, `FLOW.done-is-a-verdict`). Contract and residuals: `docs/architecture/v9-done-is-a-verdict.md`.
 
-Signals: +2 touches 4-10 files, +4 touches 10+, +2 new feature, +3 architecture decision, +2 multi-module, +5 user requests spec. Max 20 planned tasks per plan.md (Convergence sections appended by the converge pass do not count). SDD artifacts NEVER at brain root. Full classifier + workflow in `skills/4d-spec/SKILL.md`.
-
-**Done is a verdict (v9).** On LARGE tasks the builder never grades its own work. Specs declare `Spec-Format: ears-1`, live in `docs/specs/<yyyymmddHHMM>-<feature-name>/` from creation, and pass `scripts/spec_lint.py`. `sdd-analyze` and `sdd-converge` run as independent judgment-tier verifiers, and `.githooks/pre-push` refuses a `Status: converged` flip without a newer CONVERGED receipt (rules `FLOW.spec-contract`, `FLOW.done-is-a-verdict`). Contract and residuals: `docs/architecture/v9-done-is-a-verdict.md`.
+**ULTRA RULE: Build loop until excellence.** Anything built for another entity (person, client, agent, API consumer) loops at any score: imagine, think, plan, execute, test, RUN, again. RUN is a receipt from executing the shipped artifact (CLI, app, endpoint, rendered doc), never from reading its code. Exit: an independent judgment-tier verifier's `EXCELLENT`, not "criteria met". Below LARGE it is light (test, run receipt, verdict). A `converged` flip with no `## Run evidence` receipt is refused at push (`FLOW.build-loop-excellence`).
 
 ### Enforcement Scripts (Mandatory)
 
