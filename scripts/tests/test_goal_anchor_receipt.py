@@ -102,8 +102,13 @@ def _run_gate(payload: dict, home: Path, extra_env: dict | None = None) -> tuple
     cp = subprocess.run([sys.executable, str(GATE)], input=json.dumps(payload), capture_output=True,
                         text=True, env=env, timeout=60)
     # A block names its detail file under this run's HOME (scripts/stop_block.py);
-    # the decision is what is compared, so the HOME path is normalised.
-    return cp.returncode, cp.stdout.replace(str(home), "<HOME>")
+    # the decision is what is compared, so the HOME path is normalised: as given and as
+    # stop_block prints it (resolved, so a Windows 8.3 temp path comes out in long form),
+    # raw and JSON-escaped (a Windows path has escaped backslashes inside the reason).
+    out = cp.stdout
+    for form in {str(home.resolve()), str(home)}:
+        out = out.replace(json.dumps(form)[1:-1], "<HOME>").replace(form, "<HOME>")
+    return cp.returncode, out
 
 
 class LiveSession:
