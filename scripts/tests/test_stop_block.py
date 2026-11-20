@@ -176,6 +176,11 @@ class LibraryTest(unittest.TestCase):
                             capture_output=True, text=True, timeout=30)
         self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
 
+    def test_detail_path_with_spaces_is_one_word(self):
+        line = r"X GATE: a b c · detail: C:\Users\First Last\.claude\.cache\x.txt"
+        self.assertEqual(stop_block.words(line), 5 + 2 + 1)
+        self.assertEqual(stop_block.words("no detail here"), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

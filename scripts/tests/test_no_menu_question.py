@@ -332,7 +332,7 @@ class QaRoundThreeTest(unittest.TestCase):
         # 0.2 s limit failed on a heavily loaded machine (load avg ~15) for
         # unchanged code, and even a wall-clock ratio swung to 22x there.
         # process_time() ignores scheduler waits; ReDoS is CPU-bound.
-        # Time each shape at size k and 8k (best of 5 to drop scheduler
+        # Time each shape at size k and 8k (best of 3 to drop scheduler
         # noise); linear scan grows ~8x, quadratic ~64x, so a 20x bound
         # separates them with margin. The 2 s ceiling still catches
         # catastrophic backtracking outright.
@@ -343,20 +343,31 @@ class QaRoundThreeTest(unittest.TestCase):
                   lambda k: "do you " + "see " * (k // 4) + "or b?",
                   lambda k: "¿se " + "se " * (k // 3) + "abre o b?")
 
+        def per_call(txt):
+            # Repeat until the CPU clock has advanced well past its tick: on
+            # Windows process_time() moves in ~15.6 ms steps, so one fast call
+            # reads 0 and a slightly slower one reads a whole tick.
+            n = 1
+            while True:
+                c0 = time.process_time()
+                for _ in range(n):
+                    self.g.find_menu("Listo. " + txt, self.cfg)
+                dt = time.process_time() - c0
+                if dt >= 0.2 or n >= 1 << 14:
+                    return dt / n
+                n *= 2
+
         def best(txt):
-            cpu, wall = [], []
-            for _ in range(5):
-                c0, w0 = time.process_time(), time.perf_counter()
-                self.g.find_menu("Listo. " + txt, self.cfg)
-                cpu.append(time.process_time() - c0)
-                wall.append(time.perf_counter() - w0)
-            return min(cpu), min(wall)
+            cpu = min(per_call(txt) for _ in range(3))
+            w0 = time.perf_counter()
+            self.g.find_menu("Listo. " + txt, self.cfg)
+            return cpu, time.perf_counter() - w0
 
         for i, shape in enumerate(shapes):
             with self.subTest(shape=i):
                 (small, _), (large, large_wall) = best(shape(2500)), best(shape(20000))
                 self.assertLess(large_wall, 2.0)
-                self.assertLess(large, 20 * max(small, 1e-3))
+                self.assertLess(large, 20 * max(small, 1e-6))
 
 
 class ConfigTest(unittest.TestCase):
