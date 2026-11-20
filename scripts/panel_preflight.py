@@ -122,7 +122,10 @@ def _minimal_transcript(text: str) -> str:
 
 
 def _session() -> str:
-    return (os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID") or "").strip()
+    """The session whose provenance ledger the draft is judged against, with
+    the precedence provenance_ledger.current_session uses everywhere."""
+    import provenance_ledger
+    return provenance_ledger.current_session()
 
 
 def _child_env() -> dict:
@@ -170,26 +173,30 @@ def _run_one(script: str, tail: list, timeout: int, payload: dict, cwd: str) -> 
     return {"gate": script, "verdict": v, "reason": reason}
 
 
-def fresh_entry(transcript: Path | None) -> dict | None:
-    """This session's provenance-ledger entry newer than the operator prompt
-    of `transcript`, or None (no session, no transcript, or a lookup error)."""
+def ledger_view(text: str, transcript: Path | None) -> tuple:
+    """(entries, bound_text, error) for the draft: the provenance-ledger
+    entries that count for it and the text the reply digest is over
+    (provenance_ledger.reply_view). A lookup error is returned, never
+    swallowed: the Stop gate fails closed on it, so the preflight reports
+    FAIL and blocks."""
     if transcript is None:
-        return None
+        return [], text, ""
     try:
         import provenance_ledger
-        return provenance_ledger.fresh_for_transcript(_session(), str(transcript))
-    except Exception:
-        return None
+        got, bound = provenance_ledger.reply_view(_session(), str(transcript), text)
+        return got, bound, ""
+    except Exception as e:
+        return [], text, f"{type(e).__name__}: {e}"
 
 
-def source_class(text: str, entry: dict | None = None) -> tuple:
+def source_class(text: str, entries=()) -> tuple:
     """(class, quorum) from the reply-panel gate's own classifier."""
     spec = importlib.util.spec_from_file_location("_pf_reply_panel", _HERE / _GATE)
     if spec is None or spec.loader is None:
         raise PreflightError(f"cannot load {_GATE}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    cls = mod.source_class(text, entry)
+    cls = mod.source_class(text, list(entries or ()))
     return cls, mod.QUORUM[cls]
 
 
@@ -216,12 +223,17 @@ def run(text: str, transcript: str | None = None, hooks_json: Path | None = None
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(hooks))) as ex:
             futs = [ex.submit(_run_one, s, t, to, payload, os.getcwd()) for s, t, to in hooks]
             results = [f.result() for f in futs]
-        entry = fresh_entry(tp if src is not None else None)
+        entries, bound, err = ledger_view(text, tp if src is not None else None)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    cls, quorum = source_class(text, entry)
-    return {"results": results, "blocked": [r for r in results if r["verdict"] == "BLOCK"],
-            "class": cls, "quorum": quorum, "context": context}
+    if err:
+        results.append({"gate": "provenance ledger", "verdict": "FAIL",
+                        "reason": f"unreadable, the reply panel fails closed on it ({err})"})
+    cls, quorum = source_class(text, entries)
+    return {"results": results,
+            "blocked": [r for r in results if r["verdict"] in ("BLOCK", "FAIL")],
+            "class": cls, "quorum": quorum, "context": context,
+            "entries": entries, "bound": bound}
 
 
 def report(res: dict) -> str:

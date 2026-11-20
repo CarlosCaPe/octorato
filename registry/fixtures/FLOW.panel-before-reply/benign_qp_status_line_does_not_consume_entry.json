@@ -1,0 +1,23 @@
+{
+  "session_id": "fx-rp-benign-qp-status-line-does-not-consume-entry",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "The migration ran on the staging copy and the row counts match the source table. Two warnings remain, both about deprecated flags, and neither blocks the release. The rollback script is untested.",
+  "transcript_path": "benign_qp_status_line_does_not_consume_entry_transcript.jsonl",
+  "_fixture": {
+    "receipts": [
+      {
+        "verdict": "PASS",
+        "ts": "2026-10-14T10:04:00.000Z",
+        "text": "The migration ran on the staging copy and the row counts match the source table. Two warnings remain, both about deprecated flags, and neither blocks the release. The rollback script is untested.\nProvenance: Basis: migration.log"
+      }
+    ],
+    "provenance": [
+      {
+        "ts": "2026-10-14T10:01:30.000Z",
+        "basis": "migration.log"
+      }
+    ]
+  }
+}

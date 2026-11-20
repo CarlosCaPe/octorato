@@ -9,15 +9,18 @@
     "receipts": [
       {
         "verdict": "PASS",
-        "ts": "2026-10-14T10:02:00.000Z"
+        "ts": "2026-10-14T10:03:40.000Z",
+        "text": "The migration ran on the staging copy and the row counts match the source table. Two warnings remain, both about deprecated flags, and neither blocks the release. The rollback script is untested.\nProvenance: Basis: own reasoning"
       },
       {
         "verdict": "PASS",
-        "ts": "2026-10-14T10:03:00.000Z"
+        "ts": "2026-10-14T10:03:50.000Z",
+        "text": "The migration ran on the staging copy and the row counts match the source table. Two warnings remain, both about deprecated flags, and neither blocks the release. The rollback script is untested.\nProvenance: Basis: own reasoning"
       },
       {
         "verdict": "PASS",
-        "ts": "2026-10-14T10:04:00.000Z"
+        "ts": "2026-10-14T10:04:00.000Z",
+        "text": "The migration ran on the staging copy and the row counts match the source table. Two warnings remain, both about deprecated flags, and neither blocks the release. The rollback script is untested.\nProvenance: Basis: own reasoning"
       }
     ],
     "provenance": [

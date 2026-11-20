@@ -1,0 +1,6 @@
+{
+  "session_id": "fx-cs-qp-future",
+  "transcript_path": "violation_qp_future_entry_transcript.jsonl",
+  "last_assistant_message": "The migration ran on the staging copy and the row counts match the source table.",
+  "stop_hook_active": false
+}

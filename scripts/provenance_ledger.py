@@ -33,11 +33,22 @@ CLI
 Exit 0 on success, 2 on a usage or write error.
 
 LIBRARY
-  ledger_path(), record(...), entries(session_id), fresh(session_id, after),
-  footer_line(entry), prompt_ts(transcript), fresh_for_transcript(session_id,
-  transcript). `fresh` takes the prompt timestamp the caller already holds;
-  `prompt_ts` reads it with the reply panel's own prompt walk (loaded by file
-  name, never copied), so "newer than the operator's prompt" means one thing.
+  ledger_path(), record(...), entries(session_id), fresh_all(session_id,
+  after, now), reply_anchor(prompt_ts, turn_entries, text), footer_line(entry),
+  prompt_ts(transcript), reply_view(session_id, transcript, text).
+
+FRESH (one definition, used by every reader)
+  An entry counts for a reply when its ts is strictly newer than the anchor
+  (the operator prompt, or a later full reply of the same turn that already
+  ended a stop: reply_anchor) and not later than now + FUTURE_SKEW_S. ALL
+  such entries count; the reply panel lets any SELF Basis win.
+
+BOUND TO THE RECEIPT
+  When the reply carries no visible footer, the reply panel's digest is over
+  the reply text plus the rendered footer line of every entry used
+  (bound_reply_text in g__stop__reply-panel.py), and panel_digest.py
+  --panel-request --to operator prints that same text in the reviewed block.
+  A later record changes the digest and voids the PASS.
 """
 from __future__ import annotations
 
@@ -126,19 +137,70 @@ def entries(session_id: str) -> list:
     return out
 
 
-def fresh(session_id: str, after: str) -> dict | None:
-    """The newest entry of `session_id` whose ts is strictly newer than
-    `after` (the operator prompt's timestamp), or None. No session or an
-    unparseable `after` is None: nothing can be proven fresh."""
+# An entry stamped later than now by more than this is refused: a forged or
+# clock-skewed future ts would otherwise stay "fresh" for every later prompt.
+FUTURE_SKEW_S = 120
+# Assistant text longer than this many words is a reply, not a status line
+# (the reply panel's STATUS_CAP); a reply that ended a stop consumes the
+# entries recorded before it.
+REPLY_MIN_WORDS = 31
+
+
+def fresh_all(session_id: str, after: str, now=None) -> list:
+    """Every entry of `session_id` with `after` < ts <= now + FUTURE_SKEW_S,
+    oldest first. No session or an unparseable `after` is []: nothing can be
+    proven fresh. `now` defaults to the wall clock."""
     bound = _ts(after)
     if not session_id or bound is None:
-        return None
-    best = None
-    for e in entries(session_id):
-        t = _ts(e["ts"])
-        if t > bound and (best is None or t >= _ts(best["ts"])):
-            best = e
-    return best
+        return []
+    from datetime import timedelta
+    ceiling = (now or datetime.now(timezone.utc)) + timedelta(seconds=FUTURE_SKEW_S)
+    got = [e for e in entries(session_id) if bound < _ts(e["ts"]) <= ceiling]
+    return sorted(got, key=lambda e: _ts(e["ts"]))
+
+
+def fresh(session_id: str, after: str, now=None) -> dict | None:
+    """The newest of fresh_all(...), or None."""
+    got = fresh_all(session_id, after, now)
+    return got[-1] if got else None
+
+
+def _norm(text: str) -> str:
+    return " ".join(str(text or "").split())
+
+
+def _assistant_text(entry: dict) -> str:
+    c = (entry.get("message") or {}).get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "\n".join(b.get("text", "") for b in c
+                         if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str))
+    return ""
+
+
+def reply_anchor(prompt_ts: str, turn_entries: list, current_text: str) -> str:
+    """The bound an entry must be newer than: the operator prompt, or a later
+    assistant REPLY of the same turn that already ended a stop. A reply here
+    is assistant text of at least REPLY_MIN_WORDS words, not equal to the
+    current reply, followed by a later user-side entry (tool result,
+    notification, hand-back), which is what an earlier stop leaves. Status
+    lines (shorter) do not consume entries, so record -> panel request ->
+    status line -> notification -> reply keeps its entry."""
+    anchor, cur = prompt_ts, _norm(current_text)
+    pending = None
+    for e in turn_entries or []:
+        if not isinstance(e, dict):
+            continue
+        if e.get("type") == "assistant":
+            t = _assistant_text(e)
+            if t and len(t.split()) >= REPLY_MIN_WORDS and _norm(t) != cur and e.get("timestamp"):
+                pending = str(e["timestamp"])
+        elif e.get("type") == "user" and pending:
+            if _ts(pending) and (_ts(anchor) is None or _ts(pending) > _ts(anchor)):
+                anchor = pending
+            pending = None
+    return anchor
 
 
 def footer_line(entry: dict) -> str:
@@ -149,25 +211,39 @@ def footer_line(entry: dict) -> str:
     return "Provenance: " + " · ".join(parts)
 
 
+def _reply_panel():
+    spec = importlib.util.spec_from_file_location("_pl_reply_panel", _HERE / _REPLY_PANEL)
+    if spec is None or spec.loader is None:
+        raise LedgerError(f"cannot load {_REPLY_PANEL}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def prompt_ts(transcript: str) -> str | None:
     """Timestamp of the operator prompt behind this turn, read with the reply
     panel's own walk (prompt_read). None when it cannot be placed."""
-    spec = importlib.util.spec_from_file_location("_pl_reply_panel", _HERE / _REPLY_PANEL)
-    if spec is None or spec.loader is None:
-        return None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    ctx = mod.load()
-    p = mod.prompt_read(ctx, transcript)
+    mod = _reply_panel()
+    p = mod.prompt_read(mod.load(), transcript)
     return (p or {}).get("ts") or None
 
 
-def fresh_for_transcript(session_id: str, transcript: str) -> dict | None:
-    """fresh(session_id, prompt_ts(transcript)); None when either is missing."""
+def reply_view(session_id: str, transcript: str, text: str) -> tuple:
+    """(entries, bound_text) for a reply `text` judged against `transcript`,
+    computed by the reply panel's own functions (ledger_entries,
+    bound_reply_text), so the panel request, the preflight and the Stop gates
+    read one thing. No session, no transcript or no operator prompt is
+    ([], text). Errors propagate: each caller decides (fail closed or open)."""
     if not session_id or not transcript:
-        return None
-    ts = prompt_ts(transcript)
-    return fresh(session_id, ts) if ts else None
+        return [], text
+    mod = _reply_panel()
+    ctx = mod.load()
+    prompt = mod.prompt_read(ctx, transcript)
+    if prompt is None:
+        return [], text
+    turn, newest = mod.turn_after(ctx, transcript, prompt["uuid"])
+    got = mod.ledger_entries(session_id, prompt["ts"], turn, text, mod._now(ctx, newest))
+    return got, mod.bound_reply_text(text, got)
 
 
 # ---------------------------------------------------------------------------
@@ -221,16 +297,34 @@ def _selftest() -> int:
         record("s1", ts="2026-10-14T10:00:00.000Z", basis="old.log")
         record("s1", ts="2026-10-14T10:05:00.000Z", basis="new.log", engine="main loop")
         record("s2", ts="2026-10-14T10:06:00.000Z", basis="other session")
-        e = fresh("s1", "2026-10-14T10:01:00.000Z")
-        if not e or e["basis"] != "new.log":
-            fails.append(f"fresh picked {e!r}, want new.log")
-        if fresh("s1", "2026-10-14T10:05:00.000Z") is not None:
-            fails.append("an entry equal to the prompt counted as newer")
-        if fresh("s3", "2026-10-14T09:00:00.000Z") is not None:
+        from datetime import datetime as _dt
+        now = _dt.fromisoformat("2026-10-14T10:10:00+00:00")
+        got = fresh_all("s1", "2026-10-14T10:01:00.000Z", now)
+        if [x["basis"] for x in got] != ["new.log"]:
+            fails.append(f"fresh_all picked {got!r}, want [new.log]")
+        if fresh_all("s1", "2026-10-14T09:00:00.000Z", now)[0]["basis"] != "old.log":
+            fails.append("fresh_all did not return every fresh entry, oldest first")
+        if fresh_all("s1", "2026-10-14T10:05:00.000Z", now):
+            fails.append("an entry equal to the anchor counted as newer")
+        if fresh_all("s3", "2026-10-14T09:00:00.000Z", now):
             fails.append("another session's entry was returned")
-        if fresh("s1", "not a time") is not None:
-            fails.append("an unparseable prompt time proved freshness")
-        line = footer_line(e or {})
+        if fresh_all("s1", "not a time", now):
+            fails.append("an unparseable anchor proved freshness")
+        record("s4", ts="2026-10-14T10:20:00.000Z", basis="future")
+        if fresh_all("s4", "2026-10-14T09:00:00.000Z", now):
+            fails.append("an entry stamped beyond now + FUTURE_SKEW_S counted")
+        long_reply = " ".join(["word"] * REPLY_MIN_WORDS)
+        turn = [{"type": "assistant", "timestamp": "2026-10-14T10:02:00.000Z",
+                 "message": {"content": [{"type": "text", "text": long_reply}]}},
+                {"type": "user", "timestamp": "2026-10-14T10:02:30.000Z"}]
+        if reply_anchor("2026-10-14T10:00:00.000Z", turn, "the current reply") != "2026-10-14T10:02:00.000Z":
+            fails.append("a full reply that ended a stop did not move the anchor")
+        if reply_anchor("2026-10-14T10:00:00.000Z", turn[:1], "x") != "2026-10-14T10:00:00.000Z":
+            fails.append("a reply with no later user-side entry moved the anchor")
+        if reply_anchor("2026-10-14T10:00:00.000Z", turn, long_reply) != "2026-10-14T10:00:00.000Z":
+            fails.append("the current reply itself moved the anchor")
+        e = got[-1] if got else {}
+        line = footer_line(e)
         if line != "Provenance: Basis: new.log · Engine: main loop":
             fails.append(f"footer_line gave {line!r}")
     finally:
@@ -244,7 +338,7 @@ def _selftest() -> int:
     if fails:
         print("selftest FAIL (provenance_ledger.py): " + "; ".join(fails), file=sys.stderr)
         return 1
-    print("selftest PASS: 6 unit checks (provenance_ledger.py)")
+    print("selftest PASS: 11 unit checks (provenance_ledger.py)")
     return 0
 
 

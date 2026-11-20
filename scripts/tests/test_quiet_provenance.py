@@ -100,19 +100,32 @@ class Classifier(unittest.TestCase):
         self.assertEqual(RP.source_class("The tests pass."), "SELF")
 
     def test_sourced_entry_is_sourced(self):
-        self.assertEqual(RP.source_class("The tests pass.", {"basis": "git log"}), "SOURCED")
+        self.assertEqual(RP.source_class("The tests pass.", [{"basis": "git log"}]), "SOURCED")
 
     def test_self_entry_is_self(self):
         for basis in ("", "own reasoning", "myself", "none", "---", "razonamiento propio"):
-            self.assertEqual(RP.source_class("The tests pass.", {"basis": basis}), "SELF", basis)
+            self.assertEqual(RP.source_class("The tests pass.", [{"basis": basis}]), "SELF", basis)
+
+    def test_any_self_entry_wins_in_any_order(self):
+        for order in ([{"basis": "own reasoning"}, {"basis": "git log"}],
+                      [{"basis": "git log"}, {"basis": "own reasoning"}]):
+            self.assertEqual(RP.source_class("The tests pass.", order), "SELF")
 
     def test_self_entry_beats_sourced_footer(self):
         text = "The tests pass.\n\nProvenance: Basis: git log\n"
-        self.assertEqual(RP.source_class(text, {"basis": "own reasoning"}), "SELF")
+        self.assertEqual(RP.source_class(text, [{"basis": "own reasoning"}]), "SELF")
 
     def test_self_footer_beats_sourced_entry(self):
         text = "The tests pass.\n\nProvenance: Basis: own reasoning\n"
-        self.assertEqual(RP.source_class(text, {"basis": "git log"}), "SELF")
+        self.assertEqual(RP.source_class(text, [{"basis": "git log"}]), "SELF")
+
+    def test_bound_text_binds_entries_only_without_a_footer(self):
+        e = [{"basis": "git log", "engine": "main loop"}]
+        self.assertEqual(RP.bound_reply_text("Done.", e),
+                         "Done.\nProvenance: Basis: git log · Engine: main loop")
+        footed = "Done.\n\nProvenance: Basis: git log\n"
+        self.assertEqual(RP.bound_reply_text(footed, e), footed)
+        self.assertEqual(RP.bound_reply_text("Done.", []), "Done.")
 
 
 class Preflight(_Home):
@@ -131,6 +144,45 @@ class Preflight(_Home):
         self.assertEqual(res["class"], "SELF")
         sa = [r for r in res["results"] if r["gate"] == "source-attribution-check.py"]
         self.assertEqual(sa and sa[0]["verdict"], "BLOCK", res["results"])
+
+
+class PanelRequest(_Home):
+    def _request(self, body: str) -> subprocess.CompletedProcess:
+        f = self.tmp / "draft.txt"
+        f.write_text(body, encoding="utf-8")
+        return subprocess.run([sys.executable, str(SCRIPTS / "panel_digest.py"), "--panel-request",
+                               "--to", "operator", "--body-file", str(f), "--transcript",
+                               str(self.transcript)], capture_output=True, text=True, env=dict(os.environ))
+
+    def test_block_shows_the_recorded_footer_and_digests_it(self):
+        import panel_digest
+        provenance_ledger.record(SESSION, ts="2026-10-16T08:01:00.000Z", basis="git log origin/master")
+        cp = self._request(DRAFT)
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        self.assertIn("Provenance: Basis: git log origin/master", cp.stdout)
+        bound = DRAFT + "\nProvenance: Basis: git log origin/master"
+        self.assertIn(panel_digest.digest(bound, recipients=["operator"]), cp.stdout)
+        self.assertNotIn(panel_digest.digest(DRAFT, recipients=["operator"]), cp.stdout)
+
+    def test_digest_only_binds_too(self):
+        import panel_digest
+        provenance_ledger.record(SESSION, ts="2026-10-16T08:01:00.000Z", basis="git log")
+        f = self.tmp / "draft.txt"
+        f.write_text(DRAFT, encoding="utf-8")
+        cp = subprocess.run([sys.executable, str(SCRIPTS / "panel_digest.py"), "--to", "operator",
+                             "--body-file", str(f), "--transcript", str(self.transcript)],
+                            capture_output=True, text=True, env=dict(os.environ))
+        self.assertEqual(cp.stdout.strip(),
+                         panel_digest.digest(DRAFT + "\nProvenance: Basis: git log", recipients=["operator"]))
+
+    def test_unreadable_ledger_fails_the_preflight(self):
+        import panel_preflight
+        provenance_ledger.ledger_path().mkdir(parents=True)
+        res = panel_preflight.run(DRAFT, str(self.transcript))
+        fails = [r for r in res["results"] if r["gate"] == "provenance ledger"]
+        self.assertEqual(fails and fails[0]["verdict"], "FAIL", res["results"])
+        self.assertIn(fails[0], res["blocked"])
+        self.assertIn("PREFLIGHT provenance ledger: FAIL", panel_preflight.report(res))
 
 
 class Reminder(unittest.TestCase):

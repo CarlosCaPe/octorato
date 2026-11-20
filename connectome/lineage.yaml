@@ -556,6 +556,28 @@ edges:
       The reply gate imports the no-menu gate's is_choice_question and
       _irreducible_object by file name, and the preflight names Stop gates
       by file name in its SKIP list: renaming either gate touches this edge.
+  - id: quiet-provenance
+    concept: "quiet provenance: the Provenance footer and 2D verdict are recorded every turn in a per-session ledger, hidden on the operator's screen by default, shown on request; the reply gates read the footer or the ledger, and the ledger footer is bound into the reply digest"
+    appears_in:
+      - scripts/provenance_ledger.py                     # record/show CLI, fresh_all, reply_anchor, reply_view
+      - scripts/g__stop__reply-panel.py                  # ledger_entries, bound_reply_text, source_class over entries
+      - scripts/source-attribution-check.py              # footer marker or a fresh entry with a Basis
+      - scripts/panel_preflight.py                       # ledger_view, FAIL line on an unreadable ledger
+      - scripts/panel_digest.py                          # reviewed block and digest over the bound text
+      - scripts/4d-reminder.py                           # record, do not print
+      - scripts/g__pretool__arming-surface.py            # provenance_ledger.py in the run-time import closure
+      - CLAUDE.md                                        # Diagram-first paragraph
+      - skills/4d-paradigm-protocol/SKILL.md             # "The Provenance footer" section
+      - docs/specs/202611200722-quiet-provenance         # contract and residuals
+      - registry/fixtures/FLOW.panel-before-reply        # *_qp_* legs
+      - registry/fixtures/CODE.cite-sources              # *_qp_* legs and seeded ledger
+      - registry/fixtures/ARCHITECTURE.arming-surface    # provenance_ledger_sed legs
+      - scripts/tests/test_quiet_provenance.py
+    kind: appears_in
+    note: >-
+      The ledger's freshness rule (reply_anchor, FUTURE_SKEW_S) and the bound
+      digest text live in one place each; every reader calls them, so a change
+      to either touches every file on this edge.
   - id: external-review-v11
     concept: "external reviewer receipt: a review on another engine counts only through a hook-written receipt around a pinned call; it adds to a reply quorum, never forms one, never clears a send"
     appears_in:

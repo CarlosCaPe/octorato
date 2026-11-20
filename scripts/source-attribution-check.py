@@ -18,8 +18,10 @@ whitespace message means a text-free final turn: nothing to attribute.
 Quiet provenance (2026-11-20): the footer stays for the agent but is hidden on
 the operator's screen by default. A reply with no visible marker also passes
 when this session holds a provenance-ledger entry with a non-empty Basis,
-strictly newer than the operator's prompt (scripts/provenance_ledger.py, the
-same prompt walk the reply panel uses). Session: the payload's session_id, else
+that counts for this reply (scripts/provenance_ledger.py reply_view: newer
+than the operator's prompt and than any full reply of this turn that already
+ended a stop, never stamped more than 120 s in the future; the reply panel's
+own walk and freshness rule). Session: the payload's session_id, else
 OCTO_PROVENANCE_SESSION (set by panel_preflight.py for its synthetic payload).
 A ledger lookup that errors counts as no entry (the reply is then blocked
 once), never as provenance.
@@ -105,17 +107,19 @@ _BLOCK_REASON = (
 )
 
 
-def _ledger_has_provenance(data: dict) -> bool:
-    """True when this session recorded provenance with a non-empty Basis after
-    the operator's prompt. Any error reads as False (no entry)."""
+def _ledger_has_provenance(data: dict, text: str) -> bool:
+    """True when an entry that counts for this reply (provenance_ledger.reply_view:
+    newer than the prompt and than a full reply of this turn that already
+    ended a stop, not stamped in the future) has a non-empty Basis. Any error
+    reads as False (no entry)."""
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import provenance_ledger
         sid = str(data.get("session_id") or os.environ.get(
             provenance_ledger.PREFLIGHT_SESSION_ENV) or "").strip()
         tp = str(data.get("transcript_path") or "")
-        e = provenance_ledger.fresh_for_transcript(sid, tp)
-        return bool(e and str(e.get("basis") or "").strip())
+        got, _bound = provenance_ledger.reply_view(sid, tp, text)
+        return any(str(e.get("basis") or "").strip() for e in got)
     except Exception:
         return False
 
@@ -161,7 +165,7 @@ def main() -> int:
     except Exception:
         return 0  # fail-open: a broken hook never holds the conversation
 
-    if _ledger_has_provenance(data):
+    if _ledger_has_provenance(data, text):
         return 0  # recorded off-screen (quiet provenance), allow
 
     try:

@@ -111,6 +111,10 @@ CLI
     (panel_preflight.py) and prints each verdict, the source class and quorum;
     exit 1 when one would block. --panel-request --to operator runs the same
     preflight first and prints no block when it fails (--no-preflight skips it).
+    For --to operator the digested and reviewed text is the reply plus the
+    footer lines of this session's provenance-ledger entries that count for
+    it, when the reply shows no footer (quiet provenance, the reply panel's
+    bound_reply_text), so the reviewer sees the Basis that sets the quorum.
 A mail's body file is the subject line, then the body (then htmlBody).
 """
 from __future__ import annotations
@@ -695,6 +699,25 @@ def digests_for(tool_name: str, tool_input) -> list:
 # CLI
 # --------------------------------------------------------------------------
 
+def _bound_reply(text: str, transcript: str | None) -> str:
+    """The reply text plus the footer lines of the provenance-ledger entries
+    that count for it (provenance_ledger.reply_view), as the reply panel
+    digests it. A ledger that cannot be read is an error, never a silent
+    fallback to the bare text."""
+    import panel_preflight
+    import provenance_ledger
+    try:
+        tp = panel_preflight.find_transcript(transcript)
+    except panel_preflight.PreflightError as e:
+        raise PanelDigestError(str(e))
+    if tp is None:
+        return text
+    try:
+        return provenance_ledger.reply_view(provenance_ledger.current_session(), str(tp), text)[1]
+    except Exception as e:
+        raise PanelDigestError(f"provenance ledger: {type(e).__name__}: {e}")
+
+
 def _cli(argv: list) -> int:
     import argparse
     ap = argparse.ArgumentParser(description="Digest of an outgoing message for a panel receipt.")
@@ -737,7 +760,10 @@ def _cli(argv: list) -> int:
                 return 1
             print(f"PREFLIGHT: PASS, source class {res['class']}, reply panel quorum {res['quorum']}",
                   file=sys.stderr)
-            a.body_file, text_in = None, text
+            # Quiet provenance: with no visible footer, the reviewed text is the
+            # reply plus the footer lines of the ledger entries that count for it,
+            # the same text g__stop__reply-panel.py digests (bound_reply_text).
+            a.body_file, text_in = None, res.get("bound", text)
         else:
             text_in = None
         if a.tool_input:
@@ -747,6 +773,8 @@ def _cli(argv: list) -> int:
                 text = text_in
             else:
                 text = Path(a.body_file).read_text(encoding="utf-8") if a.body_file else sys.stdin.read()
+                if reply:
+                    text = _bound_reply(text, a.transcript)
             if not a.to:
                 raise PanelDigestError("--to is required: the recipient is part of the digest")
             msgs = [Message(text, [(file_sha256(p), p) for p in a.attach], a.to, a.mention)]
