@@ -28,7 +28,12 @@ times out or errors is printed as such and does not count as a block: in the
 harness the same gate fails open.
 
 It also prints the reply's source class and the quorum the reply panel would
-ask for, read with the gate's own classifier (loaded by file name).
+ask for, read with the gate's own classifier (loaded by file name). Quiet
+provenance: the classifier also reads this session's provenance-ledger entry
+newer than the operator prompt (scripts/provenance_ledger.py), and the
+spawned gates get the session in OCTO_PROVENANCE_SESSION (the payload still
+carries no session_id), so a draft whose provenance was recorded off-screen is
+judged as the Stop gates will judge it.
 
 CLI
     panel_preflight.py --body-file F [--transcript T]
@@ -51,6 +56,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
 _GATE = "g__stop__reply-panel.py"
 # Stop hooks that do not judge the reply text, or that judge it only against
 # per-session state a synthetic payload does not have. Every other Stop hook
@@ -114,10 +121,18 @@ def _minimal_transcript(text: str) -> str:
     return json.dumps(_draft_entry(text)) + "\n"
 
 
+def _session() -> str:
+    return (os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID") or "").strip()
+
+
 def _child_env() -> dict:
     env = dict(os.environ)
+    sid = _session()
     for k in ("CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"):
         env.pop(k, None)
+    if sid:
+        import provenance_ledger
+        env[provenance_ledger.PREFLIGHT_SESSION_ENV] = sid
     # Its own detail folder per preflight run (scripts/stop_block.py), so a
     # concurrent preflight elsewhere never overwrites the text the model reads.
     import uuid
@@ -155,14 +170,26 @@ def _run_one(script: str, tail: list, timeout: int, payload: dict, cwd: str) -> 
     return {"gate": script, "verdict": v, "reason": reason}
 
 
-def source_class(text: str) -> tuple:
+def fresh_entry(transcript: Path | None) -> dict | None:
+    """This session's provenance-ledger entry newer than the operator prompt
+    of `transcript`, or None (no session, no transcript, or a lookup error)."""
+    if transcript is None:
+        return None
+    try:
+        import provenance_ledger
+        return provenance_ledger.fresh_for_transcript(_session(), str(transcript))
+    except Exception:
+        return None
+
+
+def source_class(text: str, entry: dict | None = None) -> tuple:
     """(class, quorum) from the reply-panel gate's own classifier."""
     spec = importlib.util.spec_from_file_location("_pf_reply_panel", _HERE / _GATE)
     if spec is None or spec.loader is None:
         raise PreflightError(f"cannot load {_GATE}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    cls = mod.source_class(text)
+    cls = mod.source_class(text, entry)
     return cls, mod.QUORUM[cls]
 
 
@@ -189,9 +216,10 @@ def run(text: str, transcript: str | None = None, hooks_json: Path | None = None
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(hooks))) as ex:
             futs = [ex.submit(_run_one, s, t, to, payload, os.getcwd()) for s, t, to in hooks]
             results = [f.result() for f in futs]
+        entry = fresh_entry(tp if src is not None else None)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    cls, quorum = source_class(text)
+    cls, quorum = source_class(text, entry)
     return {"results": results, "blocked": [r for r in results if r["verdict"] == "BLOCK"],
             "class": cls, "quorum": quorum, "context": context}
 

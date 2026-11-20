@@ -63,7 +63,12 @@ Writing three identical whiles "because three hearts" is cargo-culting the metap
 
 ### The Provenance footer (materialized 4D Disclose)
 
-Every response ends with a one-line footer (label **Provenance / Procedencia / Herkunft**, matching the user's language). Named fields, ` · `-separated, each included ONLY when it applies:
+Every turn produces its provenance, and by default the operator never sees it: these logs help the agent and get in the way of the operator's reading (operator directive, 2026-11-20). **Recorded always, hidden by default, shown on request.**
+
+- **Record** it every turn, off-screen: `python3 ~/.claude/scripts/provenance_ledger.py record --basis ... --engine ... [--touched ...] [--verified ...] [--graph ...] [--verdict ...]`. It appends one JSON line for this session to the gitignored `~/.claude/.cache/provenance/provenance.jsonl`. The Stop gates read it there: `source-attribution-check.py` passes a reply with no visible footer when this session recorded a non-empty Basis after the operator's prompt, and `g__stop__reply-panel.py` (with `panel_preflight.py`) computes SOURCED vs SELF from that entry's Basis with the same rules it applies to a footer line.
+- **Show** it only when the operator asks ("provenance?", "procedencia", "show the footer"): print the one-line footer, which `provenance_ledger.py show` renders from the latest entry. A printed footer line still counts (back-compat), and when both exist the stricter Basis wins.
+
+The footer, recorded or shown, is one line (label **Provenance / Procedencia / Herkunft**, matching the user's language). Named fields, ` · `-separated, each included ONLY when it applies:
 
 - **Basis** — on whose authority (own reasoning / vendor·doc / operator / `file:line`). The files that came IN.
 - **Engine** — main-loop model + any sub-agent/sub-tool on a different engine (e.g. a Haiku arm). Makes [[model-routing-by-complexity]] visible.
@@ -72,7 +77,7 @@ Every response ends with a one-line footer (label **Provenance / Procedencia / H
 
 **Paths must be OPENABLE, not merely identifying.** Both `Basis` and `Touched` name real artifacts the operator will want to open, so every path is written **absolute and in the host OS's native form**: `C:\Users\...\file.docx` on Windows, `/home/.../file.md` on POSIX. A repo-relative path (`projects/x/y.md`) identifies a file but cannot be clicked, so it forces the operator to ask "where is that?" — which is the friction this field exists to remove. When several files share a directory, give the directory once and the basenames after it. When a file sits outside the working directory, add a `file://` URL (percent-encode spaces: `file:///C%3A/Users/NAME%20SURNAME/...`) so it opens from any client on any platform. Never hand back a bare filename.
 
-This IS 4D Disclose made concrete — the Impact Radius, post-write, every turn. Injector: `scripts/4d-reminder.py`; Stop-hook check: `scripts/source-attribution-check.py`.
+This IS 4D Disclose made concrete — the Impact Radius, post-write, every turn. Injector: `scripts/4d-reminder.py`; recorder: `scripts/provenance_ledger.py`; Stop-hook check: `scripts/source-attribution-check.py`.
 
 ### The cerebellum — precision without tremor
 
@@ -160,7 +165,7 @@ After all 3, follow the COMBINED recommendation:
   Q3 Delegate:  ACTIVATE / LOAD / SELF — [reason]
 ```
 
-In a reply to the operator, keep this block fenced: it may lead the reply, and the opening ASCII diagram follows it (Diagram-first, `scripts/g__stop__diagram-first.py`). Unfenced, it counts as prose and the gate blocks.
+This block is for the agent, not the operator's screen. Record the verdict off-screen with `python3 ~/.claude/scripts/provenance_ledger.py record --verdict '<ACTIVATE / LOAD / SELF: reason>' ...` (same entry as the provenance, below) and do not print it. Print it only when the operator asks to see it; then keep it fenced: it may lead the reply, and the opening ASCII diagram follows it (Diagram-first, `scripts/g__stop__diagram-first.py`). Unfenced, it counts as prose and the gate blocks.
 
 ### Exceptions (abbreviated 3Q OK)
 

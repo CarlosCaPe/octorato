@@ -15,7 +15,16 @@ whitespace message means a text-free final turn: nothing to attribute.
     cadence-stop-hook.py:63-97);
   - one forced rewrite per turn via the stop_hook_active loop guard.
 
-Fail-open on every error: a broken hook must never hold a conversation hostage.
+Quiet provenance (2026-11-20): the footer stays for the agent but is hidden on
+the operator's screen by default. A reply with no visible marker also passes
+when this session holds a provenance-ledger entry with a non-empty Basis,
+strictly newer than the operator's prompt (scripts/provenance_ledger.py, the
+same prompt walk the reply panel uses). Session: the payload's session_id, else
+OCTO_PROVENANCE_SESSION (set by panel_preflight.py for its synthetic payload).
+A ledger lookup that errors counts as no entry (the reply is then blocked
+once), never as provenance.
+
+Fail-open on every other error: a broken hook must never hold a conversation hostage.
 
 Stdin:  {"last_assistant_message": str, "transcript_path": str,
          "stop_hook_active": bool, ...}
@@ -86,10 +95,29 @@ def _last_assistant_text(transcript_path: str) -> str:
 
 
 _BLOCK_REASON = (
-    "Your reply has no provenance footer. Close it, in the user's language, with a "
-    "final source line: 'Provenance: <basis>' (EN) / 'Procedencia: <base>' (ES) / "
-    "'Herkunft: <basis>' (DE). Then deliver the answer. See CLAUDE.md 'Cite sources'."
+    "This turn has no provenance. Record it off-screen (the default; the operator "
+    "does not see it): `python3 ~/.claude/scripts/provenance_ledger.py record --basis "
+    "'<file>:<line> / operator / vendor doc / own reasoning' --engine '<model>' "
+    "[--touched ...] [--verified ...] [--graph ...] [--verdict 'ACTIVATE/LOAD/SELF']`. "
+    "Print the footer line in the reply ('Provenance: <basis>' EN / 'Procedencia: "
+    "<base>' ES / 'Herkunft: <basis>' DE) only when the operator asked to see it. "
+    "See CLAUDE.md 'Cite sources'."
 )
+
+
+def _ledger_has_provenance(data: dict) -> bool:
+    """True when this session recorded provenance with a non-empty Basis after
+    the operator's prompt. Any error reads as False (no entry)."""
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import provenance_ledger
+        sid = str(data.get("session_id") or os.environ.get(
+            provenance_ledger.PREFLIGHT_SESSION_ENV) or "").strip()
+        tp = str(data.get("transcript_path") or "")
+        e = provenance_ledger.fresh_for_transcript(sid, tp)
+        return bool(e and str(e.get("basis") or "").strip())
+    except Exception:
+        return False
 
 
 def _quiet(short: str, full: str, payload=None) -> str:
@@ -133,9 +161,12 @@ def main() -> int:
     except Exception:
         return 0  # fail-open: a broken hook never holds the conversation
 
+    if _ledger_has_provenance(data):
+        return 0  # recorded off-screen (quiet provenance), allow
+
     try:
         print(json.dumps({"decision": "block", "reason": _quiet(
-            "Reply has no provenance footer; close it with a Provenance line",
+            "Reply has no provenance footer or recorded entry; record one with provenance_ledger.py record",
             _BLOCK_REASON, data)}))
     except Exception:
         pass
