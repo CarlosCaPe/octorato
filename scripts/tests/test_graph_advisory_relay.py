@@ -29,6 +29,7 @@ RELAY = SCRIPTS / "grafo-turn-reset.py"
 def _run(script: Path, home: Path, payload, env_sid=None):
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_SESSION_ID"}
     env["HOME"] = str(home)
+    env["USERPROFILE"] = str(home)  # Path.home() reads USERPROFILE on Windows, not HOME
     if env_sid is not None:
         env["CLAUDE_SESSION_ID"] = env_sid
     data = payload if isinstance(payload, str) else json.dumps(payload)
