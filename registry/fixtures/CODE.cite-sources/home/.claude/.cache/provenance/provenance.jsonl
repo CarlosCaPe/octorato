@@ -5,3 +5,4 @@
 {"kind": "provenance", "session_id": "fx-cs-qp-consumed", "ts": "2026-10-14T10:01:00.000Z", "basis": "migration.log"}
 {"kind": "provenance", "session_id": "fx-cs-qp-status", "ts": "2026-10-14T10:01:00.000Z", "basis": "migration.log"}
 {"kind": "provenance", "session_id": "fx-cs-qp-future", "ts": "2026-10-14T10:30:00.000Z", "basis": "migration.log"}
+{"kind": "provenance", "session_id": "fx-cs-qp-narration", "ts": "2026-10-14T10:01:00.000Z", "basis": "migration.log"}

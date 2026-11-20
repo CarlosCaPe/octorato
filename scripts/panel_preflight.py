@@ -19,7 +19,8 @@ and stop_hook_active is false, so a block-once gate judges as on the first stop.
 The gates read the reply from the transcript's last assistant entry, so the
 draft is appended as one assistant entry to a temporary copy of the session
 transcript (the live one is never written). The transcript is --transcript,
-else the one named by CLAUDE_CODE_SESSION_ID under ~/.claude/projects, else a
+else the one named by the session id (provenance_ledger.current_session:
+CLAUDE_SESSION_ID, then CLAUDE_CODE_SESSION_ID) under ~/.claude/projects, else a
 minimal one with no operator prompt (then gates that read the turn's tool
 calls or the operator's ask judge with no context, and the output says so).
 
@@ -104,7 +105,7 @@ def find_transcript(explicit: str | None = None) -> Path | None:
         if not p.is_file():
             raise PreflightError(f"transcript not found: {p}")
         return p
-    sid = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID") or ""
+    sid = _session()
     if not sid or "/" in sid:
         return None
     hits = sorted((Path.home() / ".claude" / "projects").glob(f"*/{sid}.jsonl"))

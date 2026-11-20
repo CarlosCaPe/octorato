@@ -185,6 +185,81 @@ class PanelRequest(_Home):
         self.assertIn("PREFLIGHT provenance ledger: FAIL", panel_preflight.report(res))
 
 
+LONG = ("The staging copy is ready, the dump finished without errors and the row counts were "
+        "taken from both sides, so the comparison can start as soon as the operator confirms the "
+        "release window for tonight.")
+
+
+class ReplyAnchor(unittest.TestCase):
+    PROMPT = "2026-10-16T08:00:00.000Z"
+
+    def _text(self, ts, text, **msg):
+        return {"type": "assistant", "timestamp": ts,
+                "message": dict(msg, content=[{"type": "text", "text": text}])}
+
+    def test_narration_with_a_tool_call_does_not_move_reply_anchor(self):
+        turn = [self._text("2026-10-16T08:01:00.000Z", LONG),
+                {"type": "assistant", "timestamp": "2026-10-16T08:01:01.000Z",
+                 "message": {"content": [{"type": "tool_use", "id": "t1"}]}},
+                {"type": "user", "timestamp": "2026-10-16T08:01:02.000Z",
+                 "message": {"content": [{"type": "tool_result", "tool_use_id": "t1"}]}}]
+        self.assertEqual(provenance_ledger.reply_anchor(self.PROMPT, turn, "now"), self.PROMPT)
+
+    def test_reply_that_ended_a_stop_moves_reply_anchor(self):
+        note = {"type": "user", "timestamp": "2026-10-16T08:01:30.000Z",
+                "origin": {"kind": "task-notification"}, "message": {"content": "<task-notification/>"}}
+        turn = [self._text("2026-10-16T08:01:00.000Z", LONG), note]
+        self.assertEqual(provenance_ledger.reply_anchor(self.PROMPT, turn, "now"), "2026-10-16T08:01:00.000Z")
+        ended = [self._text("2026-10-16T08:01:00.000Z", LONG, stop_reason="end_turn")]
+        self.assertEqual(provenance_ledger.reply_anchor(self.PROMPT, ended, "now"), "2026-10-16T08:01:00.000Z")
+
+    def test_short_status_line_does_not_move_reply_anchor(self):
+        note = {"type": "user", "timestamp": "2026-10-16T08:01:30.000Z",
+                "origin": {"kind": "task-notification"}, "message": {"content": "<task-notification/>"}}
+        turn = [self._text("2026-10-16T08:01:00.000Z", "Reviewer launched."), note]
+        self.assertEqual(provenance_ledger.reply_anchor(self.PROMPT, turn, "now"), self.PROMPT)
+
+
+class FutureCap(_Home):
+    def test_future_cap_and_write_time_clamp(self):
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        iso = lambda d: d.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        provenance_ledger.record(SESSION, ts=iso(now + timedelta(hours=1)), basis="far ahead")
+        self.assertEqual(provenance_ledger.fresh_all(SESSION, iso(now - timedelta(minutes=5)), now), [])
+        provenance_ledger.record(SESSION, ts=iso(now + timedelta(seconds=100)), basis="inside skew")
+        # A prompt that arrives after the write but before the stamp: the entry is spent.
+        self.assertEqual(provenance_ledger.fresh_all(SESSION, iso(now + timedelta(seconds=50)), now), [])
+
+
+class AfterPass(_Home):
+    """A SOURCED entry recorded after the reviewer's PASS changes the digest: the
+    Stop gate finds no PASS for the new text and blocks."""
+
+    def test_record_after_pass_blocks(self):
+        import panel_fixture_seed
+        reply = "The tests pass on the branch and the release note is drafted."
+        rows = [
+            {"type": "user", "uuid": "u1", "parentUuid": None, "sessionId": SESSION, "timestamp": PROMPT_TS,
+             "message": {"role": "user", "content": "Do the tests pass?"}, "origin": {"kind": "human"}},
+            {"type": "assistant", "uuid": "a1", "parentUuid": "u1", "sessionId": SESSION,
+             "timestamp": "2026-10-16T08:05:00.000Z",
+             "message": {"role": "assistant", "content": [{"type": "text", "text": reply}]}},
+        ]
+        self.transcript.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        panel_fixture_seed.seed_reply_receipt(self.tmp, SESSION, reply, "PASS",
+                                              "2026-10-16T08:03:00.000Z", "a" * 17, "Reality Checker")
+        provenance_ledger.record(SESSION, ts="2026-10-16T08:04:00.000Z", basis="git log")
+        payload = {"session_id": SESSION, "hook_event_name": "Stop", "stop_hook_active": False,
+                   "last_assistant_message": reply, "transcript_path": str(self.transcript)}
+        env = dict(os.environ)
+        env["CLAUDE_SESSION_ID"] = "__selftest__"  # the transcript is the clock, as in the selftest
+        cp = subprocess.run([sys.executable, str(SCRIPTS / "g__stop__reply-panel.py")],
+                            input=json.dumps(payload), capture_output=True, text=True, env=env)
+        self.assertEqual(cp.returncode, 2, cp.stderr)
+        self.assertIn("REPLY PANEL 0/1 (SOURCED)", cp.stderr)
+
+
 class Reminder(unittest.TestCase):
     def test_reminder_records_instead_of_printing(self):
         cp = subprocess.run([sys.executable, str(SCRIPTS / "4d-reminder.py")], input="{}",

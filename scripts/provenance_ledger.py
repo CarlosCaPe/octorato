@@ -105,7 +105,9 @@ def record(session_id: str, ts: str = "", **fields) -> dict:
     sid = (session_id or "").strip()
     if not sid:
         raise LedgerError("no session id (pass --session or run inside a Claude Code session)")
-    row = {"kind": "provenance", "session_id": sid, "ts": ts or _now_iso()}
+    # written_at is the wall clock of the write, whatever `ts` says: an entry
+    # stamped ahead is judged by when it was written (effective_ts).
+    row = {"kind": "provenance", "session_id": sid, "ts": ts or _now_iso(), "written_at": _now_iso()}
     for k in FIELDS:
         row[k] = str(fields.get(k) or "").strip()
     p = ledger_path()
@@ -147,16 +149,25 @@ REPLY_MIN_WORDS = 31
 
 
 def fresh_all(session_id: str, after: str, now=None) -> list:
-    """Every entry of `session_id` with `after` < ts <= now + FUTURE_SKEW_S,
-    oldest first. No session or an unparseable `after` is []: nothing can be
+    """Every entry of `session_id` with `after` < effective_ts and
+    ts <= now + FUTURE_SKEW_S, oldest first. No session or an unparseable `after` is []: nothing can be
     proven fresh. `now` defaults to the wall clock."""
     bound = _ts(after)
     if not session_id or bound is None:
         return []
     from datetime import timedelta
     ceiling = (now or datetime.now(timezone.utc)) + timedelta(seconds=FUTURE_SKEW_S)
-    got = [e for e in entries(session_id) if bound < _ts(e["ts"]) <= ceiling]
-    return sorted(got, key=lambda e: _ts(e["ts"]))
+    got = [e for e in entries(session_id) if bound < effective_ts(e) and _ts(e["ts"]) <= ceiling]
+    return sorted(got, key=effective_ts)
+
+
+def effective_ts(entry: dict):
+    """The time an entry is judged at: its `ts`, clamped to `written_at` when
+    the row has one, so an entry stamped in the future never counts for an
+    operator prompt that came after it was written."""
+    t = _ts(entry.get("ts"))
+    w = _ts(entry.get("written_at")) if entry.get("written_at") else None
+    return min(t, w) if (t is not None and w is not None) else t
 
 
 def fresh(session_id: str, after: str, now=None) -> dict | None:
@@ -179,27 +190,53 @@ def _assistant_text(entry: dict) -> str:
     return ""
 
 
-def reply_anchor(prompt_ts: str, turn_entries: list, current_text: str) -> str:
-    """The bound an entry must be newer than: the operator prompt, or a later
-    assistant REPLY of the same turn that already ended a stop. A reply here
-    is assistant text of at least REPLY_MIN_WORDS words, not equal to the
-    current reply, followed by a later user-side entry (tool result,
-    notification, hand-back), which is what an earlier stop leaves. Status
-    lines (shorter) do not consume entries, so record -> panel request ->
-    status line -> notification -> reply keeps its entry."""
-    anchor, cur = prompt_ts, _norm(current_text)
-    pending = None
-    for e in turn_entries or []:
-        if not isinstance(e, dict):
+def _carries_tool_result(entry: dict) -> bool:
+    c = (entry.get("message") or {}).get("content")
+    return isinstance(c, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c)
+
+
+def _ended_a_stop(entries_: list, i: int) -> bool:
+    """True when assistant entry i ended a stop: its message.stop_reason is
+    end_turn, or the next non-sidechain user/assistant entry is a user entry
+    that carries NO tool_result (an operator prompt, a task notification,
+    Stop-hook feedback, an agent message). Text followed by its own tool call
+    and that call's tool_result is narration, not a stop."""
+    if ((entries_[i].get("message") or {}).get("stop_reason")) == "end_turn":
+        return True
+    for nxt in entries_[i + 1:]:
+        if not isinstance(nxt, dict) or nxt.get("isSidechain"):
             continue
-        if e.get("type") == "assistant":
-            t = _assistant_text(e)
-            if t and len(t.split()) >= REPLY_MIN_WORDS and _norm(t) != cur and e.get("timestamp"):
-                pending = str(e["timestamp"])
-        elif e.get("type") == "user" and pending:
-            if _ts(pending) and (_ts(anchor) is None or _ts(pending) > _ts(anchor)):
-                anchor = pending
-            pending = None
+        kind = nxt.get("type")
+        if kind == "assistant":
+            return False
+        if kind == "user":
+            return not _carries_tool_result(nxt)
+    return False
+
+
+def reply_anchor(prompt_ts: str, turn_entries: list, current_text: str) -> str:
+    """The bound an entry must be newer than: the operator prompt, or the
+    newest earlier assistant reply of the same turn that already ended a stop
+    (_ended_a_stop: stop_reason end_turn, or followed by a user entry with no
+    tool_result). Only replies of at least REPLY_MIN_WORDS words that differ
+    from the current reply count. Narration (text, then a tool call and its
+    result) never moves the anchor. Status lines of 30 words or fewer that
+    end a stop do not move it either, by design: record -> panel request ->
+    status line -> notification -> reply keeps its entry (that short reply
+    had its own panel over the same bound footer)."""
+    anchor, cur = prompt_ts, _norm(current_text)
+    rows = [e for e in (turn_entries or []) if isinstance(e, dict) and not e.get("isSidechain")]
+    for i, e in enumerate(rows):
+        if e.get("type") != "assistant" or not e.get("timestamp"):
+            continue
+        t = _assistant_text(e)
+        if not t or len(t.split()) < REPLY_MIN_WORDS or _norm(t) == cur:
+            continue
+        if not _ended_a_stop(rows, i):
+            continue
+        ts = str(e["timestamp"])
+        if _ts(ts) and (_ts(anchor) is None or _ts(ts) > _ts(anchor)):
+            anchor = ts
     return anchor
 
 
@@ -323,6 +360,21 @@ def _selftest() -> int:
             fails.append("a reply with no later user-side entry moved the anchor")
         if reply_anchor("2026-10-14T10:00:00.000Z", turn, long_reply) != "2026-10-14T10:00:00.000Z":
             fails.append("the current reply itself moved the anchor")
+        narration = [{"type": "assistant", "timestamp": "2026-10-14T10:02:00.000Z",
+                      "message": {"content": [{"type": "text", "text": long_reply}]}},
+                     {"type": "assistant", "timestamp": "2026-10-14T10:02:01.000Z",
+                      "message": {"content": [{"type": "tool_use", "id": "t1"}]}},
+                     {"type": "user", "timestamp": "2026-10-14T10:02:02.000Z",
+                      "message": {"content": [{"type": "tool_result", "tool_use_id": "t1"}]}}]
+        if reply_anchor("2026-10-14T10:00:00.000Z", narration, "x") != "2026-10-14T10:00:00.000Z":
+            fails.append("narration (text, tool call, tool result) moved the anchor")
+        ended = [{"type": "assistant", "timestamp": "2026-10-14T10:02:00.000Z",
+                  "message": {"stop_reason": "end_turn", "content": [{"type": "text", "text": long_reply}]}}]
+        if reply_anchor("2026-10-14T10:00:00.000Z", ended, "x") != "2026-10-14T10:02:00.000Z":
+            fails.append("a reply with stop_reason end_turn did not move the anchor")
+        row = record("s5", ts="2099-01-01T00:00:00.000Z", basis="ahead")
+        if effective_ts(row) != _ts(row["written_at"]):
+            fails.append("an entry stamped ahead was not clamped to its write time")
         e = got[-1] if got else {}
         line = footer_line(e)
         if line != "Provenance: Basis: new.log · Engine: main loop":
@@ -338,7 +390,7 @@ def _selftest() -> int:
     if fails:
         print("selftest FAIL (provenance_ledger.py): " + "; ".join(fails), file=sys.stderr)
         return 1
-    print("selftest PASS: 11 unit checks (provenance_ledger.py)")
+    print("selftest PASS: 14 unit checks (provenance_ledger.py)")
     return 0
 
 
