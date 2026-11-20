@@ -9,7 +9,7 @@
 | Skills | 248 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 146 |
+| Scripts: wired | 147 |
 | Scripts: orphan | 7 |
 | Rules | 108 |
 | Hook entries | 63 |
@@ -501,7 +501,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (153)
+## Scripts (154)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -617,6 +617,7 @@
 | panel_fixture_seed.py | panel_fixture_seed.py: seed panel receipts into an outward-send fixture home. | wired |
 | panel_preflight.py | panel_preflight.py: run the reply-text Stop gates on a draft BEFORE its panel. | wired |
 | proc_group.py | Kill a child's process group without ever killing our own. | wired |
+| provenance_ledger.py | provenance_ledger.py: the turn's provenance, recorded for the agent, off the operator's screen. | wired |
 | publish-wiki.py | publish-wiki.py - publish docs/wiki/ to the public GitHub wiki. | wired |
 | qa-merge-gate.py | PreToolUse Bash hook , QA gate (FAIL-CLOSED for merge actions). | wired |
 | query_connectome.py | query_connectome.py , Octopus Ventosas (Sucker Neural Interface) Each sucker is an independent senso... | wired |

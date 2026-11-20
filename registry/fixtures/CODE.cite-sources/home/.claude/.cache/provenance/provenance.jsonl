@@ -1,0 +1,8 @@
+{"kind": "provenance", "session_id": "fx-cs-qp-fresh", "ts": "2026-10-14T10:03:00.000Z", "basis": "migration.log", "engine": "main loop"}
+{"kind": "provenance", "session_id": "fx-cs-qp-stale", "ts": "2026-10-14T09:45:00.000Z", "basis": "migration.log", "engine": "main loop"}
+{"kind": "provenance", "session_id": "fx-cs-qp-empty", "ts": "2026-10-14T10:03:00.000Z", "basis": "", "engine": "main loop"}
+{"kind": "provenance", "session_id": "fx-cs-qp-elsewhere", "ts": "2026-10-14T10:03:00.000Z", "basis": "migration.log"}
+{"kind": "provenance", "session_id": "fx-cs-qp-consumed", "ts": "2026-10-14T10:01:00.000Z", "basis": "migration.log"}
+{"kind": "provenance", "session_id": "fx-cs-qp-status", "ts": "2026-10-14T10:01:00.000Z", "basis": "migration.log"}
+{"kind": "provenance", "session_id": "fx-cs-qp-future", "ts": "2026-10-14T10:30:00.000Z", "basis": "migration.log"}
+{"kind": "provenance", "session_id": "fx-cs-qp-narration", "ts": "2026-10-14T10:01:00.000Z", "basis": "migration.log"}

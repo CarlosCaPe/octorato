@@ -1,0 +1,28 @@
+{
+  "session_id": "fx-rp-violation-qp-ledger-other-session-one-reviewer",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "The migration ran on the staging copy and the row counts match the source table. Two warnings remain, both about deprecated flags, and neither blocks the release. The rollback script is untested.",
+  "transcript_path": "violation_qp_ledger_other_session_one_reviewer_transcript.jsonl",
+  "_fixture": {
+    "receipts": [
+      {
+        "verdict": "PASS",
+        "ts": "2026-10-14T10:04:00.000Z",
+        "text": "The migration ran on the staging copy and the row counts match the source table. Two warnings remain, both about deprecated flags, and neither blocks the release. The rollback script is untested.\nProvenance: Basis: migration.log, row_counts.csv \u00b7 Engine: main loop"
+      }
+    ],
+    "provenance": [
+      {
+        "ts": "2026-10-14T10:03:30.000Z",
+        "basis": "migration.log, row_counts.csv",
+        "engine": "main loop",
+        "session_id": "fx-rp-some-other-session"
+      }
+    ],
+    "stderr_has": [
+      "this reply is SELF"
+    ]
+  }
+}

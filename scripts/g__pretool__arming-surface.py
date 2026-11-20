@@ -178,6 +178,10 @@ THE FILE SET, and why each one is an arming surface.
       writes the full text to the detail ledger and returns the one line the
       operator sees. A doctored copy could drop the instructions a block
       carries, so it sits in the closure with the other run-time imports.
+  scripts/provenance_ledger.py
+      The reader the reply panel and source-attribution-check.py import to
+      accept provenance recorded off the operator's screen. A doctored copy
+      could report every turn as sourced, so it is in the closure too.
   scripts/brain_doctor.py
       The prover. RULE #1 is wired BY brain_doctor: it runs every gate's
       --selftest and .githooks/pre-push blocks on its exit code. A doctored
@@ -898,7 +902,7 @@ _SCRIPT_PATTERNS = ("g__pretool*.py", "g__stop__*.py", "r__*.py",
                     "gate_selftest.py", "brain_doctor.py", "receipt_ledger.py",
                     "external_review.py",
                     "kernel_proc.py", "dimension-awareness-hook.py",
-                    "stop_block.py",
+                    "stop_block.py", "provenance_ledger.py",
                     "merge-hooks.py", "check-generic.py",
                     "commit_msg_language_gate.py")
 _SCRIPT_WHY = ("the body of a fail-closed gate, a RECORDER whose output a "

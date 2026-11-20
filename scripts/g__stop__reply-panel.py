@@ -48,14 +48,24 @@ THE DECISION (FR-03, checked in this order; the first that holds exits 0)
      prompt (AC-25, the order panel_pass_for uses): an external receipt adds
      to a quorum, never forms one, and never stands in for a revoked PASS. An INPUT
      reply only asks the operator for a fact (input_needed). A reply is SOURCED
-     only when it has a Provenance / Procedencia / Herkunft line and EVERY
-     such line has a Basis that names something: `Basis` (any case) then a
+     only when it has provenance, a Provenance / Procedencia / Herkunft line
+     or provenance-ledger entries that count for it (ledger_entries:
+     scripts/provenance_ledger.py, quiet provenance, the footer recorded off
+     the operator's screen; every entry of this session newer than the
+     prompt or than a full reply of this turn that already ended a stop, and
+     not stamped in the future), and EVERY such line and entry has a Basis
+     that names something: `Basis` (any case) then a
      colon or whitespace, not empty and not only none / nothing / n/a / na /
      a run of dashes (any case, trailing punctuation ignored), with no
      standalone `self` or own reasoning word (EN, ES, DE with or without the
      umlaut) and no item that is only a self source (`myself`,
      `self-evident`). `self` inside a longer token (`selftest.py`,
      `self-review of <path>`) is not a self source.
+     The digest is over bound_reply_text: the reply itself when it shows a
+     provenance line or uses no entry, else the reply plus the rendered
+     footer of every entry used, which is the text panel_digest.py
+     --panel-request --to operator puts in the reviewed block. A record made
+     after the review changes the digest, so it voids the PASS.
 Otherwise exit 2, stderr naming the source class, the quorum, the digest, the
 panel-request command and the
 accepted reviewer types. Block-once (operator directive 2026-11-07): while
@@ -627,9 +637,19 @@ def input_needed(text: str) -> bool:
     return not _menu_or_consent(m.group("q"))
 
 
-def _explicit_self_basis(text: str) -> bool:
-    """True when a provenance line carries a Basis field that is empty or
-    names self (the stricter reading wins over INPUT)."""
+def ledger_basis_is_self(entry: dict) -> bool:
+    """The footer rules applied to a provenance-ledger entry's Basis
+    (scripts/provenance_ledger.py): empty, naming nothing (_empty_basis), or
+    naming self or own reasoning (_self_basis) is SELF."""
+    basis = str((entry or {}).get("basis") or "").strip().strip("*_ ")
+    return _empty_basis(basis) or _self_basis(basis)
+
+
+def _explicit_self_basis(text: str, entries=()) -> bool:
+    """True when a provenance line, or any fresh ledger entry, carries a
+    Basis that is empty or names self (the stricter reading wins over INPUT)."""
+    if any(ledger_basis_is_self(e) for e in entries or ()):
+        return True
     for ln in _PROVENANCE.findall(text or ""):
         m = _BASIS.search(ln.strip().lstrip("*_ "))
         if m:
@@ -639,20 +659,60 @@ def _explicit_self_basis(text: str) -> bool:
     return False
 
 
-def source_class(text: str) -> str:
+def source_class(text: str, entries=()) -> str:
     """INPUT for an input-needed reply (input_needed) whose footer, if any,
-    does not name self or an empty Basis; quorum 1 like SOURCED.
-    Otherwise SELF when the reply has no provenance line or when ANY
-    provenance line is SELF (no Basis field, a Basis that names nothing (see
-    _empty_basis), or a Basis that names self or own reasoning in EN, ES or
-    DE, see _self_basis). A later SOURCED line, a code block included, never
-    lifts an earlier SELF line."""
-    if input_needed(text) and not _explicit_self_basis(text):
+    and whose ledger entries, if any, do not name self or an empty Basis;
+    quorum 1 like SOURCED.
+    Otherwise the provenance sources are every provenance line of the reply
+    plus EVERY entry in `entries`: all provenance-ledger entries of this
+    session that count for this reply (ledger_entries, quiet provenance).
+    SELF when there is no source at all, or when ANY source is SELF (a line
+    with no Basis field, a Basis that names nothing (see _empty_basis), or a
+    Basis that names self or own reasoning in EN, ES or DE, see _self_basis;
+    a ledger Basis is read with the same two helpers). Order never matters:
+    a later SOURCED line, a code block included, or a later SOURCED ledger
+    entry never lifts an earlier SELF one, the parity the footer lines have."""
+    entries = list(entries or ())
+    if input_needed(text) and not _explicit_self_basis(text, entries):
         return "INPUT"
     lines = _PROVENANCE.findall(text or "")
-    if not lines or any(_line_is_self(ln) for ln in lines):
+    if not lines and not entries:
+        return "SELF"
+    if any(_line_is_self(ln) for ln in lines):
+        return "SELF"
+    if any(ledger_basis_is_self(e) for e in entries):
         return "SELF"
     return "SOURCED"
+
+
+def ledger_entries(session_id: str, prompt_ts: str, turn_entries: list, msg: str, now) -> list:
+    """Every provenance-ledger entry that counts for the reply `msg`: newer
+    than provenance_ledger.reply_anchor (the operator prompt, or a later
+    full reply of this turn that already ended a stop) and not later than
+    now + FUTURE_SKEW_S. An unreadable ledger is a GateError (fail closed); a
+    missing one is no entry."""
+    try:
+        import provenance_ledger
+        anchor = provenance_ledger.reply_anchor(prompt_ts, turn_entries, msg)
+        return provenance_ledger.fresh_all(session_id, anchor, now)
+    except OSError as e:
+        raise GateError(f"provenance ledger unreadable ({type(e).__name__})")
+    except Exception as e:
+        raise GateError(f"provenance ledger: {type(e).__name__}: {e}")
+
+
+def bound_reply_text(msg: str, entries) -> str:
+    """The text the operator-reply digest is computed over. A reply with a
+    visible provenance line, or with no ledger entry, is its own text
+    (unchanged digest, back-compat). Otherwise the rendered footer line of
+    every entry used is joined under it, one per line, so the reviewed block
+    shows the Basis that decides the quorum and a later record changes the
+    digest (and voids the PASS)."""
+    entries = list(entries or ())
+    if not entries or _PROVENANCE.findall(msg or ""):
+        return msg
+    import provenance_ledger
+    return msg + "\n" + "\n".join(provenance_ledger.footer_line(e) for e in entries)
 
 
 # ---------------------------------------------------------------------------
@@ -681,7 +741,7 @@ def decide(data: dict) -> tuple:
             raise GateError("no operator prompt found in the transcript")
         if _SKIP.search(prompt["text"]):
             return 0, ""
-        _entries, newest = turn_after(ctx, transcript, prompt["uuid"])
+        turn, newest = turn_after(ctx, transcript, prompt["uuid"])
     except OSError as e:
         raise GateError(f"transcript unreadable: {transcript} ({type(e).__name__})")
     if len(msg.split()) <= STATUS_CAP and not status_claim(msg):
@@ -692,8 +752,9 @@ def decide(data: dict) -> tuple:
         if pend and status_stops(ctx, session_id, prompt["uuid"]) < STATUS_STOPS_MAX:
             spend(ctx, pend[-1], session_id, prompt["uuid"])
             return 0, ""
-    digest = ctx.pd.digest(msg, recipients=["operator"])
-    cls = source_class(msg)
+    used = ledger_entries(session_id, prompt["ts"], turn, msg, _now(ctx, newest))
+    digest = ctx.pd.digest(bound_reply_text(msg, used), recipients=["operator"])
+    cls = source_class(msg, used)
     need = QUORUM[cls]
     have = pass_reviewers(ctx, digest, session_id, prompt["ts"], _now(ctx, newest))
     if have >= need:
@@ -702,7 +763,11 @@ def decide(data: dict) -> tuple:
         f"REPLY PANEL (FLOW.panel-before-reply): this reply is {cls} (source class) and "
         f"needs PASS receipts from {need} distinct reviewer(s) for its exact text, newer "
         f"than the operator's prompt, with a PASS deciding; it has {have} of {need}. "
-        f"A reply is SOURCED only when every Provenance line has a Basis that names a "
+        f"A reply is SOURCED only when it has provenance (a Provenance line, or an entry "
+        f"recorded off-screen with `python3 ~/.claude/scripts/provenance_ledger.py record "
+        f"--basis ...` after the operator's prompt and after your last full reply; "
+        f"without a visible footer the entries' footer lines are part of the digest, "
+        f"so record BEFORE the panel request) and every Basis names a "
         f"source other than self or own reasoning; an INPUT reply only asks, on a last "
         f"line starting `input-needed:`, for a fact only the operator holds, and its "
         f"reviewer confirms that fact is not available from context. Digest: {digest}. "
@@ -850,6 +915,16 @@ def _seed_case(sandbox: Path, session: str, msg: str, fx: dict) -> None:
                     row["message"]["content"].append({"type": "text", "text": 404})
             tp.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
     rdir = sandbox / ".claude" / ".cache" / "receipts"
+    if fx.get("provenance"):
+        # Quiet provenance: entries recorded off-screen with provenance_ledger.py,
+        # each {"ts", "basis", ...} (session defaults to the payload's).
+        pdir = sandbox / ".claude" / ".cache" / "provenance"
+        pdir.mkdir(parents=True, exist_ok=True)
+        with (pdir / "provenance.jsonl").open("a", encoding="utf-8") as fh:
+            for row in fx["provenance"]:
+                rec = {"kind": "provenance", "session_id": session}
+                rec.update(row)
+                fh.write(json.dumps(rec) + "\n")
     if fx.get("spent"):
         rdir.mkdir(parents=True, exist_ok=True)
         with (rdir / _PENDING_FILE).open("a", encoding="utf-8") as fh:

@@ -1,0 +1,6 @@
+{
+  "session_id": "fx-cs-qp-fresh",
+  "transcript_path": "benign_qp_ledger_fresh_transcript.jsonl",
+  "last_assistant_message": "The migration ran on the staging copy and the row counts match the source table.",
+  "stop_hook_active": false
+}
