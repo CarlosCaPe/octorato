@@ -58,14 +58,14 @@ Spec: `docs/specs/202611202139-build-loop-excellence/`. "Every criterion met" wa
 
 The loop is not a LARGE-only thing any more. `skills/4d-spec/SKILL.md` applies it to anything built for another entity at any score: TRIVIAL and MEDIUM run a light loop (test, run receipt, an independent verifier's `BUILD-VERDICT: EXCELLENT | ITERATE`).
 
-What is mechanical: `spec_lint.py` checks the shape of every `RUN-##` bullet (the executed text in backticks, an observation, a unique id, criteria that exist), and the push gate refuses a flip to `converged` with no receipt. Fixtures: `registry/fixtures/FLOW.build-loop-excellence`.
+What is mechanical: `spec_lint.py` checks every line under the heading that starts with a `RUN-##` id, whatever markup precedes it (the `- ` bullet, the executed text in backticks, an observation, a unique id, criteria that exist), and the push gate refuses a flip to `converged` with no receipt. Three things do not count as one. A placeholder: the template itself (text wholly inside angle brackets), `TODO`, `TBD`, an ellipsis, so the grammar the gate prints cannot satisfy the gate. A receipt a reader of the rendered spec would not see as evidence: inside a fenced block or an HTML comment, and for receipts one that never closes hides everything after it. And a receipt under any other heading. The heading is exactly `## Run evidence`; another case, level or tail is a finding that names the line, and the lines under it, or under a second section, are still read. Fixtures: `registry/fixtures/FLOW.build-loop-excellence`.
 
 What is not, stated:
 
 | Residual | Bound |
 |---|---|
 | A TRIVIAL or MEDIUM build has no spec, so nothing forces its loop | The rule in `CLAUDE.md` and the `4d-spec` skill carry it. A small build that skipped its run is not detected |
-| The linter reads a receipt's shape, not whether the command ran | The converge verifier re-runs each receipt; one that does not reproduce is a gap |
+| The linter reads a receipt's shape and a fixed list of placeholders, not whether the command ran | A made-up receipt that reads like a real one passes it. The converge verifier re-runs each receipt; one that does not reproduce is a gap |
 | The gate asks for one receipt, not one per behavioural criterion | Which criteria are behavioural is the verifier's judgment (`unrun`) |
 | `CONVERGE-EXCELLENCE` is not parsed by the receipt hook | The skill ties `CONVERGED` to `EXCELLENT`; a verifier that prints `CONVERGED` after `NOT-YET` is still recorded as converged |
 | `BUILD-VERDICT` of the light loop is recorded by no hook | A convention of the skill |

@@ -60,6 +60,10 @@ document) and record each run in `feature.md` under `## Run evidence`, one line 
 - RUN-01 [AC-01, AC-02] `<the exact command or action>`: <exit code and what you observed>
 ```
 
+Write the exact command, not a description of it: the verifier pastes it. The linter
+refuses the template left unfilled, `TODO` and the like, a `RUN-##` line without its `- `
+bullet, and any heading other than exactly `## Run evidence`.
+
 A receipt is a claim the verifier reproduces, not a grade: it says what you ran and what
 came back, never that a criterion is met. Reading the code is not a run. When a run shows a
 defect, fix it and run again before recording. The push gate refuses `Status: converged` on

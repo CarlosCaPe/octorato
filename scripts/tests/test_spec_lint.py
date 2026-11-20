@@ -388,12 +388,150 @@ class RunEvidenceTest(unittest.TestCase):
         with mock.patch.object(spec_lint, "_lint_run_evidence", lambda *a, **k: None):
             self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
 
-    def test_receipts_are_read_under_a_miscased_heading_and_never_in_a_fence(self):
+    def test_selftest_goes_red_when_a_placeholder_counts_as_a_receipt(self):
+        # The grammar the gate prints must not satisfy the gate.
+        with mock.patch.object(spec_lint, "_is_placeholder", lambda value: False):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_with_a_reader_that_trusts_unclosed_fences_and_comments(self):
+        # The reader of the first pass: fences hide only when they close, comments
+        # are text, and one section is read.
+        def first_pass(text):
+            lines = spec_lint._readable_lines(text or "")
+            for name, body in spec_lint._sections(lines).items():
+                if name.casefold() == "run evidence":
+                    return [(1, "## Run evidence")], body
+            return [], []
+        with mock.patch.object(spec_lint, "_run_lines", first_pass):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_when_comments_are_read_as_text(self):
+        with mock.patch.object(spec_lint, "_CODE_OR_COMMENT", re.compile(r"(?!)")):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_when_only_dash_bullets_are_looked_at(self):
+        dash_only = re.compile(r"^\s*[-*+] (?:\[[ xX]\] )?RUN-\d+\b")
+        with mock.patch.object(spec_lint, "_RUN_START", dash_only):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_when_any_heading_form_is_accepted(self):
+        with mock.patch.object(spec_lint, "_RUN_HEADING", spec_lint._RUN_HEADING_LOOSE):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_what_counts_as_a_receipt(self):
         line = "- RUN-01 [AC-01] `tool --flag`: exit 0, wrote out.csv"
-        self.assertEqual(spec_lint.run_receipts(f"## run EVIDENCE\n\n{line}\n"), ["RUN-01"])
-        self.assertEqual(spec_lint.run_receipts(f"## Run evidence\n\n```\n{line}\n```\n"), [])
-        self.assertEqual(spec_lint.run_receipts(f"## Notes\n\n{line}\n"), [])
-        self.assertEqual(spec_lint.run_receipts(None), [])
+        head = "## Run evidence\n\n"
+        cases = {
+            "plain": (head + line, ["RUN-01"]),
+            "closed fence": (f"{head}```\n{line}\n```\n", []),
+            "unclosed fence": (f"{head}```\n{line}\n", []),
+            "tilde fence": (f"{head}~~~\n{line}\n~~~\n", []),
+            "tilde line inside a backtick fence": (f"{head}```\n~~~\n{line}\n```\n", []),
+            "shorter run does not close": (f"{head}````\n```\n{line}\n````\n", []),
+            "info string does not close": (f"{head}```\n```text\n{line}\n```\n", []),
+            "after a closed fence": (f"{head}```\nquoted\n```\n{line}\n", ["RUN-01"]),
+            "two angle groups": (head + "- RUN-01 [AC-01] `<cmd> <args>`: exit 0", []),
+            "template words without brackets": (head + "- RUN-01 [AC-01] `what was executed`: what was observed", []),
+            "comment over lines": (f"{head}<!--\n{line}\n-->\n", []),
+            "comment on one line": (f"{head}<!-- {line} -->\n", []),
+            "unclosed comment": (f"{head}<!--\n{line}\n", []),
+            "comment closed before": (f"{head}<!-- note -->\n{line}", ["RUN-01"]),
+            "opener in backticks": (f"Mentions `<!--` here.\n\n{head}{line}", ["RUN-01"]),
+            "template": (head + "- RUN-01 [AC-01] `<what was executed>`: <what was observed>", []),
+            "command is TODO": (head + "- RUN-01 [AC-01] `TODO`: exit 0", []),
+            "observation is tbd": (head + "- RUN-01 [AC-01] `tool`: tbd later", []),
+            "observation is an ellipsis": (head + "- RUN-01 [AC-01] `tool`: ...", []),
+            "angle-bracket argument": (head + "- RUN-01 [AC-01] `tool --repo <tmp>`: exit 0", ["RUN-01"]),
+            "no bullet": (head + line[2:], []),
+            "numbered": (head + "1. " + line[2:], []),
+            "another heading": (f"## Notes\n\n{line}\n", []),
+            "miscased heading is still read": (f"## run EVIDENCE\n\n{line}\n", ["RUN-01"]),
+            "two sections": (f"{head}{line}\n\n## Other\n\nx\n\n## RUN EVIDENCE\n\n"
+                             + line.replace("RUN-01", "RUN-02"), ["RUN-01", "RUN-02"]),
+            "section ends at the next heading": (f"{head}\n## Other\n\n{line}\n", []),
+            "no text": (None, []),
+        }
+        for name, (text, want) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(spec_lint.run_receipts(text), want)
+
+    def _findings(self, run_section: str) -> str:
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "feature.md").write_text(
+                "# Feature\n\n> **Status:** draft\n> **Spec-Format:** ears-1\n\n"
+                "## Glossary\n\n- **Exporter**: writes.\n\n## Acceptance Criteria\n\n"
+                "- [ ] AC-01: THE Exporter SHALL write UTF-8.\n\n" + run_section, encoding="utf-8")
+            return "\n".join(spec_lint.lint(Path(d)).findings)
+
+    def test_lint_names_each_malformed_shape(self):
+        good = "- RUN-01 [AC-01] `tool`: exit 0, wrote out.csv\n"
+        self.assertEqual(self._findings("## Run evidence\n\n" + good), "")
+        for name, section, want in (
+            ("template", "## Run evidence\n\n- RUN-01 [AC-01] `<what was executed>`: <what was observed>\n",
+             "RUN-01 is an unfilled template"),
+            ("no bullet", "## Run evidence\n\n" + good[2:], "run receipt does not follow"),
+            ("numbered", "## Run evidence\n\n1. " + good[2:], "run receipt does not follow"),
+            ("quoted", "## Run evidence\n\n> " + good, "run receipt does not follow"),
+            ("table row", "## Run evidence\n\n| RUN-01 | `tool` | exit 0 |\n", "run receipt does not follow"),
+            ("lower case id", "## Run evidence\n\n" + good.replace("RUN", "run"), "run receipt does not follow"),
+            ("miscased heading", "## RUN EVIDENCE\n\n" + good, "heading must be exactly `## Run evidence`"),
+            ("trailing colon", "## Run evidence:\n\n" + good, "heading must be exactly `## Run evidence`"),
+            ("deeper level", "### Run evidence\n\n" + good, "heading must be exactly `## Run evidence`"),
+            ("second miscased section", "## Run evidence\n\n" + good + "\n## RUN EVIDENCE\n\n- RUN-02 [AC-77] `tool`: ran\n",
+             "RUN-02 references unknown criterion AC-77"),
+        ):
+            with self.subTest(name):
+                self.assertIn(want, self._findings(section))
+        # Prose and a quoted grammar are not receipts and not findings.
+        self.assertEqual(self._findings(
+            "## Run evidence\n\nThe runs below were made on a clean checkout.\n\n"
+            "```\n- RUN-01 [AC-01] `<what was executed>`: <what was observed>\n```\n\n" + good), "")
+
+    def test_the_cli_refuses_a_flip_until_a_receipt_is_committed(self):
+        # A real run of the shipped command against a throwaway repository.
+        case = RUN_FIXTURES / "violation_flip_without_run_evidence"
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as home:
+            env["HOME"] = env["USERPROFILE"] = home  # an empty receipt ledger
+
+            def git(*a):
+                return subprocess.run(["git", "-C", repo, *a], check=True, env=env,
+                                      capture_output=True, text=True).stdout.strip()
+
+            def gate(base):
+                return subprocess.run([sys.executable, str(ROOT / "scripts" / "spec_lint.py"),
+                                       "--repo", repo, "--push-range", base, "HEAD"],
+                                      env=env, capture_output=True, text=True)
+            sd = Path(repo) / "docs" / "specs" / "202611200000-toy"
+            sd.mkdir(parents=True)
+            for name in ("feature.md", "plan.md"):
+                (sd / name).write_text((case / name).read_text(encoding="utf-8"), encoding="utf-8")
+            git("init", "-q")
+            git("add", "-A")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+            feature = sd / "feature.md"
+            feature.write_text(feature.read_text(encoding="utf-8").replace(
+                "> **Status:** approved", "> **Status:** converged"), encoding="utf-8")
+            git("commit", "-qam", "flip")
+            first = gate(base)
+            self.assertEqual(first.returncode, 1)
+            self.assertIn("has no run receipt under `## Run evidence`", first.stdout)
+            with feature.open("a", encoding="utf-8") as fh:
+                fh.write("\n## Run evidence\n\n- RUN-01 [AC-01] `<what was executed>`: <what was observed>\n")
+            git("commit", "-qam", "template")
+            template = gate(base)
+            self.assertIn("has no run receipt under `## Run evidence`", template.stdout)
+            self.assertIn("RUN-01 is an unfilled template", template.stdout)
+            feature.write_text(feature.read_text(encoding="utf-8").replace(
+                "`<what was executed>`: <what was observed>",
+                "`python3 app.py`: exit 0, the report is written in UTF-8"), encoding="utf-8")
+            git("commit", "-qam", "receipt")
+            filled = gate(base)
+            self.assertNotIn("run receipt", filled.stdout)
+            self.assertNotIn("unfilled template", filled.stdout)
+            self.assertIn("holds no converge receipt", filled.stdout)  # the other half still asks
 
 
 if __name__ == "__main__":
