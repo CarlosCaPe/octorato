@@ -283,7 +283,7 @@ edges:
       repeatedly on 2026-06-02/03.
 
   - id: sdd-flow
-    concept: "sdd / spec-driven development / 4d+s / ears-1 spec / task grammar / analyze / converge / done is a verdict"
+    concept: "sdd / spec-driven development / 4d+s / ears-1 spec / task grammar / analyze / converge / done is a verdict / build loop until excellence / run evidence / run-evidence.txt"
     appears_in:
       - skills/4d-spec/SKILL.md                               # the orchestrator: classifier + LARGE flow
       - skills/sdd-feature/SKILL.md                           # ears-1 spec, Glossary, markers
@@ -304,14 +304,15 @@ edges:
       - scripts/receipt_ledger.py                             # parse_converge, converge_latest_for/pass_for
       - scripts/r__subagent-stop__qa-receipt.py               # records the converge receipt
       - .githooks/pre-push                                    # OCTORATO-SPEC-GATE stanza
-      - registry/rules.yaml                                   # FLOW.spec-contract, FLOW.done-is-a-verdict
+      - registry/rules.yaml                                   # FLOW.spec-contract, FLOW.done-is-a-verdict, FLOW.build-loop-excellence
       - scripts/brain_doctor.py                               # spec-contract check
       - scripts/tests/test_sdd_skill_contract.py              # pins the contract sentences of the skills above
+      - registry/fixtures/FLOW.build-loop-excellence          # run-evidence.txt ladder of the push gate
     kind: appears_in
     note: >-
       Every ears-1 spec lives in docs/specs/<yyyymmddHHMM>-<name>/ from creation
       and never moves: that path is the key of the converge verdict and the receipt.
-      One flow described in twenty-two places. Changing a step, a verdict word or
+      One flow described in twenty-three places. Changing a step, a verdict word or
       the task grammar means reconciling every surface here, and the linter's
       fixtures when the grammar moves. Lights the `sdd` seek that fell back to
       grep on 2026-09-30.

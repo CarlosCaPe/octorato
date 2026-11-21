@@ -31,13 +31,57 @@ For every pushed ref, `spec_lint.py --push-range <base> <head>` reads the specs 
 1. lints, at the pushed head, every ears-1 spec whose `feature.md` or `plan.md` the push changes (AC-15). Only `ears-1` opts a file in: a header naming another version does not declare this format, and the linter skips that file like a legacy spec (AC-16). The headers are part of the lint: every header-shaped `Status` or `Spec-Format` line, in any markup, must be the canonical `> **Status:** draft|approved|converged` and `> **Spec-Format:** ears-1`, exactly once, in the first 30 lines. The gate reads only the canonical form, so any other form is a finding, never an unseen flip;
 2. refuses a spec that stops being ears-1 in the push (its Spec-Format header removed, broken or changed to another version), in place or by moving: a push that removes an ears-1 spec may not add a spec without the header, nor any `feature.md` outside a spec directory (one level deeper, or outside the spec homes), where the gate would no longer read it, and a spec directory under `docs/specs/` not named `<yyyymmddHHMM>-<lowercase-slug>`;
 3. refuses a spec that says `converged` without a `plan.md`, flip or not;
-4. for every ears-1 spec whose `Status` becomes `converged` in the push, requires the latest anchored converge receipt for that exact spec directory to say `CONVERGED` (a later `GAPS` makes an earlier `CONVERGED` stale) and to be newer than the newest code commit on the branch (AC-14).
+4. for every ears-1 spec whose `Status` becomes `converged` in the push, requires the latest anchored converge receipt for that exact spec directory to say `CONVERGED` (a later `GAPS` makes an earlier `CONVERGED` stale) and to be newer than the newest code commit on the branch (AC-14);
+5. for the same flip, requires the spec directory to carry `run-evidence.txt` with at least one run receipt and no finding (rule `FLOW.build-loop-excellence`, see "The build loop" below). The file is a spec file like `feature.md` and `plan.md`: a push that changes it alone is linted too. All three are linted from the bytes of the blob, so a spec file that is not valid UTF-8 gets the same `not valid UTF-8` finding, with its line, at push as on disk. When `feature.md` is the unreadable file, the gate says nothing about the receipts: their criteria are read from that file, so they cannot be judged.
 
 "Newer" compares the harness-written timestamp of the transcript entry that carries the verdict, never the ledger line's `ts`, against the latest author or committer date among the commits that are on this branch (reachable from the pushed head, not from the default remote branch) and touch a path outside the spec directory. Branch scope closes the two-push split, where code went out in one push and the status flip in the next. Both dates count because each alone is slipped by an everyday command: `git commit --amend` and `git cherry-pick` keep the old author date, and only the committer date shows when the code landed. The cost, accepted: a rebase after the verdict stales it, and so does merging the default branch into the spec's branch (the merge commit is on the branch and master's code entered it unseen by the verifier); the converge pass runs again. That concerns only the push that flips a spec, once per spec. A spec that already says `converged` and has no `plan.md` is refused on any edit, so its first edit restores the plan.
 
 What the gate reads as a header is the header-shaped line at the start of a line. A plain sentence that begins with `Status: converged` at the start of a line is read as a second, non-canonical header and refuses the push; reword it or quote it in backticks. Conversely a status shown only inside an HTML comment, a heading or a later table cell renders for a reader but is not a header, and the gate reads the canonical line.
 
 A receipt is anchored the same way a QA receipt is: written by the harness-side reflex, pointing at a harness-written agent transcript under the projects directory whose last report re-parses to the same verdict and scope, from a verifier persona. A scope must equal the spec directory exactly; a prefix never matches. The gate reads receipts from any session on the machine, because a push runs outside any session.
+
+### The build loop (run evidence and the excellence pass)
+
+Spec: `docs/specs/202611202139-build-loop-excellence/`. "Every criterion met" was the exit of the converge loop, and a criterion could be `met` because the verifier read the code. Two things changed.
+
+**A run is evidence, a reading is not.** `sdd-implement` runs the shipped artifact the way its consumer will (the CLI with real arguments, the app, the endpoint, the rendered document) and records each run in `run-evidence.txt`, a plain-text file next to `feature.md`:
+
+```text
+# runs made from the repository root
+RUN-01 [AC-01, AC-02] `<the exact command or action>`: <exit code and what was observed>
+```
+
+`sdd-converge` re-runs every receipt. A behavioural criterion is `met` only when the verifier saw the artifact do it; code that reads right and was not run is `unrun`, which is a gap.
+
+**Converged means excellent.** After the criteria, the verifier makes an excellence pass over five checks: correctness, run evidence, edge cases, consumer experience (UX for a person, DX for a developer or an agent) and no known defects. It prints `CONVERGE-EXCELLENCE: EXCELLENT | NOT-YET`, and `CONVERGE-VERDICT: CONVERGED` is allowed only with `EXCELLENT`. A failed check becomes a task in the Convergence section, so the loop runs again.
+
+The loop is not a LARGE-only thing any more. `skills/4d-spec/SKILL.md` applies it to anything built for another entity at any score: TRIVIAL and MEDIUM run a light loop (test, run receipt, an independent verifier's `BUILD-VERDICT: EXCELLENT | ITERATE`).
+
+What is mechanical. `run-evidence.txt` is read as bytes: UTF-8, a line ends at a line feed (one carriage return right before it is dropped), and nothing else breaks a line. A line is blank, a comment that starts with `#` at column 0, or a receipt that is, to the character, `RUN-` and two or more ASCII digits, a space, the criteria in brackets joined by a comma and a space, a space, the executed text in one code span, a colon, a space and the observation. Any other line is a finding that names it. Ids are unique, every criterion exists in `feature.md`, and no receipt counts while the file has one finding. The push gate refuses a flip to `converged` when the file is missing, holds no receipt, or holds a finding, and from then on a push may not remove the file of a converged spec or leave it without a counted receipt. Fixtures: `registry/fixtures/FLOW.build-loop-excellence`.
+
+Why a text file and not a section of `feature.md`. The receipts first lived under a `## Run evidence` heading. Three converge passes each found Markdown that a renderer shows as code, or hides, while the linter counted it: an unclosed fence, a tilde line inside a backtick fence, a tab-indented fence, a comment opener in a double-backtick span, a fence line inside an HTML block, an unclosed HTML declaration, a form feed that broke a line for the linter alone. Each fix closed its inputs and the next pass found others. The defect class is "a renderer may show something different from what the linter reads", and it exists only because the receipts sat inside Markdown. In a plain-text file there is no renderer, so the class is gone. The Markdown reader and its rules were deleted, and a `## Run evidence` heading left in `feature.md` is a finding that points to the file, so a spec written the old way fails loudly. A heading means an ATX heading of any level and case, a setext title or a line that is only the words in bold, each also behind quote marks; a list item or a sentence that holds the words is not one.
+
+Two rules remain.
+
+- A placeholder is not a receipt. The value, with brackets, quotes, emphasis marks and punctuation around it stripped, is compared whole with a fixed set (`todo`, `tbd`, `pending`, `n/a`, the templates' own words), or it is empty, a run of `x`, or only angle-bracket groups. `TODO.` and `[TODO]` are placeholders. `todo add milk` is a command.
+- Text has one reading only if its line breaks and its characters do. A character that is not printable text is a finding that names the code point. That is decided by Unicode general category (control, format, line and paragraph separator, every space but U+0020, surrogate, private use, unassigned) plus a list of code points that render blank in other categories (variation selectors, Hangul fillers, the combining grapheme joiner, the Khmer inherent vowels, the blank Braille pattern). A carriage return is a line end only with a line feed right after it; anywhere else, the end of the file included, it is a finding. Python's `str.splitlines()` breaks at ten characters; the reader breaks at one.
+
+Every pattern the linter runs is linear in the length of a line. A test lints 21 line shapes in both files at 50,000 and at 200,000 characters and requires that four times the input cost at most eight times the CPU time; a quadratic pattern costs sixteen.
+
+What is not, stated:
+
+| Residual | Bound |
+|---|---|
+| A TRIVIAL or MEDIUM build has no spec, so nothing forces its loop | The rule in `CLAUDE.md` and the `4d-spec` skill carry it. A small build that skipped its run is not detected |
+| The linter reads a receipt's shape and a fixed list of placeholders, not whether the command ran | A made-up receipt that reads like a real one passes it. The converge verifier re-runs each receipt; one that does not reproduce is a gap |
+| A receipt is one line of plain text | A command that holds a backtick cannot be written as one, a tab is refused, and an observation does not wrap. An emoji that carries the variation selector U+FE0F or a zero-width joiner is refused, which is the likely paste. Notes go in `#` comment lines |
+| The file is written by the builder | It is text the builder wrote, not a harness receipt. The verifier re-running it is the check |
+| The file sits in the spec directory, which the freshness check leaves out | A receipt edited after the verdict does not stale the verdict, as with `feature.md` and `plan.md`. The lint still runs on it at every push that changes it |
+| Which characters are refused is read from the interpreter's Unicode tables | Two Python versions can disagree on a character assigned between their Unicode versions; the older one refuses it as unassigned, so the difference only makes it stricter. A code point that renders blank in some font and is in neither the categories nor the list passes |
+| The gate asks for one receipt, not one per behavioural criterion | Which criteria are behavioural is the verifier's judgment (`unrun`) |
+| `CONVERGE-EXCELLENCE` is not parsed by the receipt hook | The skill ties `CONVERGED` to `EXCELLENT`; a verifier that prints `CONVERGED` after `NOT-YET` is still recorded as converged |
+| `BUILD-VERDICT` of the light loop is recorded by no hook | A convention of the skill |
+| A spec converged before this check is not asked for a receipt | The check reads the flip, like the converge receipt check |
 
 ### What the doctor checks
 
