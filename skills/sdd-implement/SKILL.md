@@ -63,7 +63,7 @@ RUN-01 [AC-01, AC-02] `<the exact command or action>`: <exit code and what you o
 Write the exact command, not a description of it: the verifier pastes it. The file is a
 machine grammar, not Markdown: a line is blank, a comment that starts with `#` at column 0,
 or a receipt in exactly that shape, and the linter reports anything else. No bullets, no
-indent, no tabs, one line per receipt, ids in plain digits. A receipt left as the template,
+indent, no tabs, plain spaces only, one line per receipt, ids in plain digits. A receipt left as the template,
 or filled with `TODO` and the like, is refused, and no receipt counts until every line of
 the file passes. Receipts never go in `feature.md`: a `## Run evidence` heading there is a
 finding.

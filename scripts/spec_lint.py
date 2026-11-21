@@ -4,7 +4,9 @@
 v9 makes "done" a verdict computed against a spec. That only works if a script
 can read the spec, so acceptance criteria are written in EARS and plan tasks
 follow one grammar. This CLI is the reader. It uses the standard library only
-and makes no model call: the same input gives the same answer on every machine.
+and makes no model call: the same input gives the same answer on every machine,
+with one stated exception: which characters run-evidence.txt may hold is read from
+the interpreter's Unicode tables, so a character newer than those tables is refused.
 
 What it checks, per spec directory (a `feature.md`, optionally a `plan.md`):
 
@@ -46,9 +48,12 @@ What it checks, per spec directory (a `feature.md`, optionally a `plan.md`):
       finding: the value, with brackets, quotes and punctuation around it
       stripped, is empty, a word of PLACEHOLDERS, a run of `x`, or only
       angle-bracket groups. A value that merely starts with such a word is real
-    - a control, format or line-separator character anywhere in the file is a
-      finding (tab, form feed, vertical tab, U+001C to U+001F, U+0085, U+2028,
-      U+2029, NUL, zero-width and direction marks, a byte-order mark)
+    - a character that is not printable text, anywhere in the file, is a
+      finding. By Unicode category: control, format, line and paragraph
+      separator, every space but U+0020, surrogate, private use, unassigned.
+      Plus the code points that render blank in other categories (variation
+      selectors, Hangul fillers, the combining grapheme joiner, the blank
+      Braille pattern). A carriage return counts unless a line feed follows it
     - no receipt counts while the file has one finding
     Why a text file: receipts used to sit in a `## Run evidence` section of
     feature.md, and three converge passes each found Markdown that a renderer
@@ -124,6 +129,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -180,14 +186,23 @@ RUN_GRAMMAR = "RUN-## [AC-##] `<what was executed>`: <what was observed>"
 # that look alike must be the same id.
 _RUN_ID = re.compile(r"(RUN-[0-9]{2,}) \[")
 _AC_REF = re.compile(r"AC-[0-9]+")
-# What may not sit in run-evidence.txt: every character that breaks a line for some
-# reader (Python's splitlines breaks at form feed, vertical tab, U+001C to U+001E,
-# U+0085, U+2028 and U+2029), hides (zero-width, soft hyphen, tag characters) or
-# reorders text (direction marks). Spelled as code points, not as Unicode
-# categories, so the answer does not move with the interpreter's Unicode tables.
-_UNSAFE = re.compile(
-    "[\x00-\x1f\x7f-\x9f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f"
-    "\ufeff\ufff9-\ufffb\U000e0001\U000e0020-\U000e007f]")
+# What may not sit in run-evidence.txt: every character that is not printable text.
+# By Unicode general category: control (Cc), format (Cf: zero-width and direction
+# marks, the byte-order mark, tag characters, musical and shorthand format controls),
+# line and paragraph separator (Zl, Zp), every space but U+0020 (Zs: no-break,
+# ideographic, the en and em family), surrogate (Cs), private use (Co) and unassigned
+# (Cn). That covers the ten characters Python's splitlines breaks at. Plus the code
+# points that render as nothing or as a blank and sit in other categories: the
+# combining grapheme joiner, the Hangul fillers, the Khmer inherent vowels, the
+# Mongolian and the standard variation selectors, the blank Braille pattern.
+# Stated: categories come from the interpreter's `unicodedata`, so a character
+# assigned in a newer Unicode version is refused as unassigned by an older Python
+# and judged by its category by a newer one.
+_UNSAFE_CATEGORIES = frozenset(("Cc", "Cf", "Zl", "Zp", "Zs", "Cs", "Co", "Cn"))
+_BLANK_CODE_POINTS = frozenset((
+    0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, *range(0x180B, 0x1810), 0x2800, 0x3164,
+    *range(0xFE00, 0xFE10), 0xFFA0, *range(0xE0100, 0xE01F0)))
+_ASCII_UNSAFE = re.compile(r"[\x00-\x1f\x7f]")
 _ANGLE_GROUP = re.compile(r"<[^<>]*>")
 # What a value may be wrapped in and still be the same placeholder: `TODO.`,
 # `[TODO]`, `(tbd)`, `**`.
@@ -207,6 +222,7 @@ class Report:
     findings: list = field(default_factory=list)
     skipped: bool = False
     criteria: set = field(default_factory=set)
+    unreadable: bool = False
 
     def add(self, file: Path, line: int, msg: str) -> None:
         self.findings.append(f"{file}:{line}: {msg}")
@@ -288,6 +304,29 @@ def _is_placeholder(value: str) -> bool:
     return not _ANGLE_GROUP.sub("", value).strip(_WRAPPING)
 
 
+def _unsafe_char(line: str):
+    """The first character of the line that is not printable text, or None."""
+    if line.isascii():
+        m = _ASCII_UNSAFE.search(line)
+        return m.group() if m else None
+    for ch in line:
+        if ch != " " and (ord(ch) in _BLANK_CODE_POINTS
+                          or unicodedata.category(ch) in _UNSAFE_CATEGORIES):
+            return ch
+    return None
+
+
+def _decode_spec(data: bytes) -> tuple:
+    """(text, bad_line) of a feature.md or plan.md. bad_line is None for valid UTF-8,
+    else the line of the first byte that is not, and the text carries U+FFFD there so
+    the headers can still be read. Line ends are folded the way text mode folds them."""
+    try:
+        text, bad = data.decode("utf-8"), None
+    except UnicodeDecodeError as exc:
+        text, bad = data.decode("utf-8", "replace"), data.count(b"\n", 0, exc.start) + 1
+    return text.replace("\r\n", "\n").replace("\r", "\n"), bad
+
+
 def _parse_receipt(line: str):
     """(id, [criteria], executed, observed) of an exact receipt line, else None.
     The shape is fixed to the character: `RUN-## [AC-##, AC-##] `executed`: observed`."""
@@ -339,12 +378,15 @@ def run_evidence(data, criteria=None) -> tuple:
     except UnicodeDecodeError as exc:
         return [], [(data.count(b"\n", 0, exc.start) + 1, "not valid UTF-8")]
     receipts, findings, seen = [], [], {}
-    for i, line in enumerate(text.split("\n"), 1):
-        if line.endswith("\r"):
+    segments = text.split("\n")
+    for i, line in enumerate(segments, 1):
+        # A carriage return is a line end only with the line feed right after it. The
+        # last segment has none after it, so a CR that ends the file stays and is told.
+        if i < len(segments) and line.endswith("\r"):
             line = line[:-1]
-        bad = _UNSAFE.search(line)
+        bad = _unsafe_char(line)
         if bad:
-            findings.append((i, f"holds the character U+{ord(bad.group()):04X}; only printable "
+            findings.append((i, f"holds the character U+{ord(bad):04X}; only printable "
                                 f"text is allowed, and a line ends at a line feed"))
             continue
         line = line.rstrip(" ")
@@ -435,10 +477,16 @@ def _lint_headers(feature: Path, text: str, report: Report) -> None:
 
 def lint_feature(feature: Path, report: Report, ready: bool) -> set:
     """Returns the set of criterion ids, for the plan coverage check."""
-    text = feature.read_text(encoding="utf-8")
+    text, bad = _decode_spec(feature.read_bytes())
     lines = _readable_lines(text)
     if not is_ears(text):
         report.skipped = True
+        return set()
+    if bad:
+        # Nothing else is said about a file that cannot be read as text: every other
+        # finding would be about the replacement characters, not about the spec.
+        report.add(feature, bad, "not valid UTF-8")
+        report.unreadable = True
         return set()
     _lint_headers(feature, text, report)
 
@@ -484,9 +532,10 @@ def lint_feature(feature: Path, report: Report, ready: bool) -> set:
     body = "\n".join(_INLINE_CODE.sub("", line) for _i, line in lines)
     spans = _marker_spans(body)
     total = len(spans)
-    # Line numbers only for the few a message names: counting newlines per marker
-    # made a text full of markers cost its length times their number.
-    markers = [(body.count("\n", 0, a) + 1, 1) for a, _b in spans[:MAX_MARKERS + 1]]
+    # Line numbers only for the few a message names (the first over the cap, all of
+    # them when at most MAX_MARKERS are open): counting newlines per marker made a
+    # text full of markers cost its length times their number.
+    markers = [(body.count("\n", 0, a) + 1, 1) for a, _b in spans[:MAX_MARKERS]]
     if total > MAX_MARKERS:
         report.add(feature, markers[0][0],
                    f"{total} NEEDS CLARIFICATION markers, the cap is {MAX_MARKERS}")
@@ -498,7 +547,11 @@ def lint_feature(feature: Path, report: Report, ready: bool) -> set:
 
 
 def lint_plan(plan: Path, criteria: set, report: Report) -> None:
-    lines = _readable_lines(plan.read_text(encoding="utf-8"))
+    text, bad = _decode_spec(plan.read_bytes())
+    if bad:
+        report.add(plan, bad, "not valid UTF-8")
+        return
+    lines = _readable_lines(text)
     seen: dict = {}
     referenced: set = set()
     planned = 0
@@ -543,7 +596,7 @@ def lint(target: Path, ready: bool = False) -> Report:
         report.add(feature, 0, "feature.md not found")
         return report
     criteria = lint_feature(feature, report, ready)
-    if report.skipped:
+    if report.skipped or report.unreadable:
         return report
     report.criteria = criteria
     plan = feature.parent / "plan.md"
@@ -576,16 +629,18 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _show(repo: Path, rev: str, path: str):
-    # errors="replace": a spec file that is not valid text is a finding of its own
-    # reader, never a crash of the push check.
+    # errors="replace": this text is only used to read headers. The lint of the push
+    # runs on the blob's own bytes (`_show_bytes`), so a spec file that is not valid
+    # UTF-8 is a finding there, the same one the lint of the file on disk gives.
     cp = subprocess.run(["git", "-C", str(repo), "show", f"{rev}:{path}"],
-                        capture_output=True, text=True, errors="replace")
+                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     return cp.stdout if cp.returncode == 0 else None
 
 
 def _show_bytes(repo: Path, rev: str, path: str):
-    """The blob as stored. run-evidence.txt is read as bytes: text mode would turn
-    a lone carriage return into a line break before the reader ever saw it."""
+    """The blob as stored. The push lint is fed these bytes, so it reads what the lint
+    of the file on disk reads; for run-evidence.txt text mode would also turn a lone
+    carriage return into a line break before the reader ever saw it."""
     cp = subprocess.run(["git", "-C", str(repo), "show", f"{rev}:{path}"], capture_output=True)
     return cp.stdout if cp.returncode == 0 else None
 
@@ -819,9 +874,9 @@ def push_findings(repo: Path, base: str, head: str) -> list:
         plan_now = _show(repo, head, f"{sd}/plan.md")
         evidence_now = _show_bytes(repo, head, f"{sd}/{EVIDENCE_FILE}")
         with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "feature.md").write_text(feature_now, encoding="utf-8")
+            (Path(tmp) / "feature.md").write_bytes(_show_bytes(repo, head, f"{sd}/feature.md"))
             if plan_now is not None:
-                (Path(tmp) / "plan.md").write_text(plan_now, encoding="utf-8")
+                (Path(tmp) / "plan.md").write_bytes(_show_bytes(repo, head, f"{sd}/plan.md"))
             if evidence_now is not None:
                 (Path(tmp) / EVIDENCE_FILE).write_bytes(evidence_now)
             rep = lint(Path(tmp))

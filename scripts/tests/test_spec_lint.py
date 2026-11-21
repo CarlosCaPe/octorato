@@ -8,6 +8,7 @@ the linter is broken, the CLI exit codes, and the live v9 spec staying clean.
 """
 from __future__ import annotations
 
+import ast
 import importlib.util
 import io
 import os
@@ -438,7 +439,25 @@ class RunEvidenceTest(unittest.TestCase):
             self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
 
     def test_selftest_goes_red_when_unsafe_characters_are_let_through(self):
-        with mock.patch.object(spec_lint, "_UNSAFE", re.compile(r"(?!)")):
+        with mock.patch.object(spec_lint, "_unsafe_char", lambda line: None):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_when_only_ascii_controls_are_refused(self):
+        ascii_only = lambda line: (m.group() if (m := spec_lint._ASCII_UNSAFE.search(line)) else None)  # noqa: E731
+        with mock.patch.object(spec_lint, "_unsafe_char", ascii_only):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_when_blank_code_points_outside_the_categories_pass(self):
+        with mock.patch.object(spec_lint, "_BLANK_CODE_POINTS", frozenset()):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_when_other_spaces_pass(self):
+        with mock.patch.object(spec_lint, "_UNSAFE_CATEGORIES",
+                               spec_lint._UNSAFE_CATEGORIES - {"Zs"}):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_when_a_legacy_converged_spec_may_add_an_empty_file(self):
+        with mock.patch.object(spec_lint, "_needs_evidence", lambda flip, had, has: flip or had):
             self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
 
     def test_selftest_goes_red_when_ids_take_any_unicode_digit(self):
@@ -482,8 +501,8 @@ class RunEvidenceTest(unittest.TestCase):
             "crlf line ends": (f"# runs\r\n{line}\r\n{two}\r\n", ["RUN-01", "RUN-02"]),
             "angle-bracket argument": ("RUN-01 [AC-01] `tool --repo <tmp>`: exit 0\n", ["RUN-01"]),
             "markup that means nothing here": ("RUN-01 [AC-01] `tool`: prints <!-- <script> ``` and exits 0\n", ["RUN-01"]),
-            "non-ASCII observation": ("RUN-01 [AC-01] `tool`: escribió 3 filas, 日本語\n", ["RUN-01"]),
-            "no-break space in an observation": ("RUN-01 [AC-01] `tool`: 3\u00a0rows\n", ["RUN-01"]),
+            "non-ASCII observation": ("RUN-01 [AC-01] `tool`: naïve café 3 rows, 日本語, ✓ 😀\n", ["RUN-01"]),
+            "combining accent": ("RUN-01 [AC-01] `tool`: cafe\u0301 3 rows\n", ["RUN-01"]),
             "long id": (line.replace("RUN-01", "RUN-0123"), ["RUN-0123"]),
             # everything below is refused, and one refused line empties the file
             "empty file": ("", []),
@@ -537,6 +556,30 @@ class RunEvidenceTest(unittest.TestCase):
             "isolate": (f"{line}\u2066\n", []),
             "byte-order mark": (f"\ufeff{line}\n", []),
             "tag character": (f"{line}\U000e0041\n", []),
+            "carriage return that ends the file": (line + "\r", []),
+            "carriage return that ends the file after a line": (f"# runs\n{line}\r", []),
+            "two spaces after the colon": (line.replace("`: exit", "`:  exit"), []),
+            "no-break space in an observation": ("RUN-01 [AC-01] `tool`: 3\u00a0rows\n", []),
+            "narrow no-break space": (f"{line}\u202f\n", []),
+            "ideographic space": (f"{line}\u3000\n", []),
+            "en space": (f"{line}\u2002\n", []),
+            "hangul filler": (f"{line}\u3164\n", []),
+            "hangul choseong filler": (f"{line}\u115f\n", []),
+            "hangul jungseong filler": (f"{line}\u1160\n", []),
+            "halfwidth hangul filler": (f"{line}\uffa0\n", []),
+            "combining grapheme joiner": (f"{line}\u034f\n", []),
+            "variation selector 16": (f"{line}\ufe0f\n", []),
+            "variation selector 17": (f"{line}\U000e0100\n", []),
+            "mongolian variation selector": (f"{line}\u180b\n", []),
+            "khmer inherent vowel": (f"{line}\u17b4\n", []),
+            "blank braille pattern": (f"{line}\u2800\n", []),
+            "musical format character": (f"{line}\U0001d173\n", []),
+            "unassigned tag code point": (f"{line}\U000e0000\n", []),
+            "another unassigned tag code point": (f"{line}\U000e0002\n", []),
+            "private use": (f"{line}\ue000\n", []),
+            "noncharacter": (f"{line}\uffff\n", []),
+            "word joiner": (f"{line}\u2060\n", []),
+            "interlinear annotation": (f"{line}\ufff9\n", []),
             "no file": (None, []),
         }
         for name, (text, want) in cases.items():
@@ -552,8 +595,12 @@ class RunEvidenceTest(unittest.TestCase):
                 self.assertEqual(spec_lint.run_evidence(data)[1][0][1], "not valid UTF-8")
 
     def test_lines_break_at_line_feeds_only(self):
-        # str.splitlines() also breaks at eleven other characters; the reader must not.
-        for ch in "\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029\r":
+        # str.splitlines() breaks at ten characters. Nine of them are not a line feed,
+        # and the reader must not break there.
+        breakers = "\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029\r"
+        self.assertEqual({ch for ch in map(chr, range(0x110000)) if len(f"a{ch}b".splitlines()) == 2},
+                         set(breakers) | {"\n"})
+        for ch in breakers:
             with self.subTest(f"U+{ord(ch):04X}"):
                 data = f"# a{ch}{self.LINE}\n".encode("utf-8")
                 receipts, findings = spec_lint.run_evidence(data)
@@ -562,6 +609,26 @@ class RunEvidenceTest(unittest.TestCase):
                 self.assertIn(f"U+{ord(ch):04X}", findings[0][1])
         # a carriage return is dropped only right before the line feed
         self.assertEqual(spec_lint.run_evidence(f"{self.LINE}\r\n".encode()), ([(1, "RUN-01", ["AC-01"])], []))
+        # ... so a carriage return that ends the file, with no line feed after it, is told
+        receipts, findings = spec_lint.run_evidence(f"{self.LINE}\r".encode())
+        self.assertEqual((receipts, [i for i, _m in findings]), ([], [1]))
+        self.assertIn("U+000D", findings[0][1])
+
+    def test_every_character_that_is_not_printable_text_is_refused(self):
+        # The claim of the Contract_Doc, checked over the whole code space: a character
+        # the reader accepts is a space or belongs to a letter, mark, number,
+        # punctuation or symbol category, and is not in the blank list.
+        import unicodedata
+        refused = {"Cc", "Cf", "Zl", "Zp", "Zs", "Cs", "Co", "Cn"}
+        for cp in range(0x110000):
+            ch = chr(cp)
+            want = ch != " " and (unicodedata.category(ch) in refused or cp in spec_lint._BLANK_CODE_POINTS)
+            if (spec_lint._unsafe_char("é" + ch) is not None) != want or \
+                    (cp < 128 and (spec_lint._unsafe_char(ch) is not None) != want):
+                self.fail(f"U+{cp:04X} ({unicodedata.category(ch)})")
+        for cp in (0x1D173, 0x3164, 0x115F, 0x034F, 0xFE0F, 0xE0000, 0xE0002, 0xFFA0, 0x17B4, 0x2800):
+            with self.subTest(f"U+{cp:04X}"):
+                self.assertEqual(spec_lint._unsafe_char("x" + chr(cp)), chr(cp))
 
     def test_criteria_must_exist_when_they_are_known(self):
         data = (self.LINE + "\n").encode()
@@ -646,6 +713,39 @@ class RunEvidenceTest(unittest.TestCase):
         self.assertEqual(self._findings(good, feature_tail="\n## Notes\n\nThe run evidence is in the text file.\n"), "")
         self.assertEqual(self._findings(good, feature_tail="\n## Notes\n\n```\n## Run evidence\n```\n"), "")
 
+    def test_a_spec_file_that_is_not_utf8_is_a_finding_with_its_line(self):
+        bad = b"caf\xe9\n"
+        with tempfile.TemporaryDirectory() as d:
+            feature, plan = Path(d) / "feature.md", Path(d) / "plan.md"
+            good_plan = b"# Plan\n\n- [ ] T01 [AC-01] app.py: do it\n"
+            feature.write_bytes(self.FEATURE.encode() + bad)
+            plan.write_bytes(good_plan)
+            want = self.FEATURE.count("\n") + 1
+            self.assertEqual(spec_lint.lint(Path(d)).findings, [f"{feature}:{want}: not valid UTF-8"])
+            feature.write_bytes(self.FEATURE.encode())
+            plan.write_bytes(good_plan + bad)
+            self.assertEqual(spec_lint.lint(Path(d)).findings, [f"{plan}:4: not valid UTF-8"])
+            plan.write_bytes(good_plan)
+            self.assertEqual(spec_lint.lint(Path(d)).findings, [])
+            # a legacy spec (no Spec-Format header) is skipped as before, readable or not
+            feature.write_bytes(b"# Old spec\n\ncaf\xe9\n")
+            self.assertTrue(spec_lint.lint(Path(d)).skipped)
+
+    def test_three_markers_name_their_three_lines(self):
+        text = self.FEATURE + "\n## Notes\n\n[NEEDS CLARIFICATION: a]\n\n[NEEDS CLARIFICATION]\nx\n[NEEDS CLARIFICATION: c]\n"
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "feature.md").write_text(text, encoding="utf-8")
+            first = self.FEATURE.count("\n") + 4
+            self.assertEqual(spec_lint.lint(Path(d)).findings, [])
+            found = spec_lint.lint(Path(d), ready=True).findings
+            self.assertEqual(len(found), 1)
+            self.assertTrue(found[0].endswith(
+                f":{first}: not ready: 3 NEEDS CLARIFICATION marker(s) open (lines {first}, {first + 2}, {first + 4})"),
+                found[0])
+            (Path(d) / "feature.md").write_text(text + "[NEEDS CLARIFICATION: d]\n", encoding="utf-8")
+            found = spec_lint.lint(Path(d)).findings
+            self.assertTrue(found[0].endswith(f":{first}: 4 NEEDS CLARIFICATION markers, the cap is 3"), found[0])
+
     def test_a_directory_in_place_of_the_file_is_a_finding(self):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "feature.md").write_text(self.FEATURE, encoding="utf-8")
@@ -653,42 +753,55 @@ class RunEvidenceTest(unittest.TestCase):
             self.assertIn("cannot be read", "\n".join(spec_lint.lint(Path(d)).findings))
 
     def test_a_long_line_costs_linear_time(self):
-        # 200,000 characters per line, every shape that made an earlier pattern crawl.
-        n = 200_000
+        # Every shape that made an earlier pattern crawl, at 50,000 and at 200,000
+        # characters. Measured in CPU time of this process (a busy machine does not
+        # move it) and judged by growth: four times the input may cost at most eight
+        # times the work, where a quadratic pattern costs sixteen. The old header
+        # pattern took 2.5 CPU seconds at 16,000 characters.
         good = self.LINE + "\n"
-        lines = {
-            "hash then spaces": "#" + " " * n + "x",
-            "spaces": " " * n + "x",
-            "stars": "*" * n + "x",
-            "quote marks": "> " * (n // 2) + "x",
-            "dashes": "- " * (n // 2) + "x",
-            "underscores": "_" * n + "x",
-            "status then spaces": "status" + " " * n + "x",
-            "status colon then spaces": "status:" + " " * n + "x",
-            "spec-format then stars": "spec-format" + "*" * n + "x",
-            "receipt with an open backtick": "RUN-01 [AC-01] `" + " " * n,
-            "receipt with spaces before the colon": "RUN-01 [AC-01] `tool`" + " " * n + ":",
-            "receipt of angle brackets": "RUN-01 [AC-01] `" + "<" * n + "`: ok",
-            "receipt with a long criteria list": "RUN-01 [" + "AC-1, " * (n // 6),
-            "receipt with a long id": "RUN-" + "0" * n,
-            "backticks": "`" * n,
-            "run ids": "RUN-" * (n // 4),
-            "unclosed markers": "[NEEDS CLARIFICATION:" * (n // 21),
-            "marker then spaces": "[NEEDS" + " " * n,
-            "brackets": "[" * n,
-            "run evidence then spaces": "## Run evidence" + " " * n + "x",
-            "non-ASCII": "é" * n,
+        shapes = {
+            "hash then spaces": lambda n: "#" + " " * n + "x",
+            "spaces": lambda n: " " * n + "x",
+            "stars": lambda n: "*" * n + "x",
+            "quote marks": lambda n: "> " * (n // 2) + "x",
+            "dashes": lambda n: "- " * (n // 2) + "x",
+            "underscores": lambda n: "_" * n + "x",
+            "status then spaces": lambda n: "status" + " " * n + "x",
+            "status colon then spaces": lambda n: "status:" + " " * n + "x",
+            "spec-format then stars": lambda n: "spec-format" + "*" * n + "x",
+            "receipt with an open backtick": lambda n: "RUN-01 [AC-01] `" + " " * n,
+            "receipt with spaces before the colon": lambda n: "RUN-01 [AC-01] `tool`" + " " * n + ":",
+            "receipt of angle brackets": lambda n: "RUN-01 [AC-01] `" + "<" * n + "`: ok",
+            "receipt with a long criteria list": lambda n: "RUN-01 [" + "AC-1, " * (n // 6),
+            "receipt with a long id": lambda n: "RUN-" + "0" * n,
+            "backticks": lambda n: "`" * n,
+            "run ids": lambda n: "RUN-" * (n // 4),
+            "unclosed markers": lambda n: "[NEEDS CLARIFICATION:" * (n // 21),
+            "marker then spaces": lambda n: "[NEEDS" + " " * n,
+            "brackets": lambda n: "[" * n,
+            "run evidence then spaces": lambda n: "## Run evidence" + " " * n + "x",
+            "non-ASCII": lambda n: "é" * n,
         }
-        for name, line in lines.items():
+
+        def cost(shape, n, where):
+            line = shape(n)
+            best = None
+            for _ in range(3):
+                began = time.process_time()
+                if where == "in the evidence file":
+                    self._findings(good + line + "\n")
+                    spec_lint.run_receipts((good + line + "\n").encode("utf-8"))
+                else:
+                    self._findings(good, feature_tail="\n## Notes\n\n" + line + "\n")
+                spent = time.process_time() - began
+                best = spent if best is None else min(best, spent)
+            return best
+        for name, shape in shapes.items():
             for where in ("in the evidence file", "in feature.md"):
                 with self.subTest(f"{name}, {where}"):
-                    began = time.perf_counter()
-                    if where == "in the evidence file":
-                        self._findings(good + line + "\n")
-                        spec_lint.run_receipts((good + line + "\n").encode("utf-8"))
-                    else:
-                        self._findings(good, feature_tail="\n## Notes\n\n" + line + "\n")
-                    self.assertLess(time.perf_counter() - began, 1.0)
+                    small, large = cost(shape, 50_000, where), cost(shape, 200_000, where)
+                    # 0.02 s floor: below it the clock's own grain is the measure
+                    self.assertLessEqual(large, 8 * max(small, 0.02), (small, large))
 
     def test_linear_patterns_read_what_the_old_ones_read(self):
         # The three patterns rewritten for linear time, checked against their old form.
@@ -700,7 +813,7 @@ class RunEvidenceTest(unittest.TestCase):
         old_marker = re.compile(r"\[\s*NEEDS\s+CLARIFICATION\s*(?::[^\]]*)?\]", re.IGNORECASE)
         corpus = []
         for path in list(ROOT.glob("docs/specs*/*/*.md")) + list(ROOT.glob("registry/fixtures/FLOW.*/*/*.md")):
-            corpus += path.read_text(encoding="utf-8").splitlines()
+            corpus += path.read_text(encoding="utf-8", errors="replace").splitlines()  # two fixtures are not UTF-8 on purpose
         rng = random.Random(20261120)
         header_bits = ["> ", "- ", "* ", "| ", "+ ", "**", "_", " ", "\t", "status", "Status", "spec-format",
                        "Spec_Format", ":", "|", "draft", "converged", "approved", "ears-1", "ears-2", "x"]
@@ -725,59 +838,6 @@ class RunEvidenceTest(unittest.TestCase):
             self.assertEqual(spec_lint._marker_spans(text), want, repr(text))
             self.assertEqual(spec_lint._without_markers(text), old_marker.sub("", text), repr(text))
         self.assertGreater(seen, 1000)
-
-    def test_the_cli_refuses_a_flip_until_a_receipt_is_committed(self):
-        # A real run of the shipped command against a throwaway repository.
-        case = RUN_FIXTURES / "violation_flip_without_run_evidence"
-        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
-                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
-        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as home:
-            env["HOME"] = env["USERPROFILE"] = home  # an empty receipt ledger
-
-            def git(*a):
-                return subprocess.run(["git", "-C", repo, *a], check=True, env=env,
-                                      capture_output=True, text=True).stdout.strip()
-
-            def gate(base):
-                return subprocess.run([sys.executable, str(ROOT / "scripts" / "spec_lint.py"),
-                                       "--repo", repo, "--push-range", base, "HEAD"],
-                                      env=env, capture_output=True, text=True)
-            sd = Path(repo) / "docs" / "specs" / "202611200000-toy"
-            sd.mkdir(parents=True)
-            for name in ("feature.md", "plan.md"):
-                (sd / name).write_text((case / name).read_text(encoding="utf-8"), encoding="utf-8")
-            git("init", "-q")
-            git("add", "-A")
-            git("commit", "-qm", "base")
-            base = git("rev-parse", "HEAD")
-            feature = sd / "feature.md"
-            feature.write_text(feature.read_text(encoding="utf-8").replace(
-                "> **Status:** approved", "> **Status:** converged"), encoding="utf-8")
-            git("commit", "-qam", "flip")
-            first = gate(base)
-            self.assertEqual(first.returncode, 1)
-            self.assertIn("has no run receipt under `## Run evidence`", first.stdout)
-            with feature.open("a", encoding="utf-8") as fh:
-                fh.write("\n## Run evidence\n\n- RUN-01 [AC-01] `<what was executed>`: <what was observed>\n")
-            git("commit", "-qam", "template")
-            template = gate(base)
-            self.assertIn("has no run receipt under `## Run evidence`", template.stdout)
-            self.assertIn("RUN-01 is an unfilled template", template.stdout)
-            feature.write_text(feature.read_text(encoding="utf-8").replace(
-                "`<what was executed>`: <what was observed>",
-                "`python3 app.py`: exit 0, the report is written in UTF-8"), encoding="utf-8")
-            git("commit", "-qam", "receipt")
-            filled = gate(base)
-            self.assertNotIn("run receipt", filled.stdout)
-            self.assertNotIn("unfilled template", filled.stdout)
-            self.assertIn("holds no converge receipt", filled.stdout)  # the other half still asks
-            feature.write_text(feature.read_text(encoding="utf-8").replace(
-                "`python3 app.py`: exit 0, the report is written in UTF-8",
-                "`todo add milk`: pending migrations 0, exit 0"), encoding="utf-8")
-            git("commit", "-qam", "a real command that starts with a placeholder word")
-            honest = gate(base)
-            self.assertNotIn("run receipt", honest.stdout)
-            self.assertNotIn("unfilled template", honest.stdout)
 
     def test_the_cli_refuses_a_flip_until_a_receipt_is_committed(self):
         # A real run of the shipped command against a throwaway repository.
@@ -826,6 +886,11 @@ class RunEvidenceTest(unittest.TestCase):
             self.assertIn("holds the character U+000C", hidden.stdout)
             lone = commit("a receipt behind a lone carriage return", b"# runs\rRUN-01 [AC-01] `python3 app.py`: exit 0\n")
             self.assertIn("holds the character U+000D", lone.stdout)
+            ends = commit("a carriage return that ends the file", b"RUN-01 [AC-01] `python3 app.py`: exit 0\r")
+            self.assertIn("run-evidence.txt:1: holds the character U+000D", ends.stdout)
+            self.assertIn("holds no run receipt that counts", ends.stdout)
+            filler = commit("a hangul filler", "RUN-01 [AC-01] `python3 app.py`: exit 0\u3164\n".encode())
+            self.assertIn("run-evidence.txt:1: holds the character U+3164", filler.stdout)
             binary = commit("not text", b"RUN-01 [AC-01] `python3 app.py`: exit 0\n\xff\xfe\n")
             self.assertEqual(binary.returncode, 1)
             self.assertIn("run-evidence.txt:2: not valid UTF-8", binary.stdout)
@@ -837,6 +902,44 @@ class RunEvidenceTest(unittest.TestCase):
                             b"RUN-01 [AC-01] `todo add milk`: pending migrations 0, exit 0\n")
             self.assertNotIn("run-evidence", honest.stdout)
             self.assertNotIn("unfilled template", honest.stdout)
+            # feature.md and plan.md that are not UTF-8: the push says what the lint of
+            # the file on disk says, with the same line
+            for name in ("feature.md", "plan.md"):
+                target = sd / name
+                kept = target.read_bytes()
+                target.write_bytes(kept + b"caf\xe9\n")
+                git("commit", "-qam", f"{name} is not text")
+                pushed = gate(base)
+                local = subprocess.run([sys.executable, str(ROOT / "scripts" / "spec_lint.py"), str(sd)],
+                                       env=env, capture_output=True, text=True)
+                line = kept.count(b"\n") + 1
+                self.assertEqual(pushed.returncode, 1)
+                self.assertEqual(local.returncode, 1)
+                self.assertIn(f"docs/specs/202611200000-toy/{name}:{line}: not valid UTF-8", pushed.stdout)
+                self.assertIn(f"{name}:{line}: not valid UTF-8", local.stdout)
+                target.write_bytes(kept)
+                git("commit", "-qam", f"{name} is text again")
+
+
+class ModuleHygieneTest(unittest.TestCase):
+    def test_no_test_name_is_defined_twice_in_a_class(self):
+        # A second `def` with the same name replaces the first without a word: the
+        # first test stops running and the count of tests reads one too high. That is
+        # how a test of a deleted design stayed in this file (Convergence 4, T35).
+        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+        self.assertGreater(len(classes), 5)
+        names = [n.name for n in tree.body if isinstance(n, (ast.ClassDef, ast.FunctionDef))]
+        self.assertEqual(sorted(set(names)), sorted(names), "a class or function is defined twice")
+        for cls in classes:
+            seen = [n.name for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+            twice = sorted({n for n in seen if seen.count(n) > 1})
+            self.assertEqual(twice, [], f"{cls.name} defines {twice} more than once")
+
+    def test_the_guard_sees_a_shadowed_test(self):
+        tree = ast.parse("class T:\n    def test_a(self): pass\n    def test_a(self): pass\n")
+        seen = [n.name for n in tree.body[0].body]
+        self.assertEqual(sorted({n for n in seen if seen.count(n) > 1}), ["test_a"])
 
 
 if __name__ == "__main__":
