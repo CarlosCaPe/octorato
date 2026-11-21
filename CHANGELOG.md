@@ -15,6 +15,20 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-11-20]: v12.2.2
+### Other
+- chore(gitignore): ignore harness policy-limits and remote-settings caches (#471)
+
+## [2026-11-20]: v12.2.1
+### Fixes
+- fix(tests): stop-block word count and four Windows test failures (#470)
+
+## [2026-11-20]: v12.2.0
+### Features
+- feat(gates): record provenance off-screen, show it on request (#469)
+### Other
+- docs(changelog): backfill v12.1.0 (#468)
+
 ## [2026-11-18]: v12.1.0
 ### Features
 - feat(skills): add narrative-3d-prose voice skill with VOZ-3D QA rubric (#463)
