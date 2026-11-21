@@ -408,6 +408,40 @@ class RunEvidenceTest(unittest.TestCase):
         with mock.patch.object(spec_lint, "_needs_evidence", lambda flip, had, has: flip):
             self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
 
+    def test_selftest_goes_red_when_the_push_lints_replaced_text_and_not_the_blob(self):
+        # The push must say what the lint of the file on disk says. Fed text with
+        # U+FFFD in place of the bad byte, it found nothing wrong with feature.md.
+        real = spec_lint._show_bytes
+
+        def replaced(repo, rev, path):
+            data = real(repo, rev, path)
+            if data is None or not path.endswith((".md",)):
+                return data
+            return data.decode("utf-8", "replace").encode("utf-8")
+        with mock.patch.object(spec_lint, "_show_bytes", replaced):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_a_flip_with_an_unreadable_feature_gets_one_finding(self):
+        # ... and no second line that calls its clean receipts uncounted.
+        case = RUN_FIXTURES / "violation_flip_feature_not_utf8"
+        line = (case / "feature.md").read_bytes().count(b"\n")
+        self.assertEqual(spec_lint._push_selftest_case(case),
+                         [f"docs/specs/202609300000-toy/feature.md:{line}: not valid UTF-8"])
+
+    def test_selftest_goes_red_when_a_title_that_names_the_file_is_flagged(self):
+        real = spec_lint._names_run_evidence
+
+        def no_exception(line, below=""):
+            return real(line.casefold().replace("run-evidence.txt", "run evidence"), below)
+        with mock.patch.object(spec_lint, "_names_run_evidence", no_exception):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_when_combining_marks_alone_are_a_value(self):
+        real = spec_lint._is_placeholder
+        with mock.patch.object(spec_lint, "_is_placeholder",
+                               lambda value: value.isascii() and real(value)):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
     def test_selftest_goes_red_when_the_file_is_not_linted(self):
         with mock.patch.object(spec_lint, "_lint_run_evidence", lambda *a, **k: None):
             self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
@@ -458,6 +492,7 @@ class RunEvidenceTest(unittest.TestCase):
         headings = [("## Run evidence", ""), ("# Run evidence", ""), ("###### RUN EVIDENCE", ""),
                     ("## Run evidence (final)", ""), ("## Run evidence:", ""), ("   ## Run evidence", ""),
                     ("## Run evidence ##", ""), ("## run_evidence", ""), ("## **Run evidence**", ""),
+                    ("## Run evidence file moves out of Markdown", ""),
                     ("##\tRun evidence", ""), ("> ## Run evidence", ""), ("> > ## Run evidence", ""),
                     (">## Run evidence", ""), ("Run evidence", "====="), ("Run evidence:", "---"),
                     ("run-evidence", "-"), ("**Run evidence**", ""), ("__Run evidence__", ""),
@@ -466,7 +501,14 @@ class RunEvidenceTest(unittest.TestCase):
                   ("run_evidence", ""), ("Run evidence", ""), ("Run evidence", "text"), ("- Run evidence", "---"),
                   ("The run evidence is in the file.", ""), ("    ## Run evidence", ""), ("#Run evidence", ""),
                   ("####### Run evidence", ""), ("## Notes on run evidence", ""), ("**Run evidence** is here", ""),
-                  ("| Run evidence |", ""), ("`## Run evidence`", ""), ("- ## Run evidence", ""), ("", ""), ("##", "")]
+                  ("| Run evidence |", ""), ("`## Run evidence`", ""), ("- ## Run evidence", ""), ("", ""), ("##", ""),
+                  # a title that names the file documents it; it is no leftover section
+                  ("## run-evidence.txt", ""), ("## `run-evidence.txt` format", ""),
+                  ("## Run evidence: see run-evidence.txt", ""), ("### The RUN-EVIDENCE.TXT file", ""),
+                  ("**run-evidence.txt**", ""), ("run-evidence.txt", "---"), ("> ## run-evidence.txt", ""),
+                  # stated limits: the check is a pointer, not a parser of every heading
+                  ("## **Run** evidence", ""), ("## [Run evidence](x)", ""), ("## 4. Run evidence", ""),
+                  ("<h2>Run evidence</h2>", "")]
         for line, below in headings:
             with self.subTest(heading=line, below=below):
                 self.assertTrue(spec_lint._names_run_evidence(line, below))
@@ -662,7 +704,13 @@ class RunEvidenceTest(unittest.TestCase):
             if (spec_lint._unsafe_char("é" + ch) is not None) != want or \
                     (cp < 128 and (spec_lint._unsafe_char(ch) is not None) != want):
                 self.fail(f"U+{cp:04X} ({unicodedata.category(ch)})")
-        for cp in (0x1D173, 0x3164, 0x115F, 0x034F, 0xFE0F, 0xE0000, 0xE0002, 0xFFA0, 0x17B4, 0x2800):
+        self.assertEqual(spec_lint._BLANK_CODE_POINTS, frozenset(
+            [0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x180B, 0x180C, 0x180D, 0x180E, 0x180F, 0x2800,
+             0x3164, 0xFFA0, 0x13441, 0x13442, 0x16FE4, 0x1D159]
+            + list(range(0xFE00, 0xFE10)) + list(range(0xE0100, 0xE01F0))))
+        self.assertIn("_BLANK_CODE_POINTS", spec_lint.__doc__)
+        for cp in (0x1D173, 0x3164, 0x115F, 0x034F, 0xFE0F, 0xE0000, 0xE0002, 0xFFA0, 0x17B4, 0x2800,
+                   0x1D159, 0x16FE4, 0x13441, 0x13442):
             with self.subTest(f"U+{cp:04X}"):
                 self.assertEqual(spec_lint._unsafe_char("x" + chr(cp)), chr(cp))
 
@@ -682,14 +730,17 @@ class RunEvidenceTest(unittest.TestCase):
                         self.assertTrue(spec_lint._is_placeholder(value))
         for value in ("", " ", "_", "**", "``", "...", "…", "---", "???", "xx", "XXX", "xxxx.",
                       "<>", "<cmd>", "<cmd> <args>", "<what was executed>.", "what was executed.",
-                      "< a > < b >.", "[ ]", "()"):
+                      "< a > < b >.", "[ ]", "()",
+                      # nothing but combining marks: no letter for them to sit on
+                      "\u0301", "\u0301\u0308", " \u0303 ", "(\u0301)", "\u20dd", "\u0903"):
             with self.subTest(value):
                 self.assertTrue(spec_lint._is_placeholder(value))
         # A value that merely STARTS with a placeholder word, or holds one, is real.
         honest = ["todo add milk", "tbd-cli sync", "fixme-scan src/", "pending-jobs --count",
                   "placeholder-gen --out x", "pending migrations 0, exit 0", "none of the 3 rows changed",
                   "n/a for 2 of 5 rows, exit 0", "command not found, exit 127", "x", "0", "ok",
-                  "exit 0", "tool --repo <tmp>", "xargs -n1 echo", "xxd file", "TODO list printed"]
+                  "exit 0", "tool --repo <tmp>", "xargs -n1 echo", "xxd file", "TODO list printed",
+                  "cafe\u0301 3 rows", "e\u0301", "naïve", "日本語"]
         for value in honest:
             with self.subTest(value):
                 self.assertFalse(spec_lint._is_placeholder(value))
@@ -738,7 +789,8 @@ class RunEvidenceTest(unittest.TestCase):
             with self.subTest(name):
                 self.assertIn(want, self._findings(good + second + "\n"))
         self.assertIn("run-evidence.txt:2: not valid UTF-8", self._findings(good.encode() + b"\xff\n"))
-        moved = "run evidence lives in `run-evidence.txt`"
+        moved = ("this heading reads as a run evidence section, and run evidence lives in "
+                 "`run-evidence.txt`")
         for name, tail in (("the old section", "\n## Run evidence\n\n- " + good),
                            ("miscased", "\n## RUN EVIDENCE\n"), ("deeper", "\n### Run evidence\n"),
                            ("a tail", "\n## Run evidence (final)\n"), ("indented", "\n ## Run evidence\n"),
@@ -750,7 +802,8 @@ class RunEvidenceTest(unittest.TestCase):
         self.assertEqual(self._findings(good, feature_tail="\n## Notes\n\nThe run evidence is in the text file.\n"), "")
         self.assertEqual(self._findings(good, feature_tail="\n## Notes\n\n```\n## Run evidence\n```\n"), "")
         for tail in ("- Run evidence\n", "* Run evidence\n", "1. Run evidence\n", "run_evidence\n",
-                     "Run evidence\n", "- Run evidence\n---\n", "#Run evidence\n", "| Run evidence | x |\n"):
+                     "Run evidence\n", "- Run evidence\n---\n", "#Run evidence\n", "| Run evidence | x |\n",
+                     "## run-evidence.txt\n", "## `run-evidence.txt` format\n"):
             with self.subTest(tail):
                 self.assertEqual(self._findings(good, feature_tail="\n## Notes\n\n" + tail), "")
 

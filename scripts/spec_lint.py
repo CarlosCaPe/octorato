@@ -36,7 +36,11 @@ What it checks, per spec directory (a `feature.md`, optionally a `plan.md`):
       never in Markdown. A heading is an ATX heading of any level and case
       (indented up to three spaces, with any tail), a setext title or a line
       that is only the title in bold, each also behind quote marks. A list
-      item or a sentence that holds the words is not one
+      item or a sentence that holds the words is not one, and neither is a
+      heading that names the file itself. The check is a pointer for the
+      common leftover, not complete (emphasis inside the words, a link, a
+      number before them and HTML headings are not flagged), and nothing rests
+      on it: a section it misses holds nothing the gate counts
 
   run-evidence.txt (when present; required at the flip to converged)
     - plain text, read as bytes: UTF-8, lines end at a line feed (one carriage
@@ -49,14 +53,18 @@ What it checks, per spec directory (a `feature.md`, optionally a `plan.md`):
       criterion exists in feature.md
     - a receipt whose executed text or observation is a placeholder is a
       finding: the value, with brackets, quotes and punctuation around it
-      stripped, is empty, a word of PLACEHOLDERS, a run of `x`, or only
-      angle-bracket groups. A value that merely starts with such a word is real
+      stripped, is empty, a word of PLACEHOLDERS, a run of `x`, only
+      angle-bracket groups, or only combining marks. A value that merely starts
+      with such a word is real
     - a character that is not printable text, anywhere in the file, is a
       finding. By Unicode category: control, format, line and paragraph
       separator, every space but U+0020, surrogate, private use, unassigned.
-      Plus the code points that render blank in other categories (variation
-      selectors, Hangul fillers, the combining grapheme joiner, the blank
-      Braille pattern). A carriage return counts unless a line feed follows it
+      Plus the code points that render blank in other categories: the
+      combining grapheme joiner, the Hangul and Khitan fillers, the Khmer
+      inherent vowels, the Mongolian and the standard variation selectors, the
+      blank Braille pattern, the two Egyptian blanks, the null notehead
+      (`_BLANK_CODE_POINTS` is the list). A carriage return counts unless a
+      line feed follows it
     - no receipt counts while the file has one finding
     Why a text file: receipts used to sit in a `## Run evidence` section of
     feature.md, and three converge passes each found Markdown that a renderer
@@ -195,16 +203,27 @@ _AC_REF = re.compile(r"AC-[0-9]+")
 # line and paragraph separator (Zl, Zp), every space but U+0020 (Zs: no-break,
 # ideographic, the en and em family), surrogate (Cs), private use (Co) and unassigned
 # (Cn). That covers the ten characters Python's splitlines breaks at. Plus the code
-# points that render as nothing or as a blank and sit in other categories: the
-# combining grapheme joiner, the Hangul fillers, the Khmer inherent vowels, the
-# Mongolian and the standard variation selectors, the blank Braille pattern.
+# points that render as nothing or as a blank and sit in other categories, listed
+# one by one in `_BLANK_CODE_POINTS`. The list was built from the Unicode names that
+# hold FILLER, BLANK or NULL NOTEHEAD; the gap and line fillers of Devanagari, Newa,
+# Dives Akuru, Bhaiksuki, Manichaean and Kawi are drawn signs and stay allowed.
 # Stated: categories come from the interpreter's `unicodedata`, so a character
 # assigned in a newer Unicode version is refused as unassigned by an older Python
 # and judged by its category by a newer one.
 _UNSAFE_CATEGORIES = frozenset(("Cc", "Cf", "Zl", "Zp", "Zs", "Cs", "Co", "Cn"))
 _BLANK_CODE_POINTS = frozenset((
-    0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, *range(0x180B, 0x1810), 0x2800, 0x3164,
-    *range(0xFE00, 0xFE10), 0xFFA0, *range(0xE0100, 0xE01F0)))
+    0x034F,                    # combining grapheme joiner
+    0x115F, 0x1160,            # Hangul choseong and jungseong fillers
+    0x17B4, 0x17B5,            # Khmer inherent vowels
+    *range(0x180B, 0x1810),    # Mongolian free variation selectors and vowel separator
+    0x2800,                    # blank Braille pattern
+    0x3164, 0xFFA0,            # Hangul filler, halfwidth Hangul filler
+    *range(0xFE00, 0xFE10),    # variation selectors 1 to 16
+    0x13441, 0x13442,          # Egyptian hieroglyph full blank and half blank
+    0x16FE4,                   # Khitan small script filler
+    0x1D159,                   # musical symbol null notehead
+    *range(0xE0100, 0xE01F0),  # variation selectors 17 to 256
+))
 _ASCII_UNSAFE = re.compile(r"[\x00-\x1f\x7f]")
 _ANGLE_GROUP = re.compile(r"<[^<>]*>")
 # What a value may be wrapped in and still be the same placeholder: `TODO.`,
@@ -300,9 +319,14 @@ def _ears_subject(sentence: str):
 
 def _is_placeholder(value: str) -> bool:
     """True when the whole value, with any wrapping stripped, is a placeholder word,
-    is empty, is only angle-bracket groups, or is a run of `x`."""
+    is empty, is only angle-bracket groups, is a run of `x`, or is made only of
+    combining marks."""
     bare = " ".join(value.casefold().split()).strip(_WRAPPING)
     if bare in PLACEHOLDERS or (len(bare) >= 2 and set(bare) == {"x"}):
+        return True
+    # Nothing but combining marks: they have no letter to sit on, so the value shows
+    # as stray accents or as nothing at all.
+    if not bare.isascii() and all(ch == " " or unicodedata.category(ch)[0] == "M" for ch in bare):
         return True
     return not _ANGLE_GROUP.sub("", value).strip(_WRAPPING)
 
@@ -370,7 +394,16 @@ def _names_run_evidence(line: str, below: str = "") -> bool:
       - a setext title: the title alone on its line, underlined with `=` or `-`
       - a line that is nothing but the title in bold
     A list item (`- Run evidence`), a sentence that mentions the words and a bare
-    `run_evidence` line are not headings and are not flagged."""
+    `run_evidence` line are not headings and are not flagged. Neither is a heading
+    that names the FILE (`## run-evidence.txt`, `## `run-evidence.txt` format`): it
+    documents where receipts live and is no leftover section.
+
+    This is a pointer for the common leftover, not a parser of every way to write
+    a heading: `## **Run** evidence`, `## [Run evidence](x)`, `## 4. Run evidence`
+    and an HTML `<h2>` are not flagged. Nothing rests on it: receipts are read from
+    the text file only, so a section the check misses holds nothing the gate counts."""
+    if EVIDENCE_FILE in line.casefold():
+        return False
     body = line.lstrip(" ")
     if len(line) - len(body) > 3:
         return False  # four spaces of indent is code, not a heading
@@ -556,10 +589,13 @@ def lint_feature(feature: Path, report: Report, ready: bool) -> set:
 
     for at, (i, line) in enumerate(lines):
         if _names_run_evidence(line, lines[at + 1][1] if at + 1 < len(lines) else ""):
-            report.add(feature, i, f"run evidence lives in `{EVIDENCE_FILE}` next to "
-                                   f"feature.md, one receipt per line; a Markdown "
-                                   f"section is not read. Move the receipts there and "
-                                   f"remove this heading")
+            report.add(feature, i, f"this heading reads as a run evidence section, and "
+                                   f"run evidence lives in `{EVIDENCE_FILE}` next to "
+                                   f"feature.md, one receipt per line; nothing under a "
+                                   f"Markdown heading is read. If receipts sit here, move "
+                                   f"them to the file. Then remove the heading, or reword "
+                                   f"it if the section is about something else (a title "
+                                   f"that names `{EVIDENCE_FILE}` is not flagged)")
 
     # Markers are counted over the joined text so one split across lines counts.
     body = "\n".join(_INLINE_CODE.sub("", line) for _i, line in lines)
@@ -973,6 +1009,16 @@ def push_findings(repo: Path, base: str, head: str) -> list:
     return findings
 
 
+def _fixture_text(path: Path) -> str:
+    """A fixture file as text that survives any bytes: a spec that is not valid UTF-8
+    is a case the push gate must refuse, so the harness may not choke on it first."""
+    return path.read_bytes().decode("utf-8", "surrogateescape")
+
+
+def _write_fixture(path: Path, text: str) -> None:
+    path.write_bytes(text.encode("utf-8", "surrogateescape"))
+
+
 def _push_selftest_case(case: Path) -> list:
     """Build the scenario a push.json describes and return its findings."""
     spec = json.loads((case / "push.json").read_text(encoding="utf-8"))
@@ -993,11 +1039,10 @@ def _push_selftest_case(case: Path) -> list:
             return _git(repo, "rev-parse", "HEAD").strip()
 
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
-        feature = (case / "feature.md").read_text(encoding="utf-8")
+        feature = _fixture_text(case / "feature.md")
         (repo / sd).mkdir(parents=True)
-        (repo / sd / "feature.md").write_text(feature, encoding="utf-8")
-        (repo / sd / "plan.md").write_text((case / "plan.md").read_text(encoding="utf-8"),
-                                           encoding="utf-8")
+        _write_fixture(repo / sd / "feature.md", feature)
+        (repo / sd / "plan.md").write_bytes((case / "plan.md").read_bytes())
         if (case / EVIDENCE_FILE).is_file():
             (repo / sd / EVIDENCE_FILE).write_bytes((case / EVIDENCE_FILE).read_bytes())
         (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
@@ -1027,7 +1072,7 @@ def _push_selftest_case(case: Path) -> list:
             text = text.replace("> **Spec-Format:** ears-1\n", "")
         if spec.get("replace_format"):
             text = text.replace("> **Spec-Format:** ears-1", spec["replace_format"])
-        (repo / sd / "feature.md").write_text(text, encoding="utf-8")
+        _write_fixture(repo / sd / "feature.md", text)
         if (case / "run-evidence.after.txt").is_file():
             # the push itself changes the evidence file
             (repo / sd / EVIDENCE_FILE).write_bytes((case / "run-evidence.after.txt").read_bytes())
@@ -1064,9 +1109,9 @@ def _push_selftest_case(case: Path) -> list:
             shutil.rmtree(repo / sd)
             os.symlink(os.path.relpath(hidden, (repo / sd).parent), repo / sd)
         if spec.get("break_spec"):
-            text = (repo / sd / "feature.md").read_text(encoding="utf-8")
-            (repo / sd / "feature.md").write_text(
-                text.replace("THE Exporter SHALL write UTF-8.", "The exporter writes UTF-8."), encoding="utf-8")
+            text = _fixture_text(repo / sd / "feature.md")
+            _write_fixture(repo / sd / "feature.md",
+                           text.replace("THE Exporter SHALL write UTF-8.", "The exporter writes UTF-8."))
         if spec.get("in_merge"):
             # the spec edit lives ONLY in a merge commit: its tree differs from both
             # parents, and a per-commit diff without -m prints nothing for it
@@ -1118,8 +1163,8 @@ def _push_selftest_case(case: Path) -> list:
                                capture_output=True)
             branch = _git(repo, "symbolic-ref", "--short", "HEAD").strip()
             run("checkout", "-q", "-b", "default-branch", base)
-            (repo / sd / "feature.md").write_text(
-                feature.replace("> **Status:** approved", "> **Status:** converged"), encoding="utf-8")
+            _write_fixture(repo / sd / "feature.md",
+                           feature.replace("> **Status:** approved", "> **Status:** converged"))
             run("commit", "-qam", "converged on the default branch")
             run("update-ref", "refs/remotes/origin/master", "HEAD")
             run("checkout", "-q", branch)
