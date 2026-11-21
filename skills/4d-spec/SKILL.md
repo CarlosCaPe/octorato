@@ -46,6 +46,62 @@ Assess the task against these criteria:
 | 3-5 | MEDIUM | 4D + `plan.md` (task checklist before Gate) |
 | 6+ | LARGE | 4D + full SDD (`feature.md` + `plan.md` + analyze + implement ⇄ converge + `review.md` + archive) |
 
+## The Build Loop (every level)
+
+The score decides how much paper a task carries. It does not decide whether the work is
+looped. Anything built for another entity to use (a person, a client, another agent, an API
+consumer) goes round this loop at any score, until an independent verifier says it is
+excellent:
+
+```
+imagine → think → plan → execute → test → RUN → verdict
+   ▲                                             │
+   └──────────── ITERATE ◄───────────────────────┘   exit only on EXCELLENT
+```
+
+| Step | What it means |
+|---|---|
+| imagine | Picture the consumer using it: what they type, see and expect, and what would annoy them |
+| think | Find the hard part and the ways it can fail before choosing an approach |
+| plan | Order the work (in your head for TRIVIAL, `plan.md` from MEDIUM up) |
+| execute | Build it |
+| test | Run the automated checks: build, lint, tests |
+| RUN | Execute the shipped artifact the way its consumer will, and keep the receipt |
+| verdict | An independent judgment-tier verifier answers `EXCELLENT` or `ITERATE` |
+
+**RUN is not test and not reading.** A run receipt is the command you executed against the
+real artifact plus what you observed: the CLI invoked with real arguments, the app opened
+and clicked through, the endpoint called and its response read, the document rendered and
+looked at. "I read the code and it is right" is not a receipt, and neither is a green unit
+test of a function the consumer never calls directly.
+
+**The verdict is not yours.** The builder never grades its own work. The verifier runs on
+the judgment tier, in its own context, re-runs your receipts and judges five things:
+
+| Check | Question |
+|---|---|
+| Correctness | Does it do what was asked, in every case that was asked? |
+| Run evidence | Does each receipt reproduce when the verifier runs it? |
+| Edge cases | Empty input, wrong input, the second run, the large case, the failure path |
+| Consumer experience | Is it clear and pleasant to use for the entity that receives it (UX for a person, DX for a developer or an agent)? |
+| No known defects | Is anything known to be broken, rough or left for later? |
+
+One `ITERATE` on any check sends the work back to the step that owns the defect, and the
+loop runs again. "Criteria met" is not the exit. `EXCELLENT` is.
+
+**Light loop and full loop.** TRIVIAL and MEDIUM run the light loop: test, run receipt,
+verifier verdict (`BUILD-VERDICT: EXCELLENT | ITERATE` as the last line of its report). LARGE
+runs the full loop through SDD, where `/sdd-converge` gives the verdict and `CONVERGED` means
+excellent.
+
+**What is forced and what is not.** On a spec, `.githooks/pre-push` refuses a
+`Status: converged` flip unless the spec directory carries a `run-evidence.txt` with at
+least one run receipt and no finding (rule `FLOW.build-loop-excellence`). A TRIVIAL or MEDIUM build has no spec,
+so nothing mechanical forces its loop: it rests on this skill and on the rule in `CLAUDE.md`.
+
+Work nobody else consumes (a scratch script, a private note, an exploration) is outside the
+loop.
+
 ## Workflow by Level
 
 ### TRIVIAL (score 0-2)
@@ -56,7 +112,9 @@ Standard 4D: no SDD artifacts needed:
 3. **4D Gate**: Change Manifest table
 4. **Execute**
 5. **3D Diligent**: build/lint/test
-6. **4D Disclose**: impact + side effects
+6. **Build loop**, when another entity will use the result: RUN it, then get the verifier's
+   verdict. `ITERATE` goes back to step 4
+7. **4D Disclose**: impact + side effects, with the run receipt and the verdict
 
 ### MEDIUM (score 3-5)
 
@@ -69,8 +127,10 @@ Standard 4D: no SDD artifacts needed:
 4. **4D Gate**: Change Manifest + plan.md summary
 5. **Execute**: follow plan tasks in order, mark done
 6. **3D Diligent**: build/lint/test
-7. **4D Disclose**: impact + side effects
-8. Clean up: delete plan.md (git tracks the actual changes)
+7. **Build loop**, when another entity will use the result: RUN it, then get the verifier's
+   verdict. `ITERATE` goes back to step 5
+8. **4D Disclose**: impact + side effects, with the run receipt and the verdict
+9. Clean up: delete plan.md (git tracks the actual changes)
 
 ### LARGE (score 6+)
 
@@ -85,8 +145,10 @@ the code, never a claim by the builder:
 4. **2S Analyze**: `/sdd-analyze` as an independent verifier subagent. `FIX-FIRST` sends you
    back to step 1 or 3
 5. **4D Gate**: Change Manifest + spec summary + plan summary + analyze verdict
-6. **Execute**: `/sdd-implement` (follows plan, verifies each layer, grades nothing)
-7. **3D Converge**: `/sdd-converge` as an independent verifier subagent. `GAPS` appends a
+6. **Execute**: `/sdd-implement` (follows plan, verifies each layer, grades nothing), then
+   RUN the shipped artifact and record each run in `run-evidence.txt` next to `feature.md`
+7. **3D Converge**: `/sdd-converge` as an independent verifier subagent. It judges every
+   criterion, re-runs the receipts and makes the excellence pass. `GAPS` appends a
    Convergence section to `plan.md`; go back to step 6. Loop until `CONVERGED`
 8. **3D Review**: `/sdd-review` (7 quality dimensions, reads the converge verdict)
 9. **4D Disclose**: impact radius + converge and review verdicts
@@ -99,6 +161,7 @@ the code, never a claim by the builder:
 | 1D Describe | Becomes `feature.md` with ACs and edge cases | LARGE only |
 | 2D Delegate | No change: delegate-check still runs | Always |
 | 4D Gate | Manifest now INCLUDES plan.md task list | MEDIUM+ |
+| 3D Diligent | Adds the build loop: run receipt + independent verdict | Any build for another entity |
 | 3D Diligent | Adds the converge loop (done = verdict) + 7-dimension quality review | LARGE only |
 | 4D Disclose | Adds archive for institutional memory | LARGE only |
 

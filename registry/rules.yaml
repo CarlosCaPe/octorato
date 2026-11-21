@@ -2473,6 +2473,39 @@ rules:
     locator: Done is a verdict
     expect: present
   liveness_required: FIRES
+- id: FLOW.build-loop-excellence
+  title: 'Build loop until excellence: a deliverable used by another entity is run for real and exits only on an independent EXCELLENT verdict'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Build loop until excellence
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  v7_decision: 'Forced only where a spec exists: the push gate refuses a converged flip with no run receipt in `run-evidence.txt`, the plain-text file next to feature.md. The linter reads the receipt shape and cannot tell whether the command ran; the converge verifier re-runs it. A TRIVIAL or MEDIUM build carries no spec, so its loop is covered by the CLAUDE.md anchor and the 4d-spec skill, not forced.'
+  firing_mode:
+  - cli
+  - git-hook
+  mechanism:
+  - kind: Gate
+    canonical_name: spec_lint.py
+    firing_event: PrePush
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/spec_lint.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/spec_lint.py --selftest registry/fixtures/FLOW.build-loop-excellence
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -qE '^[ \t]*if[ \t]+![ \t]+"?\$\{?PYTHON\}?"?[ \t]+[^|;]*spec_lint\.py[^|;]*--push-range[^|;]*;[ \t]*then[ \t]*$'
+      .githooks/pre-push
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: Build loop until excellence
+    expect: present
+  liveness_required: FIRES
 - id: ARCHITECTURE.octo-dash
   title: 'VISIBLE: octo dash writes one offline HTML page of specs, PRs, gate receipt, kernel and friction'
   category: ARCHITECTURE

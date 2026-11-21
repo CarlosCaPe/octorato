@@ -4,7 +4,9 @@
 v9 makes "done" a verdict computed against a spec. That only works if a script
 can read the spec, so acceptance criteria are written in EARS and plan tasks
 follow one grammar. This CLI is the reader. It uses the standard library only
-and makes no model call: the same input gives the same answer on every machine.
+and makes no model call: the same input gives the same answer on every machine,
+with one stated exception: which characters run-evidence.txt may hold is read from
+the interpreter's Unicode tables, so a character newer than those tables is refused.
 
 What it checks, per spec directory (a `feature.md`, optionally a `plan.md`):
 
@@ -30,6 +32,44 @@ What it checks, per spec directory (a `feature.md`, optionally a `plan.md`):
     - at most 3 NEEDS CLARIFICATION markers; with --ready, zero. A marker is
       `[NEEDS CLARIFICATION]` or `[NEEDS CLARIFICATION: ...]`, any case, and
       may span lines
+    - a run evidence heading is a finding: receipts live in run-evidence.txt,
+      never in Markdown. A heading is an ATX heading of any level and case
+      (indented up to three spaces, with any tail), a setext title or a line
+      that is only the title in bold, each also behind quote marks. A list
+      item or a sentence that holds the words is not one, and neither is a
+      heading that names the file itself. The check is a pointer for the
+      common leftover, not complete (emphasis inside the words, a link, a
+      number before them and HTML headings are not flagged), and nothing rests
+      on it: a section it misses holds nothing the gate counts
+
+  run-evidence.txt (when present; required at the flip to converged)
+    - plain text, read as bytes: UTF-8, lines end at a line feed (one carriage
+      return before it is dropped), and nothing else breaks a line
+    - a line is blank, a comment (`#` at column 0) or a run receipt, to the
+      character:
+        RUN-## [AC-##, AC-##] `<what was executed>`: <what was observed>
+      Any other line is a finding that names it
+    - an id is `RUN-` and two or more ASCII digits, unique in the file; every
+      criterion exists in feature.md
+    - a receipt whose executed text or observation is a placeholder is a
+      finding: the value, with brackets, quotes and punctuation around it
+      stripped, is empty, a word of PLACEHOLDERS, a run of `x`, only
+      angle-bracket groups, or only combining marks. A value that merely starts
+      with such a word is real
+    - a character that is not printable text, anywhere in the file, is a
+      finding. By Unicode category: control, format, line and paragraph
+      separator, every space but U+0020, surrogate, private use, unassigned.
+      Plus the code points that render blank in other categories: the
+      combining grapheme joiner, the Hangul and Khitan fillers, the Khmer
+      inherent vowels, the Mongolian and the standard variation selectors, the
+      blank Braille pattern, the two Egyptian blanks, the null notehead
+      (`_BLANK_CODE_POINTS` is the list). A carriage return counts unless a
+      line feed follows it
+    - no receipt counts while the file has one finding
+    Why a text file: receipts used to sit in a `## Run evidence` section of
+    feature.md, and three converge passes each found Markdown that a renderer
+    shows as code, or hides, while the linter counted it. A plain-text file has
+    one reading
 
   plan.md (when present)
     - every task line is `- [ ] T## [AC-##, AC-##] <path>, <path>: <action>`;
@@ -50,12 +90,19 @@ quote the grammar without tripping it.
 
 Push gate (v9 phase 3, called by .githooks/pre-push once per pushed ref):
   spec_lint.py --push-range <base-sha> <head-sha>
-    - lints, at <head>, every ears-1 spec whose feature.md or plan.md the range
-      changes (AC-15)
+    - lints, at <head>, every ears-1 spec whose feature.md, plan.md or
+      run-evidence.txt the range changes (AC-15), from the bytes of the blob
     - for every ears-1 spec whose `Status:` header becomes `converged` in the
       range, requires a plan.md and the latest anchored converge receipt for
       that spec directory to say CONVERGED, with a transcript timestamp newer
-      than the newest code commit on the branch (AC-14)
+      than the newest code commit on the branch (AC-14), and requires
+      run-evidence.txt with at least one run receipt and no finding (rule
+      FLOW.build-loop-excellence). A converged spec that has the file keeps
+      it: a later push may not remove it or leave it without a counted
+      receipt. Stated: the linter reads the receipt's
+      shape, it cannot tell whether the command ran; the converge verifier
+      re-runs the receipts, and a spec that converged before this check is
+      not asked again
     - refuses a spec that stops being ears-1, and a docs/specs/ directory not
       named <yyyymmddHHMM>-<slug>
     The pushed head is compared, as one tree diff, with its merge base with the
@@ -69,6 +116,7 @@ Usage:
   spec_lint.py --push-range <base> <head>
   spec_lint.py --selftest registry/fixtures/FLOW.spec-contract
   spec_lint.py --selftest registry/fixtures/FLOW.done-is-a-verdict
+  spec_lint.py --selftest registry/fixtures/FLOW.build-loop-excellence
 
 Exit: 0 clean or skipped, 1 findings, 2 usage error.
 
@@ -83,6 +131,7 @@ the push check against it.
 from __future__ import annotations
 
 import argparse
+import bisect
 import datetime as _dt
 import json
 import os
@@ -91,6 +140,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -110,13 +160,21 @@ _CANON_STATUS = re.compile(r"^> \*\*Status:\*\* (draft|approved|converged)\s*$")
 # Only `ears-1` opts in: a header naming another version (`ears-2`) does not declare
 # this format, so the file is skipped like a legacy spec (AC-16). The push gate still
 # refuses a spec that LEAVES ears-1 in a push.
+# One character class per gap, never two unbounded runs side by side: the earlier
+# spelling (`\s*(?:[>*+|-]\s*)*[*_]*\s*`) took seconds on a line of 16,000 spaces.
+# Each class is a superset of what it replaces, so every line that read as a header
+# still does, and a few more now must be canonical too. It never reads fewer.
 _LOOSE_FORMAT = re.compile(
-    r"^\s*(?:[>*+|-]\s*)*[*_]*\s*spec[-_ ]?format\s*[*_]*\s*[:|]\s*[*_]*\s*ears-1\b", re.IGNORECASE)
+    r"^[\s>*+|\-_]*spec[-_ ]?format[\s*_]*[:|][\s*_]*ears-1\b", re.IGNORECASE)
 _LOOSE_STATUS = re.compile(
-    r"^\s*(?:[>*+|-]\s*)*[*_]*\s*status\s*[*_]*\s*[:|]\s*[*_]*\s*(?:draft|approved|converged)\b", re.IGNORECASE)
+    r"^[\s>*+|\-_]*status[\s*_]*[:|][\s*_]*(?:draft|approved|converged)\b", re.IGNORECASE)
 _GLOSSARY_ENTRY = re.compile(r"^- \*\*([A-Za-z][\w-]*)\*\*:")
 _AC_ITEM = re.compile(r"^- \[[ xX]\] (AC-\d+): (.*)$")
-_MARKER = re.compile(r"\[\s*NEEDS\s+CLARIFICATION\s*(?::[^\]]*)?\]", re.IGNORECASE)
+# The start of a marker. Its tail (`]`, or `: ... ]` over any number of lines) is found
+# by `_marker_spans` with an index of the closing brackets: as one regex
+# (`\[\s*NEEDS\s+CLARIFICATION\s*(?::[^\]]*)?\]`) every unclosed start scanned to the
+# end of the text.
+_MARKER_HEAD = re.compile(r"\[\s*NEEDS\s+CLARIFICATION\s*", re.IGNORECASE)
 _INLINE_CODE = re.compile(r"`[^`\n]*`")
 _EARS = [
     ("ubiquitous", re.compile(r"^THE ([\w-]+) SHALL\b")),
@@ -130,13 +188,63 @@ _TASK = re.compile(
     r"^- \[[ xX]\] (T\d{2,}) \[(AC-\d+(?:, AC-\d+)*)\] (\S[^:]*?): (\S.*)$"
 )
 _CONVERGENCE = re.compile(r"^## Convergence\b")
-
+EVIDENCE_FILE = "run-evidence.txt"
+RUN_GRAMMAR = "RUN-## [AC-##] `<what was executed>`: <what was observed>"
+# Every pattern below is anchored and has no nested or adjacent unbounded
+# quantifier, and the receipt itself is parsed with str.find, so a line of any
+# length costs time linear in its length (test_spec_lint pins 200,000 characters).
+# ASCII digits only: `\d` also takes the digits of forty other scripts, and two ids
+# that look alike must be the same id.
+_RUN_ID = re.compile(r"(RUN-[0-9]{2,}) \[")
+_AC_REF = re.compile(r"AC-[0-9]+")
+# What may not sit in run-evidence.txt: every character that is not printable text.
+# By Unicode general category: control (Cc), format (Cf: zero-width and direction
+# marks, the byte-order mark, tag characters, musical and shorthand format controls),
+# line and paragraph separator (Zl, Zp), every space but U+0020 (Zs: no-break,
+# ideographic, the en and em family), surrogate (Cs), private use (Co) and unassigned
+# (Cn). That covers the ten characters Python's splitlines breaks at. Plus the code
+# points that render as nothing or as a blank and sit in other categories, listed
+# one by one in `_BLANK_CODE_POINTS`. The list was built from the Unicode names that
+# hold FILLER, BLANK or NULL NOTEHEAD; the gap and line fillers of Devanagari, Newa,
+# Dives Akuru, Bhaiksuki, Manichaean and Kawi are drawn signs and stay allowed.
+# Stated: categories come from the interpreter's `unicodedata`, so a character
+# assigned in a newer Unicode version is refused as unassigned by an older Python
+# and judged by its category by a newer one.
+_UNSAFE_CATEGORIES = frozenset(("Cc", "Cf", "Zl", "Zp", "Zs", "Cs", "Co", "Cn"))
+_BLANK_CODE_POINTS = frozenset((
+    0x034F,                    # combining grapheme joiner
+    0x115F, 0x1160,            # Hangul choseong and jungseong fillers
+    0x17B4, 0x17B5,            # Khmer inherent vowels
+    *range(0x180B, 0x1810),    # Mongolian free variation selectors and vowel separator
+    0x2800,                    # blank Braille pattern
+    0x3164, 0xFFA0,            # Hangul filler, halfwidth Hangul filler
+    *range(0xFE00, 0xFE10),    # variation selectors 1 to 16
+    0x13441, 0x13442,          # Egyptian hieroglyph full blank and half blank
+    0x16FE4,                   # Khitan small script filler
+    0x1D159,                   # musical symbol null notehead
+    *range(0xE0100, 0xE01F0),  # variation selectors 17 to 256
+))
+_ASCII_UNSAFE = re.compile(r"[\x00-\x1f\x7f]")
+_ANGLE_GROUP = re.compile(r"<[^<>]*>")
+# What a value may be wrapped in and still be the same placeholder: `TODO.`,
+# `[TODO]`, `(tbd)`, `**`.
+_WRAPPING = " \t`*_\"'()[]{}<>.,;:!?…-"
+# Compared with the WHOLE value, never with its first word: `todo add milk` and
+# `pending migrations 0, exit 0` are a real command and a real observation.
+PLACEHOLDERS = frozenset((
+    "", "todo", "tbd", "fixme", "pending", "placeholder", "n/a", "na", "none",
+    "what was executed", "what was observed", "command", "the command",
+    "the exact command or action", "exit code and what you observed",
+    "exit code and what was observed", "observation", "the observation",
+))
 
 @dataclass
 class Report:
     path: Path
     findings: list = field(default_factory=list)
     skipped: bool = False
+    criteria: set = field(default_factory=set)
+    unreadable: bool = False
 
     def add(self, file: Path, line: int, msg: str) -> None:
         self.findings.append(f"{file}:{line}: {msg}")
@@ -154,6 +262,38 @@ def _readable_lines(text: str) -> list:
     for a, b in zip(marks[0::2], marks[1::2]):
         hidden.update(range(a, b + 1))
     return [(i + 1, "" if i in hidden else line) for i, line in enumerate(lines)]
+
+
+def _marker_spans(text: str) -> list:
+    """(start, end) of every NEEDS CLARIFICATION marker, leftmost first and never
+    overlapping: what `finditer` of the one-regex form returned."""
+    closes = [i for i, ch in enumerate(text) if ch == "]"]
+    spans, pos = [], text.find("[")
+    while pos >= 0:
+        end = -1
+        m = _MARKER_HEAD.match(text, pos)
+        if m:
+            tail = m.end()
+            if text.startswith("]", tail):
+                end = tail + 1
+            elif text.startswith(":", tail):
+                k = bisect.bisect_left(closes, tail)
+                end = closes[k] + 1 if k < len(closes) else -1
+        if end > 0:
+            spans.append((pos, end))
+            pos = text.find("[", end)
+        else:
+            pos = text.find("[", pos + 1)
+    return spans
+
+
+def _without_markers(text: str) -> str:
+    out, last = [], 0
+    for a, b in _marker_spans(text):
+        out.append(text[last:a])
+        last = b
+    out.append(text[last:])
+    return "".join(out)
 
 
 def _sections(lines: list) -> dict:
@@ -175,6 +315,187 @@ def _ears_subject(sentence: str):
         if m:
             return m.group(1)
     return None
+
+
+def _is_placeholder(value: str) -> bool:
+    """True when the whole value, with any wrapping stripped, is a placeholder word,
+    is empty, is only angle-bracket groups, is a run of `x`, or is made only of
+    combining marks."""
+    bare = " ".join(value.casefold().split()).strip(_WRAPPING)
+    if bare in PLACEHOLDERS or (len(bare) >= 2 and set(bare) == {"x"}):
+        return True
+    # Nothing but combining marks: they have no letter to sit on, so the value shows
+    # as stray accents or as nothing at all.
+    if not bare.isascii() and all(ch == " " or unicodedata.category(ch)[0] == "M" for ch in bare):
+        return True
+    return not _ANGLE_GROUP.sub("", value).strip(_WRAPPING)
+
+
+def _unsafe_char(line: str):
+    """The first character of the line that is not printable text, or None."""
+    if line.isascii():
+        m = _ASCII_UNSAFE.search(line)
+        return m.group() if m else None
+    for ch in line:
+        if ch != " " and (ord(ch) in _BLANK_CODE_POINTS
+                          or unicodedata.category(ch) in _UNSAFE_CATEGORIES):
+            return ch
+    return None
+
+
+def _decode_spec(data: bytes) -> tuple:
+    """(text, bad_line) of a feature.md or plan.md. bad_line is None for valid UTF-8,
+    else the line of the first byte that is not, and the text carries U+FFFD there so
+    the headers can still be read. Line ends are folded the way text mode folds them."""
+    try:
+        text, bad = data.decode("utf-8"), None
+    except UnicodeDecodeError as exc:
+        text, bad = data.decode("utf-8", "replace"), data.count(b"\n", 0, exc.start) + 1
+    return text.replace("\r\n", "\n").replace("\r", "\n"), bad
+
+
+def _parse_receipt(line: str):
+    """(id, [criteria], executed, observed) of an exact receipt line, else None.
+    The shape is fixed to the character: `RUN-## [AC-##, AC-##] `executed`: observed`."""
+    m = _RUN_ID.match(line)
+    if not m:
+        return None
+    close = line.find("]", m.end())
+    if close < 0:
+        return None
+    acs = line[m.end():close].split(", ")
+    if not all(_AC_REF.fullmatch(a) for a in acs):
+        return None
+    if not line.startswith(" `", close + 1):
+        return None
+    start = close + 3
+    end = line.find("`", start)
+    if end < 0 or not line.startswith(": ", end + 1):
+        return None
+    executed, observed = line[start:end], line[end + 3:]
+    if not executed.strip() or not observed or observed[0].isspace():
+        return None
+    return m.group(1), acs, executed, observed
+
+
+_RUN_EVIDENCE_TITLES = frozenset(("run evidence", "run-evidence", "run_evidence", "runevidence"))
+
+
+def _run_evidence_words(text: str) -> str:
+    """The text of a heading, without closing hashes and emphasis, in lower case."""
+    return text.strip().rstrip("#").strip().strip("*_`").strip().casefold()
+
+
+def _names_run_evidence(line: str, below: str = "") -> bool:
+    """A line of feature.md that is a run evidence HEADING. Three forms count, each
+    also behind quote marks (`> ## Run evidence` is still a section in intent):
+      - an ATX heading of any level, at column 0 or indented up to three spaces,
+        whose text starts with the title in any case (`### RUN EVIDENCE (final)`)
+      - a setext title: the title alone on its line, underlined with `=` or `-`
+      - a line that is nothing but the title in bold
+    A list item (`- Run evidence`), a sentence that mentions the words and a bare
+    `run_evidence` line are not headings and are not flagged. Neither is a heading
+    that names the FILE (`## run-evidence.txt`, `## `run-evidence.txt` format`): it
+    documents where receipts live and is no leftover section.
+
+    This is a pointer for the common leftover, not a parser of every way to write
+    a heading: `## **Run** evidence`, `## [Run evidence](x)`, `## 4. Run evidence`
+    and an HTML `<h2>` are not flagged. Nothing rests on it: receipts are read from
+    the text file only, so a section the check misses holds nothing the gate counts."""
+    if EVIDENCE_FILE in line.casefold():
+        return False
+    body = line.lstrip(" ")
+    if len(line) - len(body) > 3:
+        return False  # four spaces of indent is code, not a heading
+    if body.startswith(">"):
+        body = body.lstrip("> ")
+    hashes = len(body) - len(body.lstrip("#"))
+    if 1 <= hashes <= 6 and (len(body) == hashes or body[hashes] in " \t"):
+        words = " ".join(_run_evidence_words(body[hashes:]).replace("-", " ").replace("_", " ").split())
+        return words.startswith("run evidence")
+    if hashes:
+        return False
+    bare = body.strip()
+    for mark in ("**", "__"):
+        if len(bare) > 4 and bare.startswith(mark) and bare.endswith(mark):
+            return _run_evidence_words(bare[2:-2]).rstrip(":.") in _RUN_EVIDENCE_TITLES
+    under = below.strip()
+    if under.startswith(">"):
+        under = under.lstrip("> ").strip()
+    if under and (set(under) == {"="} or set(under) == {"-"}):
+        return bare.casefold().rstrip(":.") in _RUN_EVIDENCE_TITLES
+    return False
+
+
+def run_evidence(data, criteria=None) -> tuple:
+    """(receipts, findings) of a run-evidence.txt, given as the bytes of the file.
+
+    receipts: (line_no, id, [criteria]). findings: (line_no, message). The file is
+    plain text with one reading: decoded as UTF-8, split at line feeds only, one
+    carriage return dropped before each. A line is blank, a `#` comment at column 0
+    or an exact receipt; anything else is a finding. With `criteria` (the ids of
+    feature.md) a receipt that names another one is a finding too."""
+    if data is None:
+        return [], []
+    if isinstance(data, str):
+        data = data.encode("utf-8", "surrogatepass")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return [], [(data.count(b"\n", 0, exc.start) + 1, "not valid UTF-8")]
+    receipts, findings, seen = [], [], {}
+    segments = text.split("\n")
+    for i, line in enumerate(segments, 1):
+        # A carriage return is a line end only with the line feed right after it. The
+        # last segment has none after it, so a CR that ends the file stays and is told.
+        if i < len(segments) and line.endswith("\r"):
+            line = line[:-1]
+        bad = _unsafe_char(line)
+        if bad:
+            findings.append((i, f"holds the character U+{ord(bad):04X}; only printable "
+                                f"text is allowed, and a line ends at a line feed"))
+            continue
+        line = line.rstrip(" ")
+        if not line or line.startswith("#"):
+            continue
+        parsed = _parse_receipt(line)
+        if parsed is None:
+            if "run-" in line[:40].casefold():
+                findings.append((i, f"run receipt does not follow `{RUN_GRAMMAR}`"))
+            else:
+                findings.append((i, "line is neither blank, a `#` comment nor a run receipt"))
+            continue
+        rid, acs, executed, observed = parsed
+        if _is_placeholder(executed) or _is_placeholder(observed):
+            findings.append((i, f"{rid} is an unfilled template: write the command "
+                                f"that was executed and what was observed"))
+        if rid in seen:
+            findings.append((i, f"{rid} duplicates line {seen[rid]}"))
+        seen[rid] = i
+        if criteria is not None:
+            for ac in acs:
+                if ac not in criteria:
+                    findings.append((i, f"{rid} references unknown criterion {ac}"))
+        receipts.append((i, rid, acs))
+    return receipts, findings
+
+
+def run_receipts(data, criteria=None) -> list:
+    """The receipt ids the gate counts. None counts while the file has one finding."""
+    receipts, findings = run_evidence(data, criteria)
+    return [] if findings else [rid for _i, rid, _acs in receipts]
+
+
+def _lint_run_evidence(evidence: Path, criteria: set, report: Report) -> None:
+    """Shape only: a receipt names what was executed and what was observed. Whether a
+    spec NEEDS the file is decided at the push that flips it to converged."""
+    try:
+        data = evidence.read_bytes()
+    except OSError as exc:
+        report.add(evidence, 1, f"cannot be read: {exc.strerror or exc}")
+        return
+    for i, msg in run_evidence(data, criteria)[1]:
+        report.add(evidence, i, msg)
 
 
 def _header_lines(text: str, loose: re.Pattern) -> list:
@@ -222,10 +543,16 @@ def _lint_headers(feature: Path, text: str, report: Report) -> None:
 
 def lint_feature(feature: Path, report: Report, ready: bool) -> set:
     """Returns the set of criterion ids, for the plan coverage check."""
-    text = feature.read_text(encoding="utf-8")
+    text, bad = _decode_spec(feature.read_bytes())
     lines = _readable_lines(text)
     if not is_ears(text):
         report.skipped = True
+        return set()
+    if bad:
+        # Nothing else is said about a file that cannot be read as text: every other
+        # finding would be about the replacement characters, not about the spec.
+        report.add(feature, bad, "not valid UTF-8")
+        report.unreadable = True
         return set()
     _lint_headers(feature, text, report)
 
@@ -250,7 +577,7 @@ def lint_feature(feature: Path, report: Report, ready: bool) -> set:
             report.add(feature, i, f"{ac} duplicates line {ids[ac]}")
             continue
         ids[ac] = i
-        bare = _MARKER.sub("", sentence).strip()
+        bare = _without_markers(sentence).strip()
         subject = _ears_subject(bare)
         if subject is None:
             report.add(feature, i, f"{ac} matches no EARS pattern")
@@ -260,10 +587,24 @@ def lint_feature(feature: Path, report: Report, ready: bool) -> set:
     if "Acceptance Criteria" in secs and not ids:
         report.add(feature, 1, "`## Acceptance Criteria` holds no criterion")
 
+    for at, (i, line) in enumerate(lines):
+        if _names_run_evidence(line, lines[at + 1][1] if at + 1 < len(lines) else ""):
+            report.add(feature, i, f"this heading reads as a run evidence section, and "
+                                   f"run evidence lives in `{EVIDENCE_FILE}` next to "
+                                   f"feature.md, one receipt per line; nothing under a "
+                                   f"Markdown heading is read. If receipts sit here, move "
+                                   f"them to the file. Then remove the heading, or reword "
+                                   f"it if the section is about something else (a title "
+                                   f"that names `{EVIDENCE_FILE}` is not flagged)")
+
     # Markers are counted over the joined text so one split across lines counts.
     body = "\n".join(_INLINE_CODE.sub("", line) for _i, line in lines)
-    markers = [(body.count("\n", 0, m.start()) + 1, 1) for m in _MARKER.finditer(body)]
-    total = len(markers)
+    spans = _marker_spans(body)
+    total = len(spans)
+    # Line numbers only for the few a message names (the first over the cap, all of
+    # them when at most MAX_MARKERS are open): counting newlines per marker made a
+    # text full of markers cost its length times their number.
+    markers = [(body.count("\n", 0, a) + 1, 1) for a, _b in spans[:MAX_MARKERS]]
     if total > MAX_MARKERS:
         report.add(feature, markers[0][0],
                    f"{total} NEEDS CLARIFICATION markers, the cap is {MAX_MARKERS}")
@@ -275,7 +616,11 @@ def lint_feature(feature: Path, report: Report, ready: bool) -> set:
 
 
 def lint_plan(plan: Path, criteria: set, report: Report) -> None:
-    lines = _readable_lines(plan.read_text(encoding="utf-8"))
+    text, bad = _decode_spec(plan.read_bytes())
+    if bad:
+        report.add(plan, bad, "not valid UTF-8")
+        return
+    lines = _readable_lines(text)
     seen: dict = {}
     referenced: set = set()
     planned = 0
@@ -320,11 +665,15 @@ def lint(target: Path, ready: bool = False) -> Report:
         report.add(feature, 0, "feature.md not found")
         return report
     criteria = lint_feature(feature, report, ready)
-    if report.skipped:
+    if report.skipped or report.unreadable:
         return report
+    report.criteria = criteria
     plan = feature.parent / "plan.md"
     if plan.is_file():
         lint_plan(plan, criteria, report)
+    evidence = feature.parent / EVIDENCE_FILE
+    if evidence.exists():
+        _lint_run_evidence(evidence, criteria, report)
     return report
 
 
@@ -349,8 +698,19 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _show(repo: Path, rev: str, path: str):
+    # errors="replace": this text is only used to read headers. The lint of the push
+    # runs on the blob's own bytes (`_show_bytes`), so a spec file that is not valid
+    # UTF-8 is a finding there, the same one the lint of the file on disk gives.
     cp = subprocess.run(["git", "-C", str(repo), "show", f"{rev}:{path}"],
-                        capture_output=True, text=True)
+                        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return cp.stdout if cp.returncode == 0 else None
+
+
+def _show_bytes(repo: Path, rev: str, path: str):
+    """The blob as stored. The push lint is fed these bytes, so it reads what the lint
+    of the file on disk reads; for run-evidence.txt text mode would also turn a lone
+    carriage return into a line break before the reader ever saw it."""
+    cp = subprocess.run(["git", "-C", str(repo), "show", f"{rev}:{path}"], capture_output=True)
     return cp.stdout if cp.returncode == 0 else None
 
 
@@ -434,7 +794,7 @@ def _newest_branch_code(repo: Path, head: str, spec_dir: str) -> str:
     return max(out, key=_parse_ts) if out else ""
 
 
-SPEC_FILES = ("feature.md", "plan.md")
+SPEC_FILES = ("feature.md", "plan.md", EVIDENCE_FILE)
 # A Git LFS pointer, current or legacy: the spec URL changed twice
 # (git-media.io, hawser.github.com, git-lfs.github.com), so the gate matches the
 # shape the pointer format fixes: a `version` line, optional `ext-` lines, then the oid.
@@ -494,6 +854,13 @@ def _on_spec_path(path: str) -> bool:
 def _parse_ts(value: str) -> _dt.datetime:
     ts = _dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     return ts if ts.tzinfo else ts.replace(tzinfo=_dt.timezone.utc)
+
+
+def _needs_evidence(flip: bool, had: bool, has: bool) -> bool:
+    """A converged spec needs counted receipts at the flip, and keeps them: once the
+    file exists (before the push or at its head) it may not go or go empty. A spec
+    that converged before this check never had the file and is left alone."""
+    return flip or had or has
 
 
 def push_findings(repo: Path, base: str, head: str) -> list:
@@ -574,10 +941,13 @@ def push_findings(repo: Path, base: str, head: str) -> list:
                             f"<yyyymmddHHMM>-<lowercase-slug>")
         # AC-15: lint the spec as it is at the pushed head.
         plan_now = _show(repo, head, f"{sd}/plan.md")
+        evidence_now = _show_bytes(repo, head, f"{sd}/{EVIDENCE_FILE}")
         with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "feature.md").write_text(feature_now, encoding="utf-8")
+            (Path(tmp) / "feature.md").write_bytes(_show_bytes(repo, head, f"{sd}/feature.md"))
             if plan_now is not None:
-                (Path(tmp) / "plan.md").write_text(plan_now, encoding="utf-8")
+                (Path(tmp) / "plan.md").write_bytes(_show_bytes(repo, head, f"{sd}/plan.md"))
+            if evidence_now is not None:
+                (Path(tmp) / EVIDENCE_FILE).write_bytes(evidence_now)
             rep = lint(Path(tmp))
             findings += [f.replace(tmp, sd) for f in rep.findings]
 
@@ -585,10 +955,34 @@ def push_findings(repo: Path, base: str, head: str) -> list:
             findings.append(f"{sd}: the spec says converged but has no plan.md; a converged "
                             f"spec keeps the plan it was judged against")
             continue
-        # AC-14: a status flip to converged needs a fresh CONVERGED receipt.
         if spec_status(feature_now) != "converged":
             continue
-        if spec_status(feature_before) == "converged":
+        flip = spec_status(feature_before) != "converged"
+        # FLOW.build-loop-excellence: "converged" claims the artifact was run, so the
+        # spec carries the receipts of that run: at the flip, and from then on. A spec
+        # that converged before this check has no file and is not asked for one; once a
+        # converged spec has the file, a push may not remove or empty it. Not a
+        # `continue`: a flip missing both the run receipt and the verdict is told both.
+        had = bool(before) and _show_bytes(repo, before, f"{sd}/{EVIDENCE_FILE}") is not None
+        if _needs_evidence(flip, had, evidence_now is not None):
+            verb = "becomes" if flip else "is"
+            # A receipt counts only if its criteria exist, and the criteria are read
+            # from feature.md. When that file cannot be read the receipts cannot be
+            # judged, so nothing is said about them: the push is refused by the
+            # `not valid UTF-8` finding, and "no receipt counts" would be false.
+            judged = not rep.unreadable
+            how = (f"Run the shipped artifact for real and record each run in "
+                   f"{sd}/{EVIDENCE_FILE}, one line per run: `{RUN_GRAMMAR}`. Then run "
+                   f"/sdd-converge.")
+            if evidence_now is None:
+                findings.append(f"{sd}: Status {verb} converged, but the spec has no "
+                                f"`{EVIDENCE_FILE}`. {how}")
+            elif judged and not run_receipts(evidence_now, rep.criteria):
+                findings.append(f"{sd}: Status {verb} converged, but `{EVIDENCE_FILE}` "
+                                f"holds no run receipt that counts (a filled one, in a file "
+                                f"with no finding). {how}")
+        # AC-14: a status flip to converged needs a fresh CONVERGED receipt.
+        if not flip:
             continue
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import receipt_ledger
@@ -615,6 +1009,16 @@ def push_findings(repo: Path, base: str, head: str) -> list:
     return findings
 
 
+def _fixture_text(path: Path) -> str:
+    """A fixture file as text that survives any bytes: a spec that is not valid UTF-8
+    is a case the push gate must refuse, so the harness may not choke on it first."""
+    return path.read_bytes().decode("utf-8", "surrogateescape")
+
+
+def _write_fixture(path: Path, text: str) -> None:
+    path.write_bytes(text.encode("utf-8", "surrogateescape"))
+
+
 def _push_selftest_case(case: Path) -> list:
     """Build the scenario a push.json describes and return its findings."""
     spec = json.loads((case / "push.json").read_text(encoding="utf-8"))
@@ -635,11 +1039,12 @@ def _push_selftest_case(case: Path) -> list:
             return _git(repo, "rev-parse", "HEAD").strip()
 
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
-        feature = (case / "feature.md").read_text(encoding="utf-8")
+        feature = _fixture_text(case / "feature.md")
         (repo / sd).mkdir(parents=True)
-        (repo / sd / "feature.md").write_text(feature, encoding="utf-8")
-        (repo / sd / "plan.md").write_text((case / "plan.md").read_text(encoding="utf-8"),
-                                           encoding="utf-8")
+        _write_fixture(repo / sd / "feature.md", feature)
+        (repo / sd / "plan.md").write_bytes((case / "plan.md").read_bytes())
+        if (case / EVIDENCE_FILE).is_file():
+            (repo / sd / EVIDENCE_FILE).write_bytes((case / EVIDENCE_FILE).read_bytes())
         (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
         base = commit("base", "2026-09-30T10:00:00+00:00")
         pushed = base  # what the remote ref holds before the push
@@ -667,7 +1072,10 @@ def _push_selftest_case(case: Path) -> list:
             text = text.replace("> **Spec-Format:** ears-1\n", "")
         if spec.get("replace_format"):
             text = text.replace("> **Spec-Format:** ears-1", spec["replace_format"])
-        (repo / sd / "feature.md").write_text(text, encoding="utf-8")
+        _write_fixture(repo / sd / "feature.md", text)
+        if (case / "run-evidence.after.txt").is_file():
+            # the push itself changes the evidence file
+            (repo / sd / EVIDENCE_FILE).write_bytes((case / "run-evidence.after.txt").read_bytes())
         if spec.get("rename_spec_to"):
             shutil.move(str(repo / sd), str(repo / spec["rename_spec_to"]))
         for key, act in (("move_feature_to", shutil.move), ("copy_feature_to", shutil.copy)):
@@ -676,6 +1084,8 @@ def _push_selftest_case(case: Path) -> list:
                 act(str(repo / sd / "feature.md"), str(repo / spec[key]))
         if spec.get("delete_plan"):
             (repo / sd / "plan.md").unlink()
+        if spec.get("delete_evidence"):
+            (repo / sd / EVIDENCE_FILE).unlink()
         if spec.get("delete_spec"):
             shutil.rmtree(repo / sd)
         if spec.get("new_lfs_spec"):
@@ -699,9 +1109,9 @@ def _push_selftest_case(case: Path) -> list:
             shutil.rmtree(repo / sd)
             os.symlink(os.path.relpath(hidden, (repo / sd).parent), repo / sd)
         if spec.get("break_spec"):
-            text = (repo / sd / "feature.md").read_text(encoding="utf-8")
-            (repo / sd / "feature.md").write_text(
-                text.replace("THE Exporter SHALL write UTF-8.", "The exporter writes UTF-8."), encoding="utf-8")
+            text = _fixture_text(repo / sd / "feature.md")
+            _write_fixture(repo / sd / "feature.md",
+                           text.replace("THE Exporter SHALL write UTF-8.", "The exporter writes UTF-8."))
         if spec.get("in_merge"):
             # the spec edit lives ONLY in a merge commit: its tree differs from both
             # parents, and a per-commit diff without -m prints nothing for it
@@ -753,8 +1163,8 @@ def _push_selftest_case(case: Path) -> list:
                                capture_output=True)
             branch = _git(repo, "symbolic-ref", "--short", "HEAD").strip()
             run("checkout", "-q", "-b", "default-branch", base)
-            (repo / sd / "feature.md").write_text(
-                feature.replace("> **Status:** approved", "> **Status:** converged"), encoding="utf-8")
+            _write_fixture(repo / sd / "feature.md",
+                           feature.replace("> **Status:** approved", "> **Status:** converged"))
             run("commit", "-qam", "converged on the default branch")
             run("update-ref", "refs/remotes/origin/master", "HEAD")
             run("checkout", "-q", branch)

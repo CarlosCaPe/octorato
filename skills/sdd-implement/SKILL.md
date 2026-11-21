@@ -49,6 +49,33 @@ anywhere else. The process that wrote the code is the worst judge of whether it 
 the spec. Run the full test suite once at the end and report its result; `/sdd-converge`
 decides completion.
 
+### 5b. Run It for Real
+Tests passing is not the artifact working. Before you hand over, execute what you built the
+way its consumer will (the CLI with real arguments, the app, the endpoint, the rendered
+document) and record each run in `run-evidence.txt`, a plain-text file next to
+`feature.md`, one line per run:
+
+```text
+# runs made from the repository root
+RUN-01 [AC-01, AC-02] `<the exact command or action>`: <exit code and what you observed>
+```
+
+Write the exact command, not a description of it: the verifier pastes it. The file is a
+machine grammar, not Markdown: a line is blank, a comment that starts with `#` at column 0,
+or a receipt in exactly that shape, and the linter reports anything else. No bullets, no
+indent, no tabs, plain spaces only, one line per receipt, ids in plain digits. Invisible
+characters are refused too, so an emoji that carries the variation selector U+FE0F (`✔️`),
+a joined emoji sequence (U+200D) and text that needs U+200C or U+200D to join or split
+letters cannot go in a receipt: write the plain sign (`✓`) or a word. A receipt left as the template,
+or filled with `TODO` and the like, is refused, and no receipt counts until every line of
+the file passes. Receipts never go in `feature.md`: a `## Run evidence` heading there is a
+finding.
+
+A receipt is a claim the verifier reproduces, not a grade: it says what you ran and what
+came back, never that a criterion is met. Reading the code is not a run. When a run shows a
+defect, fix it and run again before recording. The push gate refuses `Status: converged` on
+a spec with no receipt (rule `FLOW.build-loop-excellence`).
+
 If the plan carries a `## Convergence <n>` section with open tasks, work through those tasks
 the same way as the original ones.
 

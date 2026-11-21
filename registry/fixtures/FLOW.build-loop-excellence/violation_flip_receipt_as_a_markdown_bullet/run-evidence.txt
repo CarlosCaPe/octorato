@@ -1,0 +1,2 @@
+# runs made on a clean checkout
+- RUN-01 [AC-01, AC-02] `python3 app.py`: exit 0, the report is written in UTF-8
