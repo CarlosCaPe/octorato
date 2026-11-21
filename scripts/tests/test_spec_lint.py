@@ -435,8 +435,44 @@ class RunEvidenceTest(unittest.TestCase):
             self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
 
     def test_selftest_goes_red_when_a_markdown_section_is_tolerated(self):
-        with mock.patch.object(spec_lint, "_names_run_evidence", lambda line: False):
+        with mock.patch.object(spec_lint, "_names_run_evidence", lambda line, below="": False):
             self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_when_any_line_with_the_words_is_a_heading(self):
+        # Convergence 5, T39: a list item or a bare line is not a heading.
+        def loose(line, below=""):
+            words = " ".join(line.strip().lstrip("#>-*+ ").strip("*_`").casefold()
+                             .replace("-", " ").replace("_", " ").split())
+            return words.rstrip(":.") == "run evidence" or \
+                (line.lstrip().startswith("#") and words.startswith("run evidence"))
+        with mock.patch.object(spec_lint, "_names_run_evidence", loose):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_selftest_goes_red_when_a_quoted_heading_is_not_seen(self):
+        real = spec_lint._names_run_evidence
+        with mock.patch.object(spec_lint, "_names_run_evidence",
+                               lambda line, below="": not line.lstrip().startswith(">") and real(line, below)):
+            self.assertEqual(_quiet(spec_lint.selftest, RUN_FIXTURES), 1)
+
+    def test_what_is_a_run_evidence_heading(self):
+        headings = [("## Run evidence", ""), ("# Run evidence", ""), ("###### RUN EVIDENCE", ""),
+                    ("## Run evidence (final)", ""), ("## Run evidence:", ""), ("   ## Run evidence", ""),
+                    ("## Run evidence ##", ""), ("## run_evidence", ""), ("## **Run evidence**", ""),
+                    ("##\tRun evidence", ""), ("> ## Run evidence", ""), ("> > ## Run evidence", ""),
+                    (">## Run evidence", ""), ("Run evidence", "====="), ("Run evidence:", "---"),
+                    ("run-evidence", "-"), ("**Run evidence**", ""), ("__Run evidence__", ""),
+                    ("> **Run evidence**", ""), ("> Run evidence", "---"), ("> Run evidence", "> ===")]
+        others = [("- Run evidence", ""), ("* Run evidence", ""), ("+ Run evidence", ""), ("1. Run evidence", ""),
+                  ("run_evidence", ""), ("Run evidence", ""), ("Run evidence", "text"), ("- Run evidence", "---"),
+                  ("The run evidence is in the file.", ""), ("    ## Run evidence", ""), ("#Run evidence", ""),
+                  ("####### Run evidence", ""), ("## Notes on run evidence", ""), ("**Run evidence** is here", ""),
+                  ("| Run evidence |", ""), ("`## Run evidence`", ""), ("- ## Run evidence", ""), ("", ""), ("##", "")]
+        for line, below in headings:
+            with self.subTest(heading=line, below=below):
+                self.assertTrue(spec_lint._names_run_evidence(line, below))
+        for line, below in others:
+            with self.subTest(other=line, below=below):
+                self.assertFalse(spec_lint._names_run_evidence(line, below))
 
     def test_selftest_goes_red_when_unsafe_characters_are_let_through(self):
         with mock.patch.object(spec_lint, "_unsafe_char", lambda line: None):
@@ -706,12 +742,17 @@ class RunEvidenceTest(unittest.TestCase):
         for name, tail in (("the old section", "\n## Run evidence\n\n- " + good),
                            ("miscased", "\n## RUN EVIDENCE\n"), ("deeper", "\n### Run evidence\n"),
                            ("a tail", "\n## Run evidence (final)\n"), ("indented", "\n ## Run evidence\n"),
-                           ("setext", "\nRun evidence\n============\n"), ("bold", "\n**Run evidence**\n")):
+                           ("setext", "\nRun evidence\n============\n"), ("bold", "\n**Run evidence**\n"),
+                           ("quoted", "\n> ## Run evidence\n"), ("quoted setext", "\n> Run evidence\n> ---\n")):
             with self.subTest(name):
                 self.assertIn(moved, self._findings(good, feature_tail=tail))
         # A sentence that mentions the words, and a heading quoted in a fence, are not headings.
         self.assertEqual(self._findings(good, feature_tail="\n## Notes\n\nThe run evidence is in the text file.\n"), "")
         self.assertEqual(self._findings(good, feature_tail="\n## Notes\n\n```\n## Run evidence\n```\n"), "")
+        for tail in ("- Run evidence\n", "* Run evidence\n", "1. Run evidence\n", "run_evidence\n",
+                     "Run evidence\n", "- Run evidence\n---\n", "#Run evidence\n", "| Run evidence | x |\n"):
+            with self.subTest(tail):
+                self.assertEqual(self._findings(good, feature_tail="\n## Notes\n\n" + tail), "")
 
     def test_a_spec_file_that_is_not_utf8_is_a_finding_with_its_line(self):
         bad = b"caf\xe9\n"
@@ -916,6 +957,11 @@ class RunEvidenceTest(unittest.TestCase):
                 self.assertEqual(pushed.returncode, 1)
                 self.assertEqual(local.returncode, 1)
                 self.assertIn(f"docs/specs/202611200000-toy/{name}:{line}: not valid UTF-8", pushed.stdout)
+                # Convergence 5, T38: the receipts are clean and the spec is converged.
+                # With an unreadable feature.md their criteria cannot be read, and the
+                # gate must not answer that with "no run receipt counts".
+                self.assertNotIn("run-evidence", pushed.stdout)
+                self.assertNotIn("run receipt", pushed.stdout)
                 self.assertIn(f"{name}:{line}: not valid UTF-8", local.stdout)
                 target.write_bytes(kept)
                 git("commit", "-qam", f"{name} is text again")

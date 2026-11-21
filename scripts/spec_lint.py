@@ -32,8 +32,11 @@ What it checks, per spec directory (a `feature.md`, optionally a `plan.md`):
     - at most 3 NEEDS CLARIFICATION markers; with --ready, zero. A marker is
       `[NEEDS CLARIFICATION]` or `[NEEDS CLARIFICATION: ...]`, any case, and
       may span lines
-    - a heading that names run evidence (`## Run evidence` in any form) is a
-      finding: receipts live in run-evidence.txt, never in Markdown
+    - a run evidence heading is a finding: receipts live in run-evidence.txt,
+      never in Markdown. A heading is an ATX heading of any level and case
+      (indented up to three spaces, with any tail), a setext title or a line
+      that is only the title in bold, each also behind quote marks. A list
+      item or a sentence that holds the words is not one
 
   run-evidence.txt (when present; required at the flip to converged)
     - plain text, read as bytes: UTF-8, lines end at a line feed (one carriage
@@ -79,8 +82,8 @@ quote the grammar without tripping it.
 
 Push gate (v9 phase 3, called by .githooks/pre-push once per pushed ref):
   spec_lint.py --push-range <base-sha> <head-sha>
-    - lints, at <head>, every ears-1 spec whose feature.md or plan.md the range
-      changes (AC-15)
+    - lints, at <head>, every ears-1 spec whose feature.md, plan.md or
+      run-evidence.txt the range changes (AC-15), from the bytes of the blob
     - for every ears-1 spec whose `Status:` header becomes `converged` in the
       range, requires a plan.md and the latest anchored converge receipt for
       that spec directory to say CONVERGED, with a transcript timestamp newer
@@ -351,14 +354,44 @@ def _parse_receipt(line: str):
     return m.group(1), acs, executed, observed
 
 
-def _names_run_evidence(line: str) -> bool:
-    """A line of feature.md that reads as a run evidence heading in any form: any
-    level, any case, a tail, an indent, bold text, a setext title."""
-    words = " ".join(line.strip().lstrip("#").strip().strip("*_`").casefold()
-                     .replace("-", " ").replace("_", " ").split())
-    if not words.startswith("run evidence"):
+_RUN_EVIDENCE_TITLES = frozenset(("run evidence", "run-evidence", "run_evidence", "runevidence"))
+
+
+def _run_evidence_words(text: str) -> str:
+    """The text of a heading, without closing hashes and emphasis, in lower case."""
+    return text.strip().rstrip("#").strip().strip("*_`").strip().casefold()
+
+
+def _names_run_evidence(line: str, below: str = "") -> bool:
+    """A line of feature.md that is a run evidence HEADING. Three forms count, each
+    also behind quote marks (`> ## Run evidence` is still a section in intent):
+      - an ATX heading of any level, at column 0 or indented up to three spaces,
+        whose text starts with the title in any case (`### RUN EVIDENCE (final)`)
+      - a setext title: the title alone on its line, underlined with `=` or `-`
+      - a line that is nothing but the title in bold
+    A list item (`- Run evidence`), a sentence that mentions the words and a bare
+    `run_evidence` line are not headings and are not flagged."""
+    body = line.lstrip(" ")
+    if len(line) - len(body) > 3:
+        return False  # four spaces of indent is code, not a heading
+    if body.startswith(">"):
+        body = body.lstrip("> ")
+    hashes = len(body) - len(body.lstrip("#"))
+    if 1 <= hashes <= 6 and (len(body) == hashes or body[hashes] in " \t"):
+        words = " ".join(_run_evidence_words(body[hashes:]).replace("-", " ").replace("_", " ").split())
+        return words.startswith("run evidence")
+    if hashes:
         return False
-    return line.lstrip().startswith("#") or words.rstrip(":.") == "run evidence"
+    bare = body.strip()
+    for mark in ("**", "__"):
+        if len(bare) > 4 and bare.startswith(mark) and bare.endswith(mark):
+            return _run_evidence_words(bare[2:-2]).rstrip(":.") in _RUN_EVIDENCE_TITLES
+    under = below.strip()
+    if under.startswith(">"):
+        under = under.lstrip("> ").strip()
+    if under and (set(under) == {"="} or set(under) == {"-"}):
+        return bare.casefold().rstrip(":.") in _RUN_EVIDENCE_TITLES
+    return False
 
 
 def run_evidence(data, criteria=None) -> tuple:
@@ -521,8 +554,8 @@ def lint_feature(feature: Path, report: Report, ready: bool) -> set:
     if "Acceptance Criteria" in secs and not ids:
         report.add(feature, 1, "`## Acceptance Criteria` holds no criterion")
 
-    for i, line in lines:
-        if _names_run_evidence(line):
+    for at, (i, line) in enumerate(lines):
+        if _names_run_evidence(line, lines[at + 1][1] if at + 1 < len(lines) else ""):
             report.add(feature, i, f"run evidence lives in `{EVIDENCE_FILE}` next to "
                                    f"feature.md, one receipt per line; a Markdown "
                                    f"section is not read. Move the receipts there and "
@@ -897,13 +930,18 @@ def push_findings(repo: Path, base: str, head: str) -> list:
         had = bool(before) and _show_bytes(repo, before, f"{sd}/{EVIDENCE_FILE}") is not None
         if _needs_evidence(flip, had, evidence_now is not None):
             verb = "becomes" if flip else "is"
+            # A receipt counts only if its criteria exist, and the criteria are read
+            # from feature.md. When that file cannot be read the receipts cannot be
+            # judged, so nothing is said about them: the push is refused by the
+            # `not valid UTF-8` finding, and "no receipt counts" would be false.
+            judged = not rep.unreadable
             how = (f"Run the shipped artifact for real and record each run in "
                    f"{sd}/{EVIDENCE_FILE}, one line per run: `{RUN_GRAMMAR}`. Then run "
                    f"/sdd-converge.")
             if evidence_now is None:
                 findings.append(f"{sd}: Status {verb} converged, but the spec has no "
                                 f"`{EVIDENCE_FILE}`. {how}")
-            elif not run_receipts(evidence_now, rep.criteria):
+            elif judged and not run_receipts(evidence_now, rep.criteria):
                 findings.append(f"{sd}: Status {verb} converged, but `{EVIDENCE_FILE}` "
                                 f"holds no run receipt that counts (a filled one, in a file "
                                 f"with no finding). {how}")
