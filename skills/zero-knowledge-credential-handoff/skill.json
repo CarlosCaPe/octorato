@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "zero-knowledge-credential-handoff",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Deliver new-account passwords to end users without the agent or the operator seeing them: the secret goes from a vault to a private bucket inside one process, and only expiring per-user links leave it. Load when asked to send credentials to people."
+}

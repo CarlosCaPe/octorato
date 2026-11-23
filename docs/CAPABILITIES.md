@@ -6,15 +6,15 @@
 
 | Metric | Count |
 |---|---|
-| Skills | 248 |
+| Skills | 249 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 147 |
+| Scripts: wired | 148 |
 | Scripts: orphan | 7 |
 | Rules | 108 |
 | Hook entries | 63 |
 
-## Skills (248)
+## Skills (249)
 
 | Name | Description |
 |---|---|
@@ -266,6 +266,7 @@
 | workspace-skill-discovery | Discover and include ALL skills across the workspace , not just global ones. Use at the start of every session or when t... |
 | wrangler | Cloudflare Workers CLI for deploying, developing, and managing Workers, KV, R2, D1, Vectorize, Hyperdrive, Workers AI, C... |
 | yeet | Use only when the user explicitly asks to stage, commit, push, and open a GitHub pull request in one flow using the GitH... |
+| zero-knowledge-credential-handoff | Deliver credentials (new account passwords, initial logins) to end users when the agent, and ideally the operator, must ... |
 
 ## Agents by Division (167 across 13 divisions)
 
@@ -501,7 +502,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (154)
+## Scripts (155)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -640,6 +641,7 @@
 | requa.py | Base_Update_Verifier helper for `/requa <pr>` (spec v10, AC-12). | wired |
 | runtime_census.py | runtime_census.py: measure a harness before the brain calls it supported. | wired |
 | scan-external-refs | scan-external-refs , Scan reference repos for new skills, agents, and patterns | orphan |
+| secret_handoff.py | secret_handoff.py: hand credentials to end users without anyone in the middle reading them. The valu... | wired |
 | secrets-grep-guard.py | secrets-grep-guard.py , PreToolUse:Bash hook: deny raw reads of secret-bearing files. | wired |
 | session-isolation-hook.py | session-isolation-hook.py , SessionStart hook: isolation by DEFAULT. | wired |
 | skill-cost-profiler.py | skill-cost-profiler.py , observability surface 2. Reads the native Claude Code session JSONL logs th... | wired |
