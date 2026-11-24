@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-11-23]: v12.3.0
+### Features
+- feat(skills): add zero-knowledge-credential-handoff skill (#475)
+### Other
+- docs(changelog): backfill v12.2.2 (#474)
+
 ## [2026-11-20]: v12.2.2
 ### Other
 - chore(gitignore): ignore harness policy-limits and remote-settings caches (#471)
