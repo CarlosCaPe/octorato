@@ -71,10 +71,32 @@ def oracle(cases, wrong=()):
     return call
 
 
-def run_counts(caught, fa, nw=40, ok=40):
+WANT = rr.expected_counts(CASES)
+
+
+def by_class(caught):
+    """Spread `caught` over the tracked defect classes, in class order."""
+    out = {}
+    for cls, n in WANT["by_class"].items():
+        out[cls] = {"cases": n, "caught": min(n, caught)}
+        caught -= out[cls]["caught"]
+    return out
+
+
+def run_counts(caught, fa, nw=40, ok=40, **bad):
     return {"needs_work": nw, "caught": caught, "pass": ok, "false_alarms": fa,
-            "unparsed": 0, "failed": 0, "timeout": 0, "by_class": {},
+            "unparsed": 0, "failed": 0, "timeout": 0, "by_class": by_class(caught), **bad,
             "catch_rate": rr._rate(caught, nw), "false_alarm_rate": rr._rate(fa, ok)}
+
+
+def consistent(rec):
+    """A hand-forged record made internally consistent, as an attacker would."""
+    for r in rec["runs"]:
+        r["catch_rate"] = rr._rate(r["caught"], r["needs_work"])
+        r["false_alarm_rate"] = rr._rate(r["false_alarms"], r["pass"])
+    rec["worst"] = rr.worst_of(rec["runs"])
+    rec["run_receipt"]["runs"] = rec["runs"]
+    return rec
 
 
 class FixtureSet(unittest.TestCase):
@@ -93,7 +115,19 @@ class FixtureSet(unittest.TestCase):
         self.assertTrue(rr.fixture_problems(nw[1:] + ok))            # 39 NEEDS-WORK
         self.assertTrue(rr.fixture_problems(nw + ok[1:]))            # 39 PASS
         over = [c for c in nw if c["defect_class"] == "overstatement"]
-        self.assertTrue(rr.fixture_problems([c for c in nw if c not in over[6:]] + ok))
+        wrong = [c for c in nw if c["defect_class"] == "wrong-fact"]
+        # 14 overstatement cases, topped up with wrong-fact copies so the
+        # NEEDS-WORK total stays at 40 and only the per-class floor can fire.
+        extra = []
+        for i, c in enumerate(wrong[:len(over) - rr.MIN_PER_CLASS + 1]):
+            c = copy.deepcopy(c)
+            c["id"] = f"{c['id']}-copy{i}"
+            extra.append(c)
+        short = [c for c in nw if c not in over[rr.MIN_PER_CLASS - 1:]] + extra
+        self.assertEqual(len(short), len(nw))
+        probs = rr.fixture_problems(short + ok)
+        self.assertEqual(len(probs), 1, probs)
+        self.assertIn("`overstatement` cases", probs[0])
         bad = copy.deepcopy(nw[0])
         bad["defect_line"] = "a line the reply does not carry"
         self.assertTrue(rr.fixture_problems([bad] + nw[1:] + ok))
@@ -274,9 +308,12 @@ class RepoCase(unittest.TestCase):
         p.write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return p
 
-    def record(self, role, engine, model, runs, baseline=None):
+    def record(self, role, engine, model, runs, baseline=None, reason=None):
+        if reason is None:
+            reason = (f"fable {rr.FALLBACK_REASON} (stub)" if (role, model) == ("baseline", "opus")
+                      else "test")
         return rr.build_record(engine=engine, model=model, role=role, cases=CASES, runs=runs,
-                               fixture_tree=self.tree, version="stub 1", reason="test",
+                               fixture_tree=self.tree, version="stub 1", reason=reason,
                                runner_sha256=self.runner_sha, baseline=baseline)
 
     def reviewers(self, pairs):
@@ -409,6 +446,58 @@ class Recompute(RepoCase):
                                       [run_counts(38, 2), run_counts(37, 1), run_counts(38, 3)]))
         self.assertEqual(self.doctor([pair()]).status, brain_doctor.FAIL)
 
+    def test_qa1_broken_baseline_is_refused(self):
+        bad_runs = [run_counts(0, 40, failed=80)] * 3
+        with self.assertRaises(rr.ReplayError):
+            self.record("baseline", "claude", "fable", bad_runs)
+        for runs in ([run_counts(38, 2, unparsed=1)] + [run_counts(38, 2)] * 2,
+                     [run_counts(38, 2), run_counts(31, 2), run_counts(38, 2)],   # catch 0.775
+                     [run_counts(38, 2), run_counts(38, 9), run_counts(38, 2)]):  # alarm 0.225
+            with self.assertRaises(rr.ReplayError):
+                self.record("baseline", "claude", "fable", runs)
+        # On disk, a hand-written broken baseline voids every allowed pair.
+        base = copy.deepcopy(self.base)
+        base["runs"] = [run_counts(0, 40, failed=80) for _ in range(3)]
+        self.write_record(consistent(base))
+        r = self.doctor([pair()])
+        self.assertEqual(r.status, brain_doctor.FAIL)
+        self.assertIn("answers", r.message)
+
+    def test_qa1_floor_edges_hold(self):
+        self.record("baseline", "claude", "fable",
+                    [run_counts(32, 8), run_counts(40, 0), run_counts(40, 0)])  # 0.8 / 0.2
+
+    def test_qa2_baseline_identity(self):
+        runs = [run_counts(38, 2), run_counts(37, 1), run_counts(38, 3)]
+        for engine, model, reason in (("claude", "haiku", "test"), ("codex", "fable", "test"),
+                                      ("claude", "opus", "fable was slow")):
+            with self.assertRaises(rr.ReplayError, msg=(engine, model)):
+                self.record("baseline", engine, model, runs, reason=reason)
+        with self.assertRaises(rr.ReplayError):
+            self.record("candidate", "claude", "sonnet", runs, self.base)
+        base = copy.deepcopy(self.base)
+        base["model"] = base["baseline_model"] = base["run_receipt"]["model"] = "haiku"
+        (self.root / rr.RECORDS_REL / "claude-fable.json").unlink()
+        self.write_record(base)
+        self.assertEqual(self.doctor([pair(baseline_model="haiku")]).status, brain_doctor.FAIL)
+
+    def test_qa3_counts_must_match_the_tracked_set(self):
+        cand = copy.deepcopy(self.cand)
+        one = {"needs_work": 1, "pass": 1, "by_class": {"wrong-fact": 1}}
+        cand["counts"] = one
+        for r in cand["runs"]:
+            r.update(needs_work=1, caught=1, **{"pass": 1}, false_alarms=0,
+                     by_class={"wrong-fact": {"cases": 1, "caught": 1}})
+        self.write_record(consistent(cand))
+        r = self.doctor([pair()])
+        self.assertEqual(r.status, brain_doctor.FAIL)
+        self.assertIn("tracked fixture set", r.message)
+        cand = copy.deepcopy(self.cand)
+        cand["runs"][0]["by_class"]["wrong-fact"]["caught"] -= 1
+        cand["run_receipt"]["runs"] = cand["runs"]
+        self.write_record(cand)
+        self.assertEqual(self.doctor([pair()]).status, brain_doctor.FAIL)
+
     def test_not_allowed_pairs_need_no_record(self):
         p = pair(model="m9")
         p["status"] = "not-allowed"
@@ -464,8 +553,8 @@ class RunnerEndToEnd(RepoCase):
         self.assertEqual(rec["cli_version"], "stub-cli 9.9.9")
         self.assertEqual(rec["fixture_tree"], self.tree)
         self.assertNotIn("opus", self.log.read_text())
-        # 1 probe + 3 runs of 80 cases.
-        self.assertEqual(len(self.log.read_text().split()), 1 + 3 * len(CASES))
+        # The probe answer is scored as the first case of run 1: 3 runs of 80, no extra call.
+        self.assertEqual(len(self.log.read_text().split()), 3 * len(CASES))
 
     def test_ac34_opus_only_when_fable_is_refused_for_quota(self):
         self.run_cli("--baseline", STUB_REFUSE="fable")
@@ -475,10 +564,39 @@ class RunnerEndToEnd(RepoCase):
         self.assertIn("quota or credits", rec["run_receipt"]["model_reason"])
         self.assertEqual(self.log.read_text().split().count("fable"), 1)
 
-    def test_ac34_a_failure_that_is_not_a_refusal_keeps_fable(self):
-        model, reason, _ = rr.choose_baseline_model(
-            CASES, lambda m: (lambda p: {"status": "failed", "stdout": "", "stderr": "boom"}))
+    def test_ac34_a_failure_that_is_not_a_refusal_aborts_the_baseline(self):
+        for ans in ({"status": "failed", "stdout": "", "stderr": "not logged in"},
+                    {"status": "timeout"}, {"status": "ok", "stdout": "looks fine"}):
+            with self.assertRaises(rr.ReplayError, msg=ans):
+                rr.choose_baseline_model(CASES, lambda m, a=ans: (lambda p: a))
+
+    def test_ac34_broken_baseline_cli_writes_nothing(self):
+        broken = Path(self._tmp.name) / "broken-cli"
+        broken.write_text(f"#!{sys.executable}\nimport sys\nprint('not logged in', file=sys.stderr)\n"
+                          "sys.exit(1)\n", encoding="utf-8")
+        broken.chmod(0o755)
+        cp = subprocess.run([sys.executable, str(SCRIPTS / "review_replay.py"), "run", "--root",
+                             str(self.root), "--cli", str(broken), "--baseline"],
+                            capture_output=True, text=True, env=self.env, timeout=600)
+        self.assertEqual(cp.returncode, 2, cp.stderr[-2000:])
+        self.assertIn("no baseline written", cp.stderr)
+        self.assertFalse((self.root / rr.RECORDS_REL).exists()
+                         and any((self.root / rr.RECORDS_REL).iterdir()))
+
+    def test_ac34_probe_answer_is_scored_not_asked_twice(self):
+        seen = []
+        inner = oracle(CASES)
+
+        def make_call(model):
+            def call(p):
+                seen.append(p)
+                return inner(p)
+            return call
+        model, _, call = rr.choose_baseline_model(CASES, make_call)
         self.assertEqual(model, "fable")
+        runs = rr.replay(CASES, call, jobs=4)
+        self.assertEqual(len(seen), 3 * len(CASES))
+        self.assertEqual([r["caught"] for r in runs], [40, 40, 40])
 
     def test_ac33_ac35_candidate_record_names_its_baseline_and_qualifies(self):
         self.run_cli("--baseline")

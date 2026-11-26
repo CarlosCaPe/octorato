@@ -96,6 +96,13 @@ NAMED_CLASSES = ("wrong-fact", "overstatement")
 CATCH_MARGIN, FALSE_ALARM_MARGIN = Fraction(1, 20), Fraction(1, 10)
 
 BASELINE_ENGINE, BASELINE_MODEL, FALLBACK_MODEL = "claude", "fable", "opus"
+# An absolute floor under the baseline itself, on the worst of three runs: a
+# broken baseline (not logged in, a dead CLI) would otherwise score catch 0
+# and false alarm 1.0, and every candidate would sit inside the bound. A
+# baseline record with any failed, timed-out or unreadable answer is invalid
+# too. Worst catch at least 0.8, worst false alarm at most 0.2.
+BASELINE_FLOOR = {"catch": Fraction(4, 5), "false_alarm": Fraction(1, 5)}
+FALLBACK_REASON = "refused for quota or credits"
 CANDIDATE_ENGINES = ("codex", "gemini")
 ENGINES = (BASELINE_ENGINE,) + CANDIDATE_ENGINES
 # A refusal for quota or credits (the census reads 429s the same way).
@@ -413,19 +420,34 @@ def replay(cases: list, call, jobs: int = 4, with_ids: bool = True) -> list:
     return [run_once(cases, call, jobs, with_ids) for _ in range(RUNS)]
 
 
+class ReplayError(RuntimeError):
+    """A run that must not produce a record."""
+
+
 def choose_baseline_model(cases: list, make_call) -> tuple:
     """(model, reason, call). Fable first; Opus only when the Fable call is
-    refused for quota or credits (AC-34). The probe is the first case."""
+    refused for quota or credits (AC-34). The probe is the first case of the
+    first run: its answer is kept and SCORED there, never asked twice. Any
+    other failure of the probe (not logged in, a crash, a timeout, an answer
+    that does not parse) aborts the baseline: it never continues as Fable."""
     call = make_call(BASELINE_MODEL)
-    prompt, _ = build_prompt(cases[0])
+    prompt, dg = build_prompt(cases[0])
     ans = call(prompt) or {}
     text = f"{ans.get('stdout', '')}\n{ans.get('stderr', '')}"
     if ans.get("status") != "ok" and REFUSAL.search(text):
         m = REFUSAL.search(text)
         return (FALLBACK_MODEL,
-                f"{BASELINE_MODEL} refused for quota or credits ({m.group(0)!r} in its answer)",
+                f"{BASELINE_MODEL} {FALLBACK_REASON} ({m.group(0)!r} in its answer)",
                 make_call(FALLBACK_MODEL))
-    return BASELINE_MODEL, f"{BASELINE_MODEL} answered the probe call", call
+    if ans.get("status") != "ok" or not judge(ans.get("stdout", ""), dg):
+        raise ReplayError(f"the {BASELINE_MODEL} probe call {ans.get('status') or 'failed'} without a "
+                          "readable verdict and without a quota or credit refusal; no baseline written")
+    kept = {"answer": ans}
+
+    def first_reused(p):
+        reused = kept.pop("answer", None) if p == prompt else None
+        return reused if reused is not None else call(p)
+    return BASELINE_MODEL, f"{BASELINE_MODEL} answered the probe call", first_reused
 
 
 def build_record(*, engine, model, role, cases, runs, fixture_tree, version, reason,
@@ -437,10 +459,7 @@ def build_record(*, engine, model, role, cases, runs, fixture_tree, version, rea
         "baseline_record": None if role == "baseline" else record_name(
             (baseline or {}).get("engine", ""), (baseline or {}).get("model", "")),
         "cli_version": version, "date": _now(), "fixture_tree": fixture_tree,
-        "counts": {"needs_work": nw, "pass": len(cases) - nw,
-                   "by_class": {k: sum(1 for c in cases if c.get("defect_class") == k)
-                                for k in sorted({str(c.get("defect_class")) for c in cases
-                                                 if c.get("expected") == "NEEDS-WORK"})}},
+        "counts": expected_counts(cases),
         "runs": runs, "worst": worst_of(runs),
         "held_out": held_out,
         "run_receipt": {"runner_sha256": runner_sha256, "fixture_tree": fixture_tree,
@@ -448,6 +467,9 @@ def build_record(*, engine, model, role, cases, runs, fixture_tree, version, rea
     }
     if role == "candidate" and baseline:
         rec["bound"] = {"holds": bound_holds(rec, baseline)}
+    probs = record_problems(rec, f"{engine}/{model} record")
+    if probs:
+        raise ReplayError("; ".join(probs[:3]) + "; no record written")
     return rec
 
 
@@ -484,8 +506,70 @@ def bound_holds(cand: dict, base: dict) -> bool:
     return c_catch >= b_catch - CATCH_MARGIN and c_fa <= b_fa + FALSE_ALARM_MARGIN
 
 
+def _int(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def expected_counts(cases: list) -> dict:
+    nw = [c for c in cases if c.get("expected") == "NEEDS-WORK"]
+    return {"needs_work": len(nw), "pass": len(cases) - len(nw),
+            "by_class": {k: sum(1 for c in nw if c.get("defect_class") == k)
+                         for k in sorted({str(c.get("defect_class")) for c in nw})}}
+
+
+def counts_problems(rec: dict, want: dict, label: str = "record") -> list:
+    """A record's counts against the fixture set recounted now: the record's
+    `counts` and every run's `by_class` must be the tracked set's."""
+    if rec.get("counts") != want:
+        return [f"{label}: counts {rec.get('counts')} are not the tracked fixture set's {want}"]
+    for i, r in enumerate(rec.get("runs") or []):
+        bc = r.get("by_class")
+        if not isinstance(bc, dict) or {k: (v or {}).get("cases") for k, v in bc.items()} != want["by_class"]:
+            return [f"{label}: run {i + 1} by_class does not cover the tracked defect classes"]
+        if sum(int((v or {}).get("caught") or 0) for v in bc.values()) != r.get("caught"):
+            return [f"{label}: run {i + 1} by_class caught does not sum to its caught"]
+    return []
+
+
+def identity_problems(rec: dict, label: str = "record") -> list:
+    """AC-34: a baseline is engine `claude` on Fable, or on Opus only with the
+    recorded quota or credit refusal; a candidate is Codex or Gemini."""
+    if rec.get("role") == "baseline":
+        reason = str((rec.get("run_receipt") or {}).get("model_reason") or "")
+        if rec.get("engine") != BASELINE_ENGINE:
+            return [f"{label}: a baseline runs on engine {BASELINE_ENGINE}"]
+        if rec.get("model") == BASELINE_MODEL:
+            return []
+        if rec.get("model") == FALLBACK_MODEL and FALLBACK_REASON in reason:
+            return []
+        return [f"{label}: a baseline is {BASELINE_MODEL}, or {FALLBACK_MODEL} only with a "
+                f"recorded `{FALLBACK_REASON}` reason"]
+    if rec.get("engine") not in CANDIDATE_ENGINES:
+        return [f"{label}: a candidate runs on {', '.join(CANDIDATE_ENGINES)}"]
+    return []
+
+
+def baseline_quality_problems(rec: dict, label: str = "baseline record") -> list:
+    """A baseline with any failed, timed-out or unreadable answer, or below the
+    BASELINE_FLOOR on its worst run, is not a baseline."""
+    probs = []
+    for i, r in enumerate(rec.get("runs") or []):
+        bad = {k: r.get(k) for k in ("failed", "timeout", "unparsed") if r.get(k)}
+        if bad:
+            probs.append(f"{label}: run {i + 1} has {bad} answers")
+    if probs:
+        return probs
+    catch, fa = _worst_fractions(rec)
+    if catch < BASELINE_FLOOR["catch"] or fa > BASELINE_FLOOR["false_alarm"]:
+        probs.append(f"{label}: below the baseline floor (worst catch {float(catch):.4f} < "
+                     f"{float(BASELINE_FLOOR['catch'])} or worst false alarm {float(fa):.4f} > "
+                     f"{float(BASELINE_FLOOR['false_alarm'])})")
+    return probs
+
+
 def record_problems(rec, label: str = "record") -> list:
-    """Internal consistency of a record and its run receipt (AC-33, AC-34)."""
+    """Internal consistency of a record and its run receipt (AC-33, AC-34),
+    its identity, and for a baseline its quality."""
     if not isinstance(rec, dict):
         return [f"{label}: not a mapping"]
     probs = []
@@ -502,12 +586,12 @@ def record_problems(rec, label: str = "record") -> list:
     if not isinstance(runs, list) or len(runs) != RUNS:
         return probs + [f"{label}: needs exactly {RUNS} runs"]
     for i, r in enumerate(runs):
-        try:
-            nw, ok = int(r["needs_work"]), int(r["pass"])
-            caught, fa = int(r["caught"]), int(r["false_alarms"])
-        except (KeyError, TypeError, ValueError):
-            probs.append(f"{label}: run {i + 1} lacks its counts")
+        vals = [r.get(k) if isinstance(r, dict) else None for k in
+                ("needs_work", "pass", "caught", "false_alarms", "unparsed", "failed", "timeout")]
+        if not all(_int(v) for v in vals):
+            probs.append(f"{label}: run {i + 1} lacks its integer counts")
             continue
+        nw, ok, caught, fa = vals[:4]
         if nw != counts.get("needs_work") or ok != counts.get("pass") or nw <= 0 or ok <= 0:
             probs.append(f"{label}: run {i + 1} counts differ from the record's counts")
         if not (0 <= caught <= nw and 0 <= fa <= ok):
@@ -531,6 +615,9 @@ def record_problems(rec, label: str = "record") -> list:
         probs.append(f"{label}: run receipt does not say why this model ran")
     if rr.get("runs") != runs:
         probs.append(f"{label}: run receipt results differ from the record's runs")
+    probs += identity_problems(rec, label)
+    if not probs and rec.get("role") == "baseline":
+        probs += baseline_quality_problems(rec, label)
     return probs
 
 
@@ -582,11 +669,13 @@ def current_baseline(root) -> tuple:
 
 
 def allowed_pair_problems(pair: dict, root, fixture_tree: str | None = None,
-                          history: set | None = None) -> list:
+                          history: set | None = None, want: dict | None = None) -> list:
     """AC-36: why an `allowed` pair does not hold. Empty means it holds."""
     root = Path(root)
     who = f"{pair.get('engine')}/{pair.get('model')}"
     fixture_tree = git_tree_hash(root / FIXTURES_REL) if fixture_tree is None else fixture_tree
+    if want is None:
+        want = expected_counts(load_cases(root / FIXTURES_REL)[0])
     rel = str(pair.get("replay_record") or "")
     recs_dir = (root / RECORDS_REL).resolve()
     path = (root / rel).resolve() if rel else None
@@ -607,6 +696,8 @@ def allowed_pair_problems(pair: dict, root, fixture_tree: str | None = None,
         return [f"{who}: {p}" for p in bprobs]
     if cand.get("fixture_tree") != fixture_tree or base.get("fixture_tree") != fixture_tree:
         probs.append(f"{who}: a record's fixture tree hash differs from the tracked fixture set")
+    probs += counts_problems(cand, want, f"{who} record")
+    probs += counts_problems(base, want, f"{who}: baseline record")
     if not (pair.get("baseline_model") == cand.get("baseline_model") == base.get("model")):
         probs.append(f"{who}: names baseline model {pair.get('baseline_model')!r}, record "
                      f"{cand.get('baseline_model')!r}, current baseline {base.get('model')!r}")
@@ -628,6 +719,7 @@ def qualify(root) -> list:
     root = Path(root)
     tree = git_tree_hash(root / FIXTURES_REL)
     history = runner_history_hashes(root)
+    want = expected_counts(load_cases(root / FIXTURES_REL)[0])
     pairs = []
     for p, r in records(root):
         if not isinstance(r, dict) or r.get("role") != "candidate":
@@ -635,7 +727,7 @@ def qualify(root) -> list:
         pair = {"engine": r.get("engine"), "model": r.get("model"),
                 "replay_record": (RECORDS_REL / p.name).as_posix(),
                 "baseline_model": r.get("baseline_model")}
-        ok = not allowed_pair_problems(dict(pair, status="allowed"), root, tree, history)
+        ok = not allowed_pair_problems(dict(pair, status="allowed"), root, tree, history, want)
         pairs.append(dict(pair, status="allowed" if ok else "not-allowed"))
     return pairs
 
@@ -699,6 +791,9 @@ def _run_cli(a) -> int:
                            cases=cases, runs=runs, fixture_tree=tree, version=cli_version(cli),
                            reason=reason, runner_sha256=sha256_file(__file__),
                            baseline=baseline, held_out=held_out)
+    except ReplayError as e:
+        print(f"review_replay: {e}", file=sys.stderr)
+        return 2
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     out_dir = root / RECORDS_REL
