@@ -306,10 +306,7 @@ def engine_argv(engine: str, cli: str, model: str, prompt: str) -> list:
     if engine == "codex":
         return [cli, "exec", "--skip-git-repo-check", "-m", model, prompt]
     if engine == "gemini":
-        # gemini refuses a headless call in an untrusted cwd, and the replay
-        # runs in an empty scratch directory; --skip-trust is in the
-        # Accepted_Review_Call allowlist for the same reason.
-        return [cli, "-m", model, "--skip-trust", "-p", prompt]
+        return [cli, "-m", model, "-p", prompt]
     if engine == BASELINE_ENGINE:
         return [cli, "-p", "--model", model, prompt]
     raise ValueError(f"unknown engine {engine!r}")
@@ -321,6 +318,15 @@ def cli_caller(engine: str, cli: str, model: str, timeout: float, cwd: str):
     reply panel waived for a nested Claude Code session."""
     env = dict(os.environ)
     env["OCTO_REPLY_PANEL"] = "off"
+    if engine == "gemini":
+        # gemini 0.62.0 refuses a headless call in an untrusted cwd
+        # (FatalUntrustedWorkspaceError), and `cwd` is a fresh empty scratch
+        # directory. The variable trusts it for this process only and is what
+        # --skip-trust itself sets (bundle/gemini-CGCV5XPN.js:8217, read by
+        # checkPathTrust in chunk-2DHAEQE2.js:363693). It never enters the
+        # argv, so the Accepted_Review_Call allowlist stays without it, and a
+        # replayed answer is never an External_Review_Receipt anyway.
+        env["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
 
     def call(prompt: str) -> dict:
         try:

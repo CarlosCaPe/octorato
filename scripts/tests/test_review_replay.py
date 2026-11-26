@@ -674,10 +674,20 @@ class EngineArgv(unittest.TestCase):
             model, prompt, _ = parse(argv[1:])
             self.assertEqual((model, prompt), ("m1", "review this"), engine)
 
-    def test_gemini_skips_the_trust_prompt(self):
-        # gemini 0.62.0 refuses a headless call in an untrusted cwd, and the
-        # replay runs in an empty scratch directory.
-        self.assertIn("--skip-trust", rr.engine_argv("gemini", "/x/cli", "m1", "p"))
+    def test_gemini_trusts_only_through_the_env_of_its_own_call(self):
+        # gemini 0.62.0 refuses a headless call in an untrusted cwd; the replay
+        # trusts its scratch directory by env, never by an argv flag.
+        self.assertNotIn("--skip-trust", rr.engine_argv("gemini", "/x/cli", "m1", "p"))
+        with tempfile.TemporaryDirectory() as tmp:
+            cli = Path(tmp) / "env-cli"
+            cli.write_text(f"#!{sys.executable}\nimport os\n"
+                           "print(os.environ.get('GEMINI_CLI_TRUST_WORKSPACE', 'unset'))\n",
+                           encoding="utf-8")
+            cli.chmod(0o755)
+            got = {e: rr.cli_caller(e, str(cli), "m1", 30, tmp)("p")["stdout"].strip()
+                   for e in ("gemini", "codex")}
+        self.assertEqual(got, {"gemini": "true", "codex": "unset"})
+        self.assertNotIn("GEMINI_CLI_TRUST_WORKSPACE", os.environ)
 
 
 class ArmingAndRegistration(unittest.TestCase):

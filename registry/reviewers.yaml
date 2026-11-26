@@ -32,5 +32,5 @@ reviewers:
     script: "@google/gemini-cli/bundle/gemini.js"
     engine: "the bundle/ directory gemini.js imports at run time, hashed as a tree"
     config_file: ~/.gemini/settings.json
-    arguments: -m|--model NAME, at most one --skip-trust, exactly one -p|--prompt TEXT
+    arguments: -m|--model NAME, exactly one -p|--prompt TEXT
 pairs: []
