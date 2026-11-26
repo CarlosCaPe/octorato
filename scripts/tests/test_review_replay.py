@@ -639,12 +639,12 @@ class RunnerEndToEnd(RepoCase):
     def test_ac31_held_out_reaches_the_record_as_hash_and_counts_only(self):
         held = Path(self._tmp.name) / "private-held-out-dir"
         held.mkdir()
-        secret = "Held-out reply line that must never reach a record."
+        held_line = "Held-out reply line that must never reach a record."
         for i, (exp, extra) in enumerate((("PASS", {}), ("NEEDS-WORK", {
-                "defect_class": "wrong-fact", "defect_line": secret}))):
+                "defect_class": "wrong-fact", "defect_line": held_line}))):
             (held / f"h{i}.json").write_text(json.dumps(dict(
-                {"id": f"h{i}", "expected": exp, "reply": secret,
-                 "excerpts": [{"source": "held/secret-source.txt", "text": "held excerpt"}]}, **extra)))
+                {"id": f"h{i}", "expected": exp, "reply": held_line,
+                 "excerpts": [{"source": "held/private-source.txt", "text": "held excerpt"}]}, **extra)))
         self.env["STUB_FIXTURES"] = str(held)
         # The stub reads one directory; point it at a merged copy.
         merged = Path(self._tmp.name) / "merged"
@@ -659,7 +659,7 @@ class RunnerEndToEnd(RepoCase):
         self.assertEqual(ho["tree_sha256"], rr.sha256_tree(held))
         self.assertEqual(ho["counts"], {"needs_work": 1, "pass": 1})
         self.assertEqual(len(ho["runs"]), 3)
-        for leak in (secret, "held/secret-source", "h0", "h1", str(held), held.name, "held excerpt"):
+        for leak in (held_line, "held/private-source", "h0", "h1", str(held), held.name, "held excerpt"):
             self.assertNotIn(leak, raw)
 
 
