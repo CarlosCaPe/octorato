@@ -306,7 +306,10 @@ def engine_argv(engine: str, cli: str, model: str, prompt: str) -> list:
     if engine == "codex":
         return [cli, "exec", "--skip-git-repo-check", "-m", model, prompt]
     if engine == "gemini":
-        return [cli, "-m", model, "-p", prompt]
+        # gemini refuses a headless call in an untrusted cwd, and the replay
+        # runs in an empty scratch directory; --skip-trust is in the
+        # Accepted_Review_Call allowlist for the same reason.
+        return [cli, "-m", model, "--skip-trust", "-p", prompt]
     if engine == BASELINE_ENGINE:
         return [cli, "-p", "--model", model, prompt]
     raise ValueError(f"unknown engine {engine!r}")

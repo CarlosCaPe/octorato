@@ -441,6 +441,15 @@ class Recompute(RepoCase):
         self.assertEqual(r.status, brain_doctor.FAIL)
         self.assertIn("committed", r.message)
 
+    def test_ac36_candidate_runner_hash_at_no_commit_fails(self):
+        cand = copy.deepcopy(self.cand)
+        cand["run_receipt"]["runner_sha256"] = hashlib.sha256(b"a runner never committed").hexdigest()
+        self.write_record(cand)
+        r = self.doctor([pair()])
+        self.assertEqual(r.status, brain_doctor.FAIL)
+        self.assertIn("its run receipt's runner hash matches no committed", r.message)
+        self.assertNotIn("baseline run receipt", r.message)
+
     def test_ac36_two_baselines_fail(self):
         self.write_record(self.record("baseline", "claude", "opus",
                                       [run_counts(38, 2), run_counts(37, 1), run_counts(38, 3)]))
@@ -652,6 +661,23 @@ class RunnerEndToEnd(RepoCase):
         self.assertEqual(len(ho["runs"]), 3)
         for leak in (secret, "held/secret-source", "h0", "h1", str(held), held.name, "held excerpt"):
             self.assertNotIn(leak, raw)
+
+
+class EngineArgv(unittest.TestCase):
+    """The replay's call shapes stay inside the T19 Accepted_Review_Call
+    allowlists, so a replayed engine is called the way a counted review is."""
+
+    def test_candidate_argv_is_an_accepted_review_call(self):
+        import external_review as er
+        for engine, parse in (("codex", er._parse_codex), ("gemini", er._parse_gemini)):
+            argv = rr.engine_argv(engine, "/x/cli", "m1", "review this")
+            model, prompt, _ = parse(argv[1:])
+            self.assertEqual((model, prompt), ("m1", "review this"), engine)
+
+    def test_gemini_skips_the_trust_prompt(self):
+        # gemini 0.62.0 refuses a headless call in an untrusted cwd, and the
+        # replay runs in an empty scratch directory.
+        self.assertIn("--skip-trust", rr.engine_argv("gemini", "/x/cli", "m1", "p"))
 
 
 class ArmingAndRegistration(unittest.TestCase):

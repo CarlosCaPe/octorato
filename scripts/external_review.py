@@ -242,12 +242,22 @@ def _parse_codex(rest: list) -> tuple:
 
 
 def _parse_gemini(rest: list) -> tuple:
-    """gemini: only `-m|--model NAME` and exactly one `-p|--prompt TEXT`."""
+    """gemini: only `-m|--model NAME`, at most one `--skip-trust` and exactly
+    one `-p|--prompt TEXT`. `--skip-trust` trusts the cwd for one session:
+    gemini 0.62.0 refuses a headless call in an untrusted directory
+    (FatalUntrustedWorkspaceError, `folderTrustCheck` in bundle/gemini-*.js),
+    and the workspace config it would then load is refused by the cwd walk."""
     model, prompt, pidx = None, None, None
+    skip_trust = False
     i = 0
     while i < len(rest):
         t = rest[i]
-        if t in ("-m", "--model"):
+        if t == "--skip-trust":
+            if skip_trust:
+                raise ValueError("repeated --skip-trust")
+            skip_trust = True
+            i += 1
+        elif t in ("-m", "--model"):
             if model is not None:
                 raise ValueError("model given twice")
             model = _flag_value(rest, i)

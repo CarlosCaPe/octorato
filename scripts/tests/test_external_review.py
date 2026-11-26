@@ -99,6 +99,8 @@ class Parser(unittest.TestCase):
         self.assertEqual((c["engine"], c["prompt"], c["prompt_index"]), ("codex", "review this", 6))
         g = self.ok(f"{N} {GJS} --model m2 --prompt 'review this'")
         self.assertEqual((g["engine"], g["requested_model"]), ("gemini", "m2"))
+        g = self.ok(f"{N} {GJS} -m m2 --skip-trust -p 'review this'")
+        self.assertEqual((g["prompt"], g["prompt_index"]), ("review this", 6))
 
     def test_ac20_refused_shapes(self):
         for cmd in (
@@ -132,6 +134,8 @@ class Parser(unittest.TestCase):
             f"{N} {GJS} -p 'p' --yolo",
             f"{N} {GJS} 'p'",
             f"{N} {GJS} -m a -m b -p 'p'",
+            f"{N} {GJS} --skip-trust --skip-trust -p 'p'",
+            f"{N} {GJS} --skip-trust=true -p 'p'",
             f"{N} {CJS} exec 'unterminated",
         ):
             self.no(cmd)
