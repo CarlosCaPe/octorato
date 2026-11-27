@@ -44,7 +44,8 @@ to **a shorter session that leaves work hanging**.
 terminal steps included, names the verified https URL where it is done and
 where its result can be checked (settings page, PR, run, portal, docs page for
 a CLI command). Verified means it came from an API or was opened in the turn; a
-URL recalled from memory and not re-opened is labeled unverified. A step that
+URL recalled from memory and not re-opened, or any other URL not verified
+this way, is labeled unverified. A step that
 only names a site ("in GitHub", "in the portal") makes the operator search, and
 a step he has to search for is a step he postpones.
 
