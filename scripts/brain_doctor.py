@@ -2274,11 +2274,23 @@ def check_querymaster_security_detector(fix: bool) -> Result:
 # ---------------------------------------------------------------------------
 
 def _brain_memory_dir() -> Path:
-    """The central brain memory dir, named the way the harness names project
-    dirs: every non-alphanumeric character of the home path becomes '-'.
-    Recomputing it by hand with strip/replace broke on Windows homes and on
-    dotted POSIX homes (QA on #263), which silently reported the memory layer
-    as absent."""
+    """The central brain memory dir. The operator's memory_sync config
+    (`brain_memory.path` in company/config/memory.json, the same key
+    memory_sync.py reads) wins when it is set: the canonical store need not sit
+    under the home-derived project dir, and reading the home dir instead made
+    every reflex-triage decision look dead. Without config, fall back to the
+    harness naming: every non-alphanumeric character of the home path becomes
+    '-'. Recomputing that by hand with strip/replace broke on Windows homes and
+    on dotted POSIX homes (QA on #263), which silently reported the memory
+    layer as absent."""
+    cfg = CLAUDE_DIR / "company" / "config" / "memory.json"
+    try:
+        configured = (json.loads(cfg.read_text(encoding="utf-8")).get("brain_memory") or {}).get("path")
+    except (OSError, ValueError, AttributeError):
+        configured = None
+    if isinstance(configured, str) and configured.strip():
+        p = Path(configured).expanduser()
+        return p if p.is_absolute() else CLAUDE_DIR / p
     slug = re.sub(r"[^A-Za-z0-9]", "-", str(Path.home()))
     return CLAUDE_DIR / "projects" / slug / "memory"
 
