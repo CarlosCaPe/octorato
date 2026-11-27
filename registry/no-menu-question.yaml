@@ -81,6 +81,23 @@ permission_patterns:
   - ^(any )?objections? (to|if)\b
   - ^alg[uú]na? (objeci[oó]n|inconveniente|problema) (con|en|si|para)\b
   - ^confirmo\b
+  # Approval asks on the agent's OWN work product: "Do you approve the spec
+  # changes?", "¿Apruebas el plan?", "¿Lo apruebas?". Approving its own spec,
+  # plan, draft or decision is a choice the agent makes with /choice and
+  # records with a pointer, not an irreducible step. These are an ALLOWLIST
+  # of work-product nouns as the object of the approval verb (up to two
+  # modifiers in: "the deploy plan", "the PR description"), plus the bare
+  # ask with no object ("Will you approve?", "¿Lo apruebas?"). Anything else
+  # (an invoice, a send, a tag, a transfer, an MFA push, a merge) is the
+  # operator's step and is not matched, so no denylist has to be complete.
+  # Bare participles ("¿Aprobado por quién?") are information questions.
+  - ^(do|would|will|can|could) you (approve|accept|sign off( on)?|green-?light)( on)?\s+((the|this|these|that|my|your)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|plans|draft|drafts|decision|decisions|design|proposal|approach|changes|doc|docs|description|wording|outline)\b(?!\s+(pr|prs|pull request|mr|merge request|merge)\b)
+  - ^(do|would|will|can|could) you (approve|sign off)( on)?( it| this| these| that)?$
+  - ^(approve|accept|sign off)( on)?\s+((the|this|these|that|my|your)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|plans|draft|drafts|decision|decisions|design|proposal|approach|changes|doc|docs|description|wording|outline)\b(?!\s+(pr|prs|pull request|mr|merge request|merge)\b)
+  - ^((me|nos|le|les)\s+)?(apruebas|aprueban|aceptas|aceptan|validas|das el visto bueno|das el ok|das luz verde)\s+((a|al)\s+)?((el|la|los|las|este|esta|estos|estas|mi|mis)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|planes|borrador|borradores|dise[nñ]o|propuesta|decisi[oó]n|cambios|enfoque|documento|texto|redacci[oó]n)\b(?!\s+(pr|prs|pull request|mr|merge request|merge)\b)
+  - ^((me|nos|le|les|lo|la|los|las)\s+)?(apruebas|aprueban|validas|das el visto bueno|das el ok|das luz verde)$
+  - ^(does|do) (the|this|that|these|my) ([\w-]+\s+){0,2}?(spec|specs|plan|plans|draft|drafts|decision|decisions|design|proposal|approach|changes|doc|docs|description|wording|outline)(?!\s+(pr|prs|pull request|mr|merge request|merge)\b)\s+(look|looks|sound|sounds|seem|seems) (good|ok|okay|fine|right) to you\b
+  - ^(est[aá]s|est[aá]n) de acuerdo con ((a|al)\s+)?((el|la|los|las|este|esta|estos|estas|mi|mis)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|planes|borrador|borradores|dise[nñ]o|propuesta|decisi[oó]n|cambios|enfoque|documento|texto|redacci[oó]n)\b
 
 # Selection questions (regexes on folded text). They block only after a
 # numbered or bulleted list of at least two items: "1. A / 2. B / ¿Cuál?".
@@ -293,6 +310,21 @@ selection_openers:
 statement_menu_patterns:
   - ^(let me know|tell me|dime|avisame|me dices|me avisas|decide|tu decides|you decide)\b.*\b(prefer|prefers|prefieres|want|quieres|go with|vamos con|vas con|should i|should we|do i|elijo|uso|sigo)\b
   - ^(pick|choose|elige|escoge|decide entre|choose between|pick between)\b
+  # A statement that asks the operator to approve the agent's own work
+  # product: "Reply `approve` to flip the spec to approved.", "Responde
+  # `apruebo` para marcar el spec como aprobado.", "Once you approve the spec
+  # I'll open the PR.". Inline code is stripped before matching, so the
+  # patterns read the clause around the token. Same allowlist of work-product
+  # objects as the permission patterns: "Type approve in the PR to approve the
+  # merge.", "Reply with the date the spec was approved." and "Write down who
+  # approved the budget." are not approval asks.
+  - ^(reply|respond|answer|say|type|write|responde|contesta|escribe|di|pon)\b[^,;.]{0,40}?\b(to|para)\s+(approve|accept|aprobar|aceptar)\s+((the|this|these|that|my|your|el|la|los|las|este|esta|estos|estas|mi|mis)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|plans|planes|draft|drafts|decision|decisions|design|proposal|approach|changes|doc|docs|description|wording|outline|borrador|borradores|diseno|propuesta|cambios|enfoque|documento|texto|redaccion)\b
+  - ^(reply|respond|answer|say|type|write|responde|contesta|escribe|di|pon|say the word)\b[^;.]{0,60}?\b(flip|mark|set|marcar|marco|poner|pongo)\s+(it|this|that|them|lo|la|((the|this|these|that|my|your|el|la|los|las|este|esta|estos|estas|mi|mis)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|plans|planes|draft|drafts|decision|decisions|design|proposal|approach|changes|doc|docs|description|wording|outline|borrador|borradores|diseno|propuesta|cambios|enfoque|documento|texto|redaccion))\s+((to|as|como|en)\s+)?(approved|aprobad[oa]s?)\b
+  - ^(reply|respond|answer|say|type|write|responde|contesta|escribe|di|pon)\b[^,;.]{0,40}?\b(approve|approved|apruebo|aprobado|yes|si|ok|lgtm)\b[^,;.]{0,40}?\b(to|para)\s+(flip|mark|set|marcar|poner)\s+((the|this|these|that|my|your|el|la|los|las|este|esta|estos|estas|mi|mis)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|plans|planes|draft|drafts|decision|decisions|design|proposal|approach|changes|doc|docs|description|wording|outline|borrador|borradores|diseno|propuesta|cambios|enfoque|documento|texto|redaccion)\b
+  - ^(give me|dame) (a |the |el )?(thumbs up|go-ahead|green light|ok|okay|visto bueno|luz verde)\s+(on|for|to|al|a|con|para)\s+((the|this|these|that|my|your|el|la|los|las|este|esta|estos|estas|mi|mis)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|plans|planes|draft|drafts|decision|decisions|design|proposal|approach|changes|doc|docs|description|wording|outline|borrador|borradores|diseno|propuesta|cambios|enfoque|documento|texto|redaccion)\b
+  - ^(once|when|as soon as|en cuanto|cuando) (you approve|apruebes)\s+((the|this|these|that|my|your|el|la|los|las|este|esta|estos|estas|mi|mis)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|plans|planes|draft|drafts|decision|decisions|design|proposal|approach|changes|doc|docs|description|wording|outline|borrador|borradores|diseno|propuesta|cambios|enfoque|documento|texto|redaccion)\b
+  - ^(waiting for|awaiting|esperando) (your|tu) (approval|sign-off|aprobacion|visto bueno)\s+(of|on|for|to|al|a|de|del|para)\s+((the|this|these|that|my|your|el|la|los|las|este|esta|estos|estas|mi|mis)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|plans|planes|draft|drafts|decision|decisions|design|proposal|approach|changes|doc|docs|description|wording|outline|borrador|borradores|diseno|propuesta|cambios|enfoque|documento|texto|redaccion)\b
+  - ^(let me know|tell me|dime|avisame)\s+(if|whether|si)\s+(you\s+)?(approve|apruebas)\s+((the|this|these|that|my|your|el|la|los|las|este|esta|estos|estas|mi|mis)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|plans|planes|draft|drafts|decision|decisions|design|proposal|approach|changes|doc|docs|description|wording|outline|borrador|borradores|diseno|propuesta|cambios|enfoque|documento|texto|redaccion)\b
 
 # A bare or open-ended solicitation that hands back a choice offered before
 # it: "I can deploy now, or wait for QA. Thoughts?", "¿Tú qué dices?", "Any

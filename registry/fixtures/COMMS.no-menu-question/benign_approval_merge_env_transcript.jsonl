@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "QA passed on the head commit.\n\nExport OCTO_MERGE_APPROVE=1234 in the shell that launched the session to approve the merge.\n\nProvenance: Basis: the spec file \u00b7 Engine: main loop"}]}}
