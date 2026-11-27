@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-007",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "The benchmark proves p99 stays under 41 ms at any load in production.",
+  "reply": "The benchmark proves p99 stays under 41 ms at any load in production.",
+  "excerpts": [
+    {
+      "source": "release/notes-draft.md",
+      "text": "Benchmark (single host, 8 cores): p50 latency 12 ms, p99 41 ms under 2,000 requests per second."
+    }
+  ]
+}

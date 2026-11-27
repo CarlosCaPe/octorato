@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-020",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "Every package has a known, permissive license.",
+  "reply": "Every package has a known, permissive license.",
+  "excerpts": [
+    {
+      "source": "legal/license-scan.txt",
+      "text": "2 packages have an unknown license and need manual review."
+    }
+  ]
+}

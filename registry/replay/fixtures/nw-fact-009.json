@@ -1,0 +1,13 @@
+{
+  "id": "nw-fact-009",
+  "expected": "NEEDS-WORK",
+  "defect_class": "wrong-fact",
+  "defect_line": "Migration 0042 adds invoices.currency as char(3), nullable, default 'USD'.",
+  "reply": "Migration 0042 adds invoices.currency as char(3), nullable, default 'USD'.",
+  "excerpts": [
+    {
+      "source": "migrations/0042.sql",
+      "text": "ALTER TABLE invoices ADD COLUMN currency char(3) NOT NULL DEFAULT 'EUR';"
+    }
+  ]
+}

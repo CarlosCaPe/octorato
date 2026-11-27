@@ -98,6 +98,35 @@ POISON_ENV = ("BASH_ENV", "ENV", "NODE_OPTIONS", "NODE_PATH",
 # above and $HOME is skipped by the walk). `.env` is there because Gemini
 # CLI's findEnvFile loads a plain `<dir>/.env` on the same walk.
 WORKSPACE_CONFIG = (".gemini/settings.json", ".gemini/.env", ".env", ".codex")
+# Gemini CLI context (memory) files. gemini 0.62.0 loads them from the cwd up
+# to the git root only for a trusted folder (`this.config.isTrustedFolder() ?
+# getEnvironmentMemoryPaths(...) : []`, bundle/chunk-2DHAEQE2.js:367160), and
+# the global one, ~/.gemini/<name>, as global memory. An Accepted_Review_Call
+# cannot pass --skip-trust, but a folder the operator trusted interactively
+# (~/.gemini/trustedFolders.json, unpinned) or folder trust switched off would
+# feed such a file to the reviewer, so any of them refuses a receipt: in the
+# cwd walk, $HOME included, and under ~/.gemini. The default name is
+# DEFAULT_CONTEXT_FILENAME "GEMINI.md" (chunk-2DHAEQE2.js:253536); the pinned
+# ~/.gemini/settings.json can name others in `context.fileName` (string or
+# list, `settings.context?.fileName`, bundle/gemini-J6X2T2ZI.js:8291).
+DEFAULT_CONTEXT_FILES = ("GEMINI.md",)
+
+
+def gemini_context_names(home_dir: str | None = None) -> tuple:
+    """GEMINI.md plus every `context.fileName` the user settings name. An
+    unreadable settings file adds nothing here; the pin check refuses it."""
+    names = list(DEFAULT_CONTEXT_FILES)
+    try:
+        with open(os.path.join(home_dir or home(), ".gemini", "settings.json"),
+                  encoding="utf-8") as fh:
+            ctx = (json.load(fh) or {}).get("context") or {}
+        extra = ctx.get("fileName") if isinstance(ctx, dict) else None
+    except (OSError, ValueError, AttributeError):
+        extra = None
+    for n in ([extra] if isinstance(extra, str) else extra if isinstance(extra, list) else []):
+        if isinstance(n, str) and n and n not in names:
+            names.append(n)
+    return tuple(names)
 # `codex exec <word>`: a word in the prompt slot that codex reads as a
 # subcommand (codex --help and codex exec --help, codex-cli 0.159.3) makes
 # the call something other than a review of the prompt.
@@ -492,12 +521,20 @@ def workspace_problems(cwd: str, project_dir: str = "", home_dir: str | None = N
         probs.append("CLAUDE_PROJECT_DIR is absent from the hook environment")
     if not cwd or not os.path.isabs(cwd):
         return probs + ["the call names no absolute cwd"]
+    names = gemini_context_names(home_dir)
+    for n in names:
+        p = os.path.join(home_dir, ".gemini", n)
+        if os.path.lexists(p):
+            probs.append(f"gemini context file {p}")
     cur = os.path.realpath(cwd)
     while True:
         if cur != home_dir:
             for rel in WORKSPACE_CONFIG:
                 if os.path.lexists(os.path.join(cur, rel)):
                     probs.append(f"unpinned workspace config {os.path.join(cur, rel)}")
+        for n in names:
+            if os.path.lexists(os.path.join(cur, n)):
+                probs.append(f"gemini context file {os.path.join(cur, n)}")
         parent = os.path.dirname(cur)
         if parent == cur:
             return probs

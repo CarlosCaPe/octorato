@@ -1,0 +1,11 @@
+{
+  "id": "pass-002",
+  "expected": "PASS",
+  "reply": "Run 419 is green: 215 passed, 0 failed.\nThe lint stage was skipped because no Python files changed.",
+  "excerpts": [
+    {
+      "source": "ci/build-summary.txt",
+      "text": "Pipeline run 419: 215 tests passed, 0 failed. Lint stage skipped (no Python files changed). Duration 5m 02s."
+    }
+  ]
+}

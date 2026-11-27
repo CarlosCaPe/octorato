@@ -1,0 +1,11 @@
+{
+  "id": "pass-022",
+  "expected": "PASS",
+  "reply": "Reviewer A approved, CI passes and coverage stays at 71%.",
+  "excerpts": [
+    {
+      "source": "pr/review-thread.txt",
+      "text": "Reviewer A: approve. CI: passing. Coverage: 71% (unchanged)."
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "nw-fact-008",
+  "expected": "NEEDS-WORK",
+  "defect_class": "wrong-fact",
+  "defect_line": "37 accounts were reviewed and 7 were removed.",
+  "reply": "37 accounts were reviewed and 7 were removed.\n2 are still pending an owner reply.",
+  "excerpts": [
+    {
+      "source": "audit/access-review.csv",
+      "text": "Accounts reviewed: 37. Removed: 5. Pending owner reply: 2."
+    }
+  ]
+}

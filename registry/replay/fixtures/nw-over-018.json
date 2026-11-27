@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-018",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "There were 11 pages last week and none needed a human.",
+  "reply": "There were 11 pages last week and none needed a human.",
+  "excerpts": [
+    {
+      "source": "hr/oncall-rota.txt",
+      "text": "Pages last week: 11, of which 9 were auto-resolved within 5 minutes."
+    }
+  ]
+}

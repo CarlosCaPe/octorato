@@ -1,0 +1,11 @@
+{
+  "id": "pass-021",
+  "expected": "PASS",
+  "reply": "CI passes and reviewer A approved.\nReviewer B requested changes on the retry loop.",
+  "excerpts": [
+    {
+      "source": "pr/review-thread.txt",
+      "text": "Reviewer A: approve. Reviewer B: requested changes on the retry loop. CI: passing."
+    }
+  ]
+}

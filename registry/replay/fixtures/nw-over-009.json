@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-009",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "Migration 0043 builds the index concurrently, so it has zero impact on the database.",
+  "reply": "Migration 0043 builds the index concurrently, so it has zero impact on the database.",
+  "excerpts": [
+    {
+      "source": "migrations/0043.sql",
+      "text": "CREATE INDEX CONCURRENTLY idx_invoices_customer ON invoices (customer_id);"
+    }
+  ]
+}

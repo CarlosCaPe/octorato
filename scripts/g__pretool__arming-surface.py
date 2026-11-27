@@ -893,6 +893,11 @@ _EXACT = {
 # the `r__*.py` glob) run and receipt_ledger re-parses with: rewrite it to
 # accept any command and every review on any binary leaves a receipt.
 #
+# `review_replay.py` (v11 AC-36) is the library brain_doctor's
+# `reviewer-registry` check recomputes every `allowed` reviewer pair with:
+# rewrite its bound or its record checks and any engine qualifies while the
+# records and the registry stay untouched.
+#
 # `d__*.py` is deliberately NOT here. A detector warns; nothing fail-closed
 # consumes its output as a receipt, so it is out of the set by the same
 # criterion that puts the recorders in.
@@ -900,7 +905,7 @@ _SCRIPT_PATTERNS = ("g__pretool*.py", "g__stop__*.py", "r__*.py",
                     "g__shim__*.py", "g__wrap__*.py",
                     "qa-merge-gate.py",
                     "gate_selftest.py", "brain_doctor.py", "receipt_ledger.py",
-                    "external_review.py",
+                    "external_review.py", "review_replay.py",
                     "kernel_proc.py", "dimension-awareness-hook.py",
                     "stop_block.py", "provenance_ledger.py",
                     "merge-hooks.py", "check-generic.py",

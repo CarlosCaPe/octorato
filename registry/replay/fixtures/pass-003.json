@@ -1,0 +1,11 @@
+{
+  "id": "pass-003",
+  "expected": "PASS",
+  "reply": "The default for max_connections is 100.\nGoing above 500 needs shared_buffers of at least 2 GB.",
+  "excerpts": [
+    {
+      "source": "docs/config-reference.md",
+      "text": "max_connections: default 100. Raising it above 500 requires shared_buffers of at least 2 GB."
+    }
+  ]
+}

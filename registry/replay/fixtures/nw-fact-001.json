@@ -1,0 +1,13 @@
+{
+  "id": "nw-fact-001",
+  "expected": "NEEDS-WORK",
+  "defect_class": "wrong-fact",
+  "defect_line": "212 tests passed and 2 failed: test_cache_expiry and test_retry_backoff.",
+  "reply": "Run 418 finished in 6m 41s.\n212 tests passed and 2 failed: test_cache_expiry and test_retry_backoff.",
+  "excerpts": [
+    {
+      "source": "ci/build-summary.txt",
+      "text": "Pipeline run 418: 212 tests passed, 3 failed (test_cache_expiry, test_retry_backoff, test_locale_parse). Duration 6m 41s."
+    }
+  ]
+}

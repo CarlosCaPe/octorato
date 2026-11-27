@@ -1,0 +1,13 @@
+{
+  "id": "nw-fact-011",
+  "expected": "NEEDS-WORK",
+  "defect_class": "wrong-fact",
+  "defect_line": "Reviewer B approved after a comment on the retry loop.",
+  "reply": "CI passes and reviewer A approved.\nReviewer B approved after a comment on the retry loop.",
+  "excerpts": [
+    {
+      "source": "pr/review-thread.txt",
+      "text": "Reviewer A: approve. Reviewer B: requested changes on the retry loop. CI: passing."
+    }
+  ]
+}

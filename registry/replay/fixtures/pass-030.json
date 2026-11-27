@@ -1,0 +1,11 @@
+{
+  "id": "pass-030",
+  "expected": "PASS",
+  "reply": "Backups are kept 14 days locally and 90 days in object storage.",
+  "excerpts": [
+    {
+      "source": "storage/backup-log.txt",
+      "text": "Backups retained 14 days locally and 90 days in object storage."
+    }
+  ]
+}

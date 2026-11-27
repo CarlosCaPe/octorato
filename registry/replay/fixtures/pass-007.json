@@ -1,0 +1,11 @@
+{
+  "id": "pass-007",
+  "expected": "PASS",
+  "reply": "db-a has /var at 81%, 164 GB of 203 GB.\ndb-b is at 47%, 95 GB of 203 GB.",
+  "excerpts": [
+    {
+      "source": "ops/disk-report.txt",
+      "text": "Host db-a: /var 81% used (164 GB of 203 GB). Host db-b: /var 47% used (95 GB of 203 GB)."
+    }
+  ]
+}

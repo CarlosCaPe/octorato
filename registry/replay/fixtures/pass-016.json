@@ -1,0 +1,11 @@
+{
+  "id": "pass-016",
+  "expected": "PASS",
+  "reply": "9 service accounts were reviewed.\n3 had keys older than 365 days and their rotation is scheduled.",
+  "excerpts": [
+    {
+      "source": "audit/access-review.csv",
+      "text": "Service accounts reviewed: 9. Keys older than 365 days: 3, rotation scheduled."
+    }
+  ]
+}
