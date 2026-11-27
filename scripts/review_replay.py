@@ -482,15 +482,28 @@ def build_record(*, engine, model, role, cases, runs, fixture_tree, version, rea
     return rec
 
 
-def held_out_block(directory, call, jobs) -> dict | None:
+def load_held_out(directory, explicit=False) -> tuple[Path, list] | None:
+    """Check the held-out set BEFORE any live call. A default path that does not
+    exist means no held-out set; a path the operator named that does not exist,
+    or a malformed set, stops the run before a single call is spent."""
     d = Path(directory)
     if not d.is_dir():
+        if explicit:
+            raise SystemExit(f"review_replay: --held-out {d} is not a directory; "
+                             "nothing was run, nothing was written")
         return None
     cases, probs = load_cases(d)
     probs += [p for c in cases for p in case_problems(c)]
     if probs or not cases:
         raise SystemExit(f"review_replay: the held-out set is malformed ({len(probs)} problem(s)); "
                          "fix it before a run, nothing was written")
+    return d, cases
+
+
+def held_out_block(loaded, call, jobs) -> dict | None:
+    if loaded is None:
+        return None
+    d, cases = loaded
     runs = replay(cases, call, jobs, with_ids=False)
     for r in runs:
         r.pop("by_class", None)
@@ -772,6 +785,8 @@ def _run_cli(a) -> int:
     if not cli:
         print(f"review_replay: no {engine} CLI on PATH (pass --cli)", file=sys.stderr)
         return 2
+    held_path = Path(a.held_out) if a.held_out else root / HELD_OUT_REL
+    held_loaded = load_held_out(held_path, explicit=bool(a.held_out))
     import tempfile
     scratch = tempfile.mkdtemp(prefix="review-replay-")
     try:
@@ -794,8 +809,7 @@ def _run_cli(a) -> int:
             call = make_call(model)
         print(f"review_replay: {engine}/{model}, {len(cases)} cases x {RUNS} runs", file=sys.stderr)
         runs = replay(cases, call, a.jobs)
-        held = Path(a.held_out) if a.held_out else root / HELD_OUT_REL
-        held_out = held_out_block(held, call, a.jobs)
+        held_out = held_out_block(held_loaded, call, a.jobs)
         rec = build_record(engine=engine, model=model, role="baseline" if a.baseline else "candidate",
                            cases=cases, runs=runs, fixture_tree=tree, version=cli_version(cli),
                            reason=reason, runner_sha256=sha256_file(__file__),

@@ -663,6 +663,29 @@ class RunnerEndToEnd(RepoCase):
             self.assertNotIn(leak, raw)
 
 
+    def _run_raw(self, *args):
+        return subprocess.run([sys.executable, str(SCRIPTS / "review_replay.py"), "run",
+                               "--root", str(self.root), "--cli", str(self.stub), *args],
+                              capture_output=True, text=True, env=self.env, timeout=600)
+
+    def test_ac31_missing_held_out_path_stops_before_any_call(self):
+        cp = self._run_raw("--baseline", "--held-out", str(Path(self._tmp.name) / "no-such-dir"))
+        self.assertNotEqual(cp.returncode, 0)
+        self.assertIn("is not a directory", cp.stderr)
+        self.assertFalse(self.log.exists() and self.log.read_text().strip(), "a live call was made")
+        self.assertFalse((self.root / rr.RECORDS_REL).exists()
+                         and any((self.root / rr.RECORDS_REL).iterdir()))
+
+    def test_ac31_malformed_held_out_stops_before_any_call(self):
+        held = Path(self._tmp.name) / "bad-held-out"
+        held.mkdir()
+        (held / "h0.json").write_text(json.dumps({"id": "h0", "expected": "MAYBE"}))
+        cp = self._run_raw("--baseline", "--held-out", str(held))
+        self.assertNotEqual(cp.returncode, 0)
+        self.assertIn("held-out set is malformed", cp.stderr)
+        self.assertFalse(self.log.exists() and self.log.read_text().strip(), "a live call was made")
+
+
 class EngineArgv(unittest.TestCase):
     """The replay's call shapes stay inside the T19 Accepted_Review_Call
     allowlists, so a replayed engine is called the way a counted review is."""
