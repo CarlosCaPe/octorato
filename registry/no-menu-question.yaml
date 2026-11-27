@@ -91,12 +91,12 @@ permission_patterns:
   # (an invoice, a send, a tag, a transfer, an MFA push, a merge) is the
   # operator's step and is not matched, so no denylist has to be complete.
   # Bare participles ("¿Aprobado por quién?") are information questions.
-  - ^(do|would|will|can|could) you (approve|accept|sign off( on)?|green-?light)( on)?\s+((the|this|these|that|my|your)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|plans|draft|drafts|decision|decisions|design|proposal|approach|changes|doc|docs|description|wording|outline)\b
+  - ^(do|would|will|can|could) you (approve|accept|sign off( on)?|green-?light)( on)?\s+((the|this|these|that|my|your)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|plans|draft|drafts|decision|decisions|design|proposal|approach|changes|doc|docs|description|wording|outline)\b(?!\s+(pr|prs|pull request|mr|merge request|merge)\b)
   - ^(do|would|will|can|could) you (approve|sign off)( on)?( it| this| these| that)?$
-  - ^(approve|accept|sign off)( on)?\s+((the|this|these|that|my|your)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|plans|draft|drafts|decision|decisions|design|proposal|approach|changes|doc|docs|description|wording|outline)\b
-  - ^((me|nos|le|les)\s+)?(apruebas|aprueban|aceptas|aceptan|validas|das el visto bueno|das el ok|das luz verde)\s+((a|al)\s+)?((el|la|los|las|este|esta|estos|estas|mi|mis)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|planes|borrador|borradores|dise[nñ]o|propuesta|decisi[oó]n|cambios|enfoque|documento|texto|redacci[oó]n)\b
+  - ^(approve|accept|sign off)( on)?\s+((the|this|these|that|my|your)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|plans|draft|drafts|decision|decisions|design|proposal|approach|changes|doc|docs|description|wording|outline)\b(?!\s+(pr|prs|pull request|mr|merge request|merge)\b)
+  - ^((me|nos|le|les)\s+)?(apruebas|aprueban|aceptas|aceptan|validas|das el visto bueno|das el ok|das luz verde)\s+((a|al)\s+)?((el|la|los|las|este|esta|estos|estas|mi|mis)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|planes|borrador|borradores|dise[nñ]o|propuesta|decisi[oó]n|cambios|enfoque|documento|texto|redacci[oó]n)\b(?!\s+(pr|prs|pull request|mr|merge request|merge)\b)
   - ^((me|nos|le|les|lo|la|los|las)\s+)?(apruebas|aprueban|validas|das el visto bueno|das el ok|das luz verde)$
-  - ^(does|do) (the|this|that|these|my) ([\w-]+\s+){0,2}?(spec|specs|plan|plans|draft|drafts|decision|decisions|design|proposal|approach|changes|doc|docs|description|wording|outline)\s+(look|looks|sound|sounds|seem|seems) (good|ok|okay|fine|right) to you\b
+  - ^(does|do) (the|this|that|these|my) ([\w-]+\s+){0,2}?(spec|specs|plan|plans|draft|drafts|decision|decisions|design|proposal|approach|changes|doc|docs|description|wording|outline)(?!\s+(pr|prs|pull request|mr|merge request|merge)\b)\s+(look|looks|sound|sounds|seem|seems) (good|ok|okay|fine|right) to you\b
   - ^(est[aá]s|est[aá]n) de acuerdo con ((a|al)\s+)?((el|la|los|las|este|esta|estos|estas|mi|mis)\s+)?([\w-]+\s+){0,2}?(spec|specs|plan|planes|borrador|borradores|dise[nñ]o|propuesta|decisi[oó]n|cambios|enfoque|documento|texto|redacci[oó]n)\b
 
 # Selection questions (regexes on folded text). They block only after a
