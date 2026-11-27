@@ -1,0 +1,184 @@
+{
+  "baseline_model": "fable",
+  "baseline_record": null,
+  "cli_version": "2.1.332 (Claude Code)",
+  "counts": {
+    "by_class": {
+      "overstatement": 20,
+      "wrong-fact": 20
+    },
+    "needs_work": 40,
+    "pass": 40
+  },
+  "date": "2026-11-27T17:41:29Z",
+  "engine": "claude",
+  "fixture_tree": "feaf80333c9a054f02780f365d114918d3e76016",
+  "held_out": null,
+  "model": "fable",
+  "role": "baseline",
+  "run_receipt": {
+    "fixture_tree": "feaf80333c9a054f02780f365d114918d3e76016",
+    "model": "fable",
+    "model_reason": "fable answered the probe call",
+    "runner_sha256": "4a1cbb7d249512459286fc39ae4cb5aa8bab26cc216fab61c6812f7fd70aee22",
+    "runs": [
+      {
+        "by_class": {
+          "overstatement": {
+            "cases": 20,
+            "caught": 20
+          },
+          "wrong-fact": {
+            "cases": 20,
+            "caught": 20
+          }
+        },
+        "catch_rate": 1.0,
+        "caught": 40,
+        "failed": 0,
+        "false_alarm_ids": [
+          "pass-038"
+        ],
+        "false_alarm_rate": 0.025,
+        "false_alarms": 1,
+        "missed_ids": [],
+        "needs_work": 40,
+        "pass": 40,
+        "timeout": 0,
+        "unparsed": 0
+      },
+      {
+        "by_class": {
+          "overstatement": {
+            "cases": 20,
+            "caught": 20
+          },
+          "wrong-fact": {
+            "cases": 20,
+            "caught": 20
+          }
+        },
+        "catch_rate": 1.0,
+        "caught": 40,
+        "failed": 0,
+        "false_alarm_ids": [],
+        "false_alarm_rate": 0.0,
+        "false_alarms": 0,
+        "missed_ids": [],
+        "needs_work": 40,
+        "pass": 40,
+        "timeout": 0,
+        "unparsed": 0
+      },
+      {
+        "by_class": {
+          "overstatement": {
+            "cases": 20,
+            "caught": 20
+          },
+          "wrong-fact": {
+            "cases": 20,
+            "caught": 20
+          }
+        },
+        "catch_rate": 1.0,
+        "caught": 40,
+        "failed": 0,
+        "false_alarm_ids": [],
+        "false_alarm_rate": 0.0,
+        "false_alarms": 0,
+        "missed_ids": [],
+        "needs_work": 40,
+        "pass": 40,
+        "timeout": 0,
+        "unparsed": 0
+      }
+    ]
+  },
+  "runs": [
+    {
+      "by_class": {
+        "overstatement": {
+          "cases": 20,
+          "caught": 20
+        },
+        "wrong-fact": {
+          "cases": 20,
+          "caught": 20
+        }
+      },
+      "catch_rate": 1.0,
+      "caught": 40,
+      "failed": 0,
+      "false_alarm_ids": [
+        "pass-038"
+      ],
+      "false_alarm_rate": 0.025,
+      "false_alarms": 1,
+      "missed_ids": [],
+      "needs_work": 40,
+      "pass": 40,
+      "timeout": 0,
+      "unparsed": 0
+    },
+    {
+      "by_class": {
+        "overstatement": {
+          "cases": 20,
+          "caught": 20
+        },
+        "wrong-fact": {
+          "cases": 20,
+          "caught": 20
+        }
+      },
+      "catch_rate": 1.0,
+      "caught": 40,
+      "failed": 0,
+      "false_alarm_ids": [],
+      "false_alarm_rate": 0.0,
+      "false_alarms": 0,
+      "missed_ids": [],
+      "needs_work": 40,
+      "pass": 40,
+      "timeout": 0,
+      "unparsed": 0
+    },
+    {
+      "by_class": {
+        "overstatement": {
+          "cases": 20,
+          "caught": 20
+        },
+        "wrong-fact": {
+          "cases": 20,
+          "caught": 20
+        }
+      },
+      "catch_rate": 1.0,
+      "caught": 40,
+      "failed": 0,
+      "false_alarm_ids": [],
+      "false_alarm_rate": 0.0,
+      "false_alarms": 0,
+      "missed_ids": [],
+      "needs_work": 40,
+      "pass": 40,
+      "timeout": 0,
+      "unparsed": 0
+    }
+  ],
+  "schema": 1,
+  "worst": {
+    "catch": [
+      1,
+      1
+    ],
+    "catch_rate": 1.0,
+    "false_alarm": [
+      1,
+      40
+    ],
+    "false_alarm_rate": 0.025
+  }
+}
