@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "QA passed on the head commit.\n\nDo you approve the PR?\n\nProvenance: Basis: the spec file \u00b7 Engine: main loop"}]}}

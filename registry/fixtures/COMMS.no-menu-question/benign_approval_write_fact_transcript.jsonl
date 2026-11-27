@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "The ledger row has no approver yet.\n\nWrite down who approved the budget.\n\nProvenance: Basis: the spec file \u00b7 Engine: main loop"}]}}
