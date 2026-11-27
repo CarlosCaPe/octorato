@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Spec updated with the review findings.\n\nOnce you approve the spec I'll open the PR.\n\nProvenance: Basis: the spec file \u00b7 Engine: main loop"}]}}
