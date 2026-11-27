@@ -84,11 +84,21 @@ permission_patterns:
   # Approval asks on the agent's own work product (a spec, a plan, a draft, a
   # decision): "Do you approve the spec changes?", "¿Apruebas el plan?",
   # "¿Lo apruebas?". Approving its own output is a choice the agent makes with
-  # /choice and records with a pointer, not an irreducible step. A merge,
-  # deploy, release, send, payment or login approval stays the operator's.
-  - ^(?!.*\b(merge|merges|merged|mergeo|deploy|despliegue|release|send|envío|envio|pago|payment|login|password|contraseña)\b)(do|would|will|can|could) you (approve|accept|sign off|green-?light)\b
-  - ^(?!.*\b(merge|merges|merged|mergeo|deploy|despliegue|release|send|envío|envio|pago|payment|login|password|contraseña)\b)(approve|approved|accept|accepted|sign off)( on)? (the|this|these|that|it|my|spec|plan|draft|decision|changes)\b
-  - ^(?!.*\b(merge|merges|merged|mergeo|deploy|despliegue|release|send|envío|envio|pago|payment|login|password|contraseña)\b)((me|nos|lo|la|los|las|le|les)\s+)?(apruebas|aprueban|aceptas|aceptan|autorizas|validas|das el visto bueno|das el ok|das luz verde|aprobado|aprobada|aprobados|aprobadas)\b
+  # /choice and records with a pointer, not an irreducible step. The exclusion
+  # reads only the OBJECT of the approval verb, never the whole sentence, so
+  # "Do you approve the spec so I can merge?" still blocks. English: the head
+  # noun of the object (up to three words in, then a preposition, a number or
+  # the end) is an operator step: "the PR", "PR 1234 in ADO", "the calendar
+  # invite", "the MFA prompt on your phone", "the deploy to prod"; "the deploy
+  # plan" names the agent's own document and blocks. Spanish: the first noun
+  # after the article ("el pago", "el envío del correo"; "el plan de
+  # despliegue" blocks). Bare participles ("¿Aprobado por quién?", "Accepted
+  # the invite?") are information questions and are not matched.
+  - ^(do|would|will|can|could) you (approve|accept|sign off( on)?|green-?light)\b(?!\s+sending\b)(?!(\s+[\w-]+){0,3}?\s+(pr|prs|pull request|merge|deploy|deployment|release|payment|login|mfa|2fa|otp|invite|invitation|prompt|vote|email|message)(\s*$|\s*[,;:.)]|\s+(to|of|on|in|for|from|at|with|by|now|today|request|#?\d[\w-]*)\b))
+  - ^(approve|accept|sign off)( on)?\b(?!\s+sending\b)(?!(\s+[\w-]+){0,3}?\s+(pr|prs|pull request|merge|deploy|deployment|release|payment|login|mfa|2fa|otp|invite|invitation|prompt|vote|email|message)(\s*$|\s*[,;:.)]|\s+(to|of|on|in|for|from|at|with|by|now|today|request|#?\d[\w-]*)\b))\s+(the|this|these|that|it|my|spec|plan|draft|decision|changes)\b
+  - ^((me|nos|lo|la|los|las|le|les)\s+)?(apruebas|aprueban|aceptas|aceptan|autorizas|validas|das el visto bueno|das el ok|das luz verde)\b(?!\s+((el|la|los|las|del|al|un|una)\s+)?(pr|merge|despliegue|deploy|release|env[ií]o|correo|mensaje|pago|cobro|factura|login|invitaci[oó]n)\b)
+  - ^(does|do) (the|this|that|these|my) [\w -]{0,30}?(look|looks|sound|sounds|seem|seems) (good|ok|okay|fine|right) to you\b
+  - ^(est[aá]s|est[aá]n) de acuerdo con (el|la|los|las|este|esta|estos|estas|mi|mis)\b
 
 # Selection questions (regexes on folded text). They block only after a
 # numbered or bulleted list of at least two items: "1. A / 2. B / ¿Cuál?".
@@ -304,9 +314,16 @@ statement_menu_patterns:
   # A statement that asks the operator to approve the agent's own work
   # product: "Reply `approve` to flip the spec to approved.", "Responde
   # `apruebo` para marcar el spec como aprobado.". Inline code is stripped
-  # before matching, so the pattern reads the verbs around it. Merge, deploy,
-  # release, send, payment and login approvals are excluded.
-  - ^(?!.*\b(merge|merges|merged|mergeo|deploy|despliegue|release|send|envio|pago|payment|login|password|contrasena)\b)(reply|respond|answer|say|type|write|responde|contesta|escribe|di|pon|(let me know|tell me|dime|avisame) (if|whether|si) (you )?(approve|apruebas))\b.*\b(approv\w*|aprob\w*|apruebo|apruebas|sign[- ]?off|visto bueno|luz verde|green[- ]?light|lgtm)\b
+  # before matching, so the pattern reads the verbs around it. An operator
+  # step named between the lead verb and the approval word ("Type `approve` in
+  # the PR to approve it.") or as the approval's object ("para aprobar el
+  # merge") lets it through; one named after the approval clause ("..., then
+  # I'll merge it.") does not. "Reply with the approval date" is not an ask.
+  - ^(reply|respond|answer|say|type|write|responde|contesta|escribe|di|pon)\b(?:(?!\b(pr|prs|pull request|merge|deploy|despliegue|release|send|sending|envio|correo|email|mensaje|message|pago|payment|login|mfa|invite|invitation|invitacion|vote)\b).)*?\b(approve[sd]?|aprob(ar|ado|ada|ados|adas)|apruebo|apruebas)\b(?!\s+sending\b)(?!(\s+[\w-]+){0,3}?\s+(pr|prs|pull request|merge|deploy|deployment|release|payment|login|mfa|2fa|otp|invite|invitation|prompt|vote|email|message)(\s*$|\s*[,;:.)]|\s+(to|of|on|in|for|from|at|with|by|now|today|request|#?\d[\w-]*)\b))(?!\s+((el|la|los|las|del|al)\s+)?(pr|merge|despliegue|deploy|release|envio|correo|mensaje|pago|cobro|factura|login|invitacion)\b)
+  - ^(give me|dame) (a |the |el )?(thumbs up|go-ahead|green light|ok|okay|visto bueno|luz verde)\b(?:(?!\b(pr|prs|pull request|merge|deploy|despliegue|release|send|sending|envio|correo|email|mensaje|message|pago|payment|login|mfa|invite|invitation|invitacion|vote)\b).)*$
+  - ^(once|when|as soon as|en cuanto|cuando) (you|apruebes)\b.*\b(approve|apruebes)\b(?:(?!\b(pr|prs|pull request|merge|deploy|despliegue|release|send|sending|envio|correo|email|mensaje|message|pago|payment|login|mfa|invite|invitation|invitacion|vote)\b).)*$
+  - ^(waiting for|awaiting|esperando) (your|tu) (approval|sign-off|aprobacion|visto bueno)\b(?:(?!\b(pr|prs|pull request|merge|deploy|despliegue|release|send|sending|envio|correo|email|mensaje|message|pago|payment|login|mfa|invite|invitation|invitacion|vote)\b).)*$
+  - ^(let me know|tell me|dime|avisame)\s+(if|whether|si)\s+(you\s+)?(approve|apruebas)\b(?!\s+sending\b)(?!(\s+[\w-]+){0,3}?\s+(pr|prs|pull request|merge|deploy|deployment|release|payment|login|mfa|2fa|otp|invite|invitation|prompt|vote|email|message)(\s*$|\s*[,;:.)]|\s+(to|of|on|in|for|from|at|with|by|now|today|request|#?\d[\w-]*)\b))(?!\s+((el|la|los|las|del|al)\s+)?(pr|merge|despliegue|deploy|release|envio|correo|mensaje|pago|cobro|factura|login|invitacion)\b)
 
 # A bare or open-ended solicitation that hands back a choice offered before
 # it: "I can deploy now, or wait for QA. Thoughts?", "¿Tú qué dices?", "Any
