@@ -43,8 +43,8 @@ to **a shorter session that leaves work hanging**.
 **Every operator step carries its links.** Each step handed to the operator,
 terminal steps included, names the verified https URL where it is done and
 where its result can be checked (settings page, PR, run, portal, docs page for
-a CLI command). Verified means it came from an API, from memory, or was opened
-in the turn; a URL that could not be verified is labeled as such. A step that
+a CLI command). Verified means it came from an API or was opened in the turn; a
+URL recalled from memory and not re-opened is labeled unverified. A step that
 only names a site ("in GitHub", "in the portal") makes the operator search, and
 a step he has to search for is a step he postpones.
 
