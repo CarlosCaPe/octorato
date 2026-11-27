@@ -629,6 +629,34 @@ class RunnerEndToEnd(RepoCase):
         self.assertEqual(call("slow")["status"], "timeout")
         self.assertEqual(call("fail")["status"], "failed")
 
+    def test_candidate_refused_for_quota_writes_no_record(self):
+        self.run_cli("--baseline")
+        before = len(self.log.read_text().split())
+        cp = subprocess.run([sys.executable, str(SCRIPTS / "review_replay.py"), "run", "--root",
+                             str(self.root), "--cli", str(self.stub), "--engine", "gemini",
+                             "--model", "g1", "--jobs", "1"], capture_output=True, text=True,
+                            env=dict(self.env, STUB_REFUSE="g1"), timeout=600)
+        self.assertEqual(cp.returncode, 2, cp.stderr[-2000:])
+        self.assertIn("quota or credits", cp.stderr)
+        self.assertFalse((self.root / rr.RECORDS_REL / "gemini-g1.json").exists())
+        # One refused call, then no more spend on the dead account.
+        self.assertEqual(self.log.read_text().split()[before:], ["g1"])
+
+    def test_refusal_guard_keeps_the_first_refusal_and_skips_the_rest(self):
+        answers = iter([{"status": "ok", "stdout": "PANEL-VERDICT: PASS"},
+                        {"status": "failed", "stdout": "", "stderr": "not logged in"},
+                        {"status": "failed", "stdout": "",
+                         "stderr": "You have exhausted your daily quota on this model."}])
+        seen = []
+        guarded = rr.refusal_guard(lambda p: (seen.append(p), next(answers))[1])
+        self.assertEqual(guarded("a")["status"], "ok")
+        self.assertEqual(guarded("b")["stderr"], "not logged in")
+        self.assertEqual(guarded.refused, [])
+        guarded("c")
+        self.assertEqual(guarded.refused, ["quota"])
+        self.assertIn("skipped", guarded("d")["stderr"])
+        self.assertEqual(seen, ["a", "b", "c"])
+
     def test_candidate_needs_a_baseline(self):
         cp = subprocess.run([sys.executable, str(SCRIPTS / "review_replay.py"), "run", "--root",
                              str(self.root), "--cli", str(self.stub), "--engine", "codex",
