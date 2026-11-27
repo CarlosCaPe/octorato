@@ -81,6 +81,14 @@ permission_patterns:
   - ^(any )?objections? (to|if)\b
   - ^alg[uú]na? (objeci[oó]n|inconveniente|problema) (con|en|si|para)\b
   - ^confirmo\b
+  # Approval asks on the agent's own work product (a spec, a plan, a draft, a
+  # decision): "Do you approve the spec changes?", "¿Apruebas el plan?",
+  # "¿Lo apruebas?". Approving its own output is a choice the agent makes with
+  # /choice and records with a pointer, not an irreducible step. A merge,
+  # deploy, release, send, payment or login approval stays the operator's.
+  - ^(?!.*\b(merge|merges|merged|mergeo|deploy|despliegue|release|send|envío|envio|pago|payment|login|password|contraseña)\b)(do|would|will|can|could) you (approve|accept|sign off|green-?light)\b
+  - ^(?!.*\b(merge|merges|merged|mergeo|deploy|despliegue|release|send|envío|envio|pago|payment|login|password|contraseña)\b)(approve|approved|accept|accepted|sign off)( on)? (the|this|these|that|it|my|spec|plan|draft|decision|changes)\b
+  - ^(?!.*\b(merge|merges|merged|mergeo|deploy|despliegue|release|send|envío|envio|pago|payment|login|password|contraseña)\b)((me|nos|lo|la|los|las|le|les)\s+)?(apruebas|aprueban|aceptas|aceptan|autorizas|validas|das el visto bueno|das el ok|das luz verde|aprobado|aprobada|aprobados|aprobadas)\b
 
 # Selection questions (regexes on folded text). They block only after a
 # numbered or bulleted list of at least two items: "1. A / 2. B / ¿Cuál?".
@@ -293,6 +301,12 @@ selection_openers:
 statement_menu_patterns:
   - ^(let me know|tell me|dime|avisame|me dices|me avisas|decide|tu decides|you decide)\b.*\b(prefer|prefers|prefieres|want|quieres|go with|vamos con|vas con|should i|should we|do i|elijo|uso|sigo)\b
   - ^(pick|choose|elige|escoge|decide entre|choose between|pick between)\b
+  # A statement that asks the operator to approve the agent's own work
+  # product: "Reply `approve` to flip the spec to approved.", "Responde
+  # `apruebo` para marcar el spec como aprobado.". Inline code is stripped
+  # before matching, so the pattern reads the verbs around it. Merge, deploy,
+  # release, send, payment and login approvals are excluded.
+  - ^(?!.*\b(merge|merges|merged|mergeo|deploy|despliegue|release|send|envio|pago|payment|login|password|contrasena)\b)(reply|respond|answer|say|type|write|responde|contesta|escribe|di|pon|(let me know|tell me|dime|avisame) (if|whether|si) (you )?(approve|apruebas))\b.*\b(approv\w*|aprob\w*|apruebo|apruebas|sign[- ]?off|visto bueno|luz verde|green[- ]?light|lgtm)\b
 
 # A bare or open-ended solicitation that hands back a choice offered before
 # it: "I can deploy now, or wait for QA. Thoughts?", "¿Tú qué dices?", "Any

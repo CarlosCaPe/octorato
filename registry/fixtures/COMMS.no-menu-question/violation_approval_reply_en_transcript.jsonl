@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Spec updated with the review findings.\n\ninput-needed: reply `approve` to flip spec 0004 to approved (commit on the PR branch, pointer to this chat).\n\nProvenance: Basis: the spec file \u00b7 Engine: main loop"}]}}
