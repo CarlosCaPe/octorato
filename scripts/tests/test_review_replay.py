@@ -717,5 +717,20 @@ class ArmingAndRegistration(unittest.TestCase):
         self.assertEqual(cp.returncode, 0, cp.stderr[-2000:])
 
 
+class RefusalPattern(unittest.TestCase):
+    """AC-34: only a quota or credit refusal moves the baseline to Opus."""
+
+    def test_quota_and_credit_refusals_match(self):
+        for text in ("API Error: 429 quota exceeded for this account",
+                     "insufficient credit balance", "RESOURCE_EXHAUSTED",
+                     "You have reached your usage limit"):
+            self.assertTrue(rr.REFUSAL.search(text), text)
+
+    def test_other_failures_do_not_match(self):
+        for text in ('File "x.js", line 429', "rate limit hit, retry in 2s",
+                     "HTTP 429 Too Many Requests"):
+            self.assertIsNone(rr.REFUSAL.search(text), text)
+
+
 if __name__ == "__main__":
     unittest.main()

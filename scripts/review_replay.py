@@ -105,9 +105,9 @@ BASELINE_FLOOR = {"catch": Fraction(4, 5), "false_alarm": Fraction(1, 5)}
 FALLBACK_REASON = "refused for quota or credits"
 CANDIDATE_ENGINES = ("codex", "gemini")
 ENGINES = (BASELINE_ENGINE,) + CANDIDATE_ENGINES
-# A refusal for quota or credits (the census reads 429s the same way).
-REFUSAL = re.compile(r"\b429\b|quota|credit|RESOURCE_EXHAUSTED|usage limit|rate[ _-]?limit",
-                     re.IGNORECASE)
+# A refusal for quota or credits. A bare "429" or a transient rate limit is not
+# one: only a quota, credit or usage word lets the baseline fall back to Opus.
+REFUSAL = re.compile(r"quota|credit|RESOURCE_EXHAUSTED|usage limit", re.IGNORECASE)
 DEFAULT_TIMEOUT_S = 300
 
 REVIEW_INSTRUCTIONS = (
