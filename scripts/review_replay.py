@@ -38,6 +38,8 @@ committed version of this file and recomputes every `allowed` pair (AC-36).
              says so (AC-34). A new baseline record supersedes the old one.
   candidate  `run --engine codex|gemini --model NAME`: compared against the
              current baseline record; the record names that baseline's model.
+             A call refused for quota or credits measures the account, not the
+             model: the run stops asking and writes no record.
 
 THE BOUND (AC-35), on the worst of three runs, in exact fractions
   candidate catch       >= baseline catch       - 0.05
@@ -433,6 +435,26 @@ class ReplayError(RuntimeError):
     """A run that must not produce a record."""
 
 
+def refusal_guard(call):
+    """Wrap a candidate's call. The first answer refused for quota or credits
+    is kept in `guarded.refused`; every later call is skipped (no more spend
+    on a dead account) and returned as failed. The caller then writes no
+    record: a refusal is a fact about the account, not a verdict on the model."""
+    refused: list = []
+
+    def guarded(prompt):
+        if refused:
+            return {"status": "failed", "stdout": "", "stderr": "skipped after a quota refusal"}
+        ans = call(prompt) or {}
+        if ans.get("status") != "ok":
+            m = REFUSAL.search(f"{ans.get('stdout', '')}\n{ans.get('stderr', '')}")
+            if m:
+                refused.append(m.group(0))
+        return ans
+    guarded.refused = refused
+    return guarded
+
+
 def choose_baseline_model(cases: list, make_call) -> tuple:
     """(model, reason, call). Fable first; Opus only when the Fable call is
     refused for quota or credits (AC-34). The probe is the first case of the
@@ -806,10 +828,13 @@ def _run_cli(a) -> int:
                       "`run --baseline` first", file=sys.stderr)
                 return 2
             model, reason = a.model, "candidate model named by the operator"
-            call = make_call(model)
+            call = refusal_guard(make_call(model))
         print(f"review_replay: {engine}/{model}, {len(cases)} cases x {RUNS} runs", file=sys.stderr)
         runs = replay(cases, call, a.jobs)
         held_out = held_out_block(held_loaded, call, a.jobs)
+        if getattr(call, "refused", None):
+            raise ReplayError(f"{engine}/{model} was refused for quota or credits "
+                              f"({call.refused[0]!r} in its answer); no record written")
         rec = build_record(engine=engine, model=model, role="baseline" if a.baseline else "candidate",
                            cases=cases, runs=runs, fixture_tree=tree, version=cli_version(cli),
                            reason=reason, runner_sha256=sha256_file(__file__),
