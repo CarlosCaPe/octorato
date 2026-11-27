@@ -40,6 +40,15 @@ to **a shorter session that leaves work hanging**.
 | External dependency in flight | waiting for a CI run, a deploy to finish, a vendor reply |
 | Resource exhaustion | session genuinely cannot continue (rate limit, tool down) |
 
+**Every operator step carries its links.** Each step handed to the operator,
+terminal steps included, names the verified https URL where it is done and
+where its result can be checked (settings page, PR, run, portal, docs page for
+a CLI command). Verified means it came from an API or was opened in the turn; a
+URL recalled from memory and not re-opened, or any other URL not verified
+this way, is labeled unverified. A step that
+only names a site ("in GitHub", "in the portal") makes the operator search, and
+a step he has to search for is a step he postpones.
+
 **NOT valid:**
 
 - "I want to wrap up cleanly" — tiredness/momentum is not a blocker.
