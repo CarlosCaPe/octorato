@@ -59,13 +59,17 @@ def _uuid(seed: str) -> str:
 
 def seed_receipt(home: Path, session: str, msg, verdict: str, ts: str, agent_id: str,
                  agent_type: str = "Reality Checker", stated_digest: str | None = None,
-                 shown=None, with_block: bool = True) -> bool:
+                 shown=None, with_block: bool = True, short: bool = False,
+                 block_verdict: str | None = None) -> bool:
     """Write one reviewer transcript entry and its ledger row for message `msg`
     (a panel_digest.Message). The report carries the panel block of `shown`
     (default `msg`) and states `stated_digest` (default msg.digest), so a
     fixture can make the reviewer read one text and state another's digest,
-    or (with_block=False) state a digest with no block at all. Returns False
-    when this agent id was already seeded."""
+    or (with_block=False) state a digest with no block at all. With short=True
+    it writes the two-message form: an earlier assistant message carrying the
+    block with PANEL-VERDICT `block_verdict` (default `verdict`), then a final
+    report of only the PANEL-VERDICT and PANEL-SHA256 lines, which the ledger
+    row anchors to. Returns False when this agent id was already seeded."""
     rel = Path(".claude") / "projects" / "fx" / session / "subagents" / f"agent-{agent_id}.jsonl"
     tp = home / rel
     if tp.exists():
@@ -81,10 +85,24 @@ def seed_receipt(home: Path, session: str, msg, verdict: str, ts: str, agent_id:
     entries = [
         {"type": "user", "message": {"role": "user", "content": "Panel: review this outgoing message."},
          "uuid": prompt_uuid, "parentUuid": None, "sessionId": session, "timestamp": p_ts},
+    ]
+    parent = prompt_uuid
+    if short:
+        block_uuid = _uuid(agent_id + "b")
+        b_ts = (t - _dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z")
+        posted = (f"{block}\nPANEL-VERDICT: {block_verdict or verdict}\n"
+                  f"PANEL-SHA256: {digest}")
+        entries.append({"type": "assistant",
+                        "message": {"role": "assistant", "id": f"msg_{agent_id}_b",
+                                    "content": [{"type": "text", "text": posted}]},
+                        "uuid": block_uuid, "parentUuid": parent, "sessionId": session,
+                        "timestamp": b_ts})
+        parent = block_uuid
+        report = f"PANEL-VERDICT: {verdict}\nPANEL-SHA256: {digest}"
+    entries.append(
         {"type": "assistant", "message": {"role": "assistant", "id": f"msg_{agent_id}",
                                           "content": [{"type": "text", "text": report}]},
-         "uuid": entry_uuid, "parentUuid": prompt_uuid, "sessionId": session, "timestamp": ts},
-    ]
+         "uuid": entry_uuid, "parentUuid": parent, "sessionId": session, "timestamp": ts})
     tp.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries), encoding="utf-8")
     ledger = home / ".claude" / ".cache" / "receipts" / "global.jsonl"
     ledger.parent.mkdir(parents=True, exist_ok=True)
@@ -97,12 +115,14 @@ def seed_receipt(home: Path, session: str, msg, verdict: str, ts: str, agent_id:
 
 
 def seed_reply_receipt(home: Path, session: str, text: str, verdict: str, ts: str,
-                       agent_id: str, agent_type: str = "Reality Checker") -> bool:
+                       agent_id: str, agent_type: str = "Reality Checker",
+                       short: bool = False, block_verdict: str | None = None) -> bool:
     """A Stop case (FLOW.panel-before-reply): the reviewed message is a reply
     to the operator, so its only recipient is "operator" and it has no
     attachment. Same files and row as seed_receipt."""
     msg = panel_digest.Message(text, [], ["operator"])
-    return seed_receipt(home, session, msg, verdict, ts, agent_id, agent_type)
+    return seed_receipt(home, session, msg, verdict, ts, agent_id, agent_type,
+                        short=short, block_verdict=block_verdict)
 
 
 EXTERNAL_INTERPRETER = "/opt/fx-node/bin/node"

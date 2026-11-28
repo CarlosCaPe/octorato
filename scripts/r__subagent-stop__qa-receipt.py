@@ -22,6 +22,12 @@ or the panel protocol (FLOW.panel-before-send)
     PANEL-VERDICT: PASS | NEEDS-WORK
     PANEL-SHA256: <64 hex>       (recomputed from the block; recorded only if equal)
 
+    (two-message form: the reviewer posts that whole block as an ordinary
+    message, then ends its final report with only PANEL-VERDICT and
+    PANEL-SHA256; the receipt anchors to the final report, which decides, and
+    the earlier block of the same run must recompute to the same digest and
+    state the same verdict; receipt_ledger.panel_block_entry)
+
 and, on a qa or panel receipt, any number of
 
     REVIEW-EXTERNAL: <tool_use_id>  (a review this reviewer ran on another
@@ -117,6 +123,18 @@ def main() -> int:
                 # An attachment still on disk must hash to what was reviewed.
                 import panel_digest
                 got = panel_digest.recompute_from_report(source)
+                block_uuid = ""
+                if got is None and anchor:
+                    # Two-message form: the final report holds only the
+                    # PANEL-VERDICT and PANEL-SHA256 lines, and the block was
+                    # posted as an earlier message of the same run. The final
+                    # report's verdict decides and anchors the receipt; the
+                    # earlier block must recompute to the same digest and state
+                    # the same verdict (receipt_ledger.panel_block_entry).
+                    found = receipt_ledger.panel_block_entry(tp, entry_uuid, verdict, scope)
+                    if found:
+                        got = panel_digest.recompute_from_report(found[0])
+                        block_uuid = found[1]
                 if not got or got["digest"] != scope:
                     continue
                 stale = False
@@ -131,6 +149,8 @@ def main() -> int:
                 record = dict(base, kind=kind, verdict=verdict, digest=scope,
                               recipients=got["recipients"],
                               attachments=[h for h, _ in got["attachments"]], **anchor)
+                if block_uuid:
+                    record["block_uuid"] = block_uuid
                 _add_external(receipt_ledger, record, source, kind, verdict)
                 receipt_ledger.append_global(record)
                 continue
