@@ -568,6 +568,31 @@ class PanelLedger(unittest.TestCase):
         _, rows = self._reflex("sh4")
         self.assertEqual(rows, [])
 
+    # -- block written in the reviewer's own tool call input -----------------
+    def test_bash_heredoc_block_with_handback_records_pass(self):
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T), "bh1", short=True,
+                          block_in="bash", handback=True)
+        _, rows = self._reflex("bh1")
+        self.assertEqual(len(rows), 1, rows)
+        self.assertEqual(rows[0]["verdict"], "PASS")
+        self.assertEqual(rows[0]["entry_uuid"], seed._uuid("bh1a"))
+        self.assertEqual(rows[0]["block_uuid"], seed._uuid("bh1b"))
+        self.assertIsNotNone(rl.panel_pass_for(self.d, "s1", T))
+
+    def test_block_only_in_a_tool_result_records_nothing(self):
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T), "bh2", short=True,
+                          block_in="tool_result", handback=True)
+        self.assertIsNone(rl.panel_pass_for(self.d, "s1", T))  # forged row refused
+        _, rows = self._reflex("bh2")
+        self.assertEqual(rows, [])
+
+    def test_bash_block_with_another_verdict_records_nothing(self):
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T), "bh3", short=True,
+                          block_in="bash", handback=True, block_verdict="NEEDS-WORK")
+        self.assertIsNone(rl.panel_pass_for(self.d, "s1", T))
+        _, rows = self._reflex("bh3")
+        self.assertEqual(rows, [])
+
     def test_block_from_before_a_resume_does_not_back_a_later_verdict(self):
         seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T), "sh5", short=True)
         tp = self.home / ".claude/projects/fx/s1/subagents/agent-sh5.jsonl"

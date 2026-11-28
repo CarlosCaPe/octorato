@@ -128,6 +128,15 @@ class Classifier(unittest.TestCase):
         self.assertEqual(RP.bound_reply_text(footed, e), footed)
         self.assertEqual(RP.bound_reply_text("Done.", []), "Done.")
 
+    def test_bound_text_binds_only_the_newest_entry_class_reads_all(self):
+        e = [{"basis": "own reasoning"}, {"basis": "git log"}, {"basis": "scripts/x.py"}]
+        bound = RP.bound_reply_text("Done.", e)
+        self.assertEqual(bound, "Done.\nProvenance: Basis: scripts/x.py")
+        self.assertEqual(bound.count("Provenance:"), 1)
+        # classification is unchanged: the older SELF entry still decides
+        self.assertEqual(RP.source_class("Done.", e), "SELF")
+        self.assertEqual(RP.source_class("Done.", e[1:]), "SOURCED")
+
 
 class Preflight(_Home):
     def test_footerless_draft_with_fresh_entry(self):
@@ -164,6 +173,32 @@ class PanelRequest(_Home):
         bound = DRAFT + "\nProvenance: Basis: git log origin/master"
         self.assertIn(panel_digest.digest(bound, recipients=["operator"]), cp.stdout)
         self.assertNotIn(panel_digest.digest(DRAFT, recipients=["operator"]), cp.stdout)
+
+    def test_several_entries_one_provenance_line_and_gate_parity(self):
+        import panel_digest
+        import re
+        for i, basis in enumerate(["own reasoning", "git log", "git log origin/master"]):
+            provenance_ledger.record(SESSION, ts=f"2026-10-16T08:0{i + 1}:00.000Z", basis=basis)
+        cp = self._request(DRAFT)
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        self.assertEqual(cp.stdout.count("Provenance:"), 1, cp.stdout)
+        self.assertIn("Provenance: Basis: git log origin/master", cp.stdout)
+        self.assertIn("source class SELF", cp.stderr)  # the older SELF entry still counts
+        bound = DRAFT + "\nProvenance: Basis: git log origin/master"
+        want = panel_digest.digest(bound, recipients=["operator"])
+        self.assertIn(want, cp.stdout)
+        env = dict(os.environ)
+        env.pop("OCTO_REPLY_PANEL", None)
+        payload = {"last_assistant_message": DRAFT, "transcript_path": str(self.transcript),
+                   "session_id": SESSION, "stop_hook_active": False}
+        gate = subprocess.run([sys.executable, str(SCRIPTS / "g__stop__reply-panel.py")],
+                              input=json.dumps(payload), capture_output=True, text=True, env=env)
+        self.assertEqual(gate.returncode, 2, gate.stderr)
+        detail = (self.tmp / "stop-blocks" / SESSION / "g__stop__reply-panel.txt").read_text(
+            encoding="utf-8")
+        got = re.search(r"Digest: ([0-9a-f]{64})", detail)
+        self.assertEqual(got and got.group(1), want, detail)
+        self.assertIn("this reply is SELF", detail)
 
     def test_digest_only_binds_too(self):
         import panel_digest

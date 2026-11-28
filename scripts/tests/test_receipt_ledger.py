@@ -754,6 +754,32 @@ class PanelTwoMessageForm(unittest.TestCase):
         self.assertIsNone(rl.panel_block_entry(tp, "f", "PASS", self.d))
         self.assertEqual(rl.panel_block_entry(tp, "f", "NEEDS-WORK", self.d)[1], "b2")
 
+    def _tool(self, uid, name, inp, ts):
+        return {"type": "assistant", "uuid": uid, "timestamp": ts,
+                "message": {"id": "m-" + uid, "content": [
+                    {"type": "tool_use", "id": "t-" + uid, "name": name, "input": inp}]}}
+
+    def test_block_in_own_bash_or_write_input_backs_short_final(self):
+        cmd = "cat <<'EOF' > /tmp/x/panel-%s.txt\n%s\nEOF" % (self.d[:8], self._posted())
+        for name, inp in (("Bash", {"command": cmd}),
+                          ("Write", {"file_path": "/tmp/x/p.txt", "content": self._posted()})):
+            tp = self._write([self._tool("b", name, inp, "2026-10-02T11:00:10Z"),
+                              self._a("f", self._short(), "2026-10-02T11:00:20Z")])
+            self.assertEqual(rl.panel_block_entry(tp, "f", "PASS", self.d)[1], "b", name)
+            self.assertIsNone(rl.panel_block_entry(tp, "f", "NEEDS-WORK", self.d), name)
+
+    def test_block_in_tool_result_user_entry_or_other_tool_never_counts(self):
+        result = {"type": "user", "uuid": "r", "timestamp": "2026-10-02T11:00:12Z",
+                  "message": {"content": [{"type": "tool_result", "tool_use_id": "t-b",
+                                           "content": self._posted()}]}}
+        for first in (self._tool("b", "Bash", {"command": "cat /tmp/req.txt"},
+                                 "2026-10-02T11:00:10Z"),
+                      self._tool("b", "Edit", {"file_path": "/tmp/p", "old_string": "x",
+                                               "new_string": self._posted()},
+                                 "2026-10-02T11:00:10Z")):
+            tp = self._write([first, result, self._a("f", self._short(), "2026-10-02T11:00:20Z")])
+            self.assertIsNone(rl.panel_block_entry(tp, "f", "PASS", self.d))
+
     def test_prompt_or_delivered_handback_bounds_the_walk(self):
         handback = {"type": "assistant", "uuid": "h", "timestamp": "2026-10-02T11:00:12Z",
                     "message": {"id": "m-h", "content": [

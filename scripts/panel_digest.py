@@ -39,13 +39,16 @@ never trusting the stated line alone:
     PANEL-SHA256: <digest>
 
 `panel_digest.py --panel-request ...` prints that block (without the verdict)
-for the main loop to hand to the reviewer. The reviewer posts it byte for byte
-with its PANEL-VERDICT and PANEL-SHA256 as a normal message, then ends its
-final report with only the PANEL-VERDICT and PANEL-SHA256 lines (plus one line
-of finding if NEEDS-WORK), so the parent sees two lines instead of the whole
-block. The receipt anchors to the final report, whose verdict decides; the
-earlier message of the same run must recompute to the same digest and state
-the same verdict (receipt_ledger.panel_block_entry). A final report that
+for the main loop to hand to the reviewer. The reviewer writes it byte for
+byte with its PANEL-VERDICT and PANEL-SHA256 to a file with ONE Bash call
+(`cat <<'EOF' > /tmp/<dir>/panel-<sha8>.txt` ... `EOF`; a Write of the file or
+a normal message also counts), then ends its final report with only the
+PANEL-VERDICT and PANEL-SHA256 lines (plus one line of finding if NEEDS-WORK),
+so the parent sees two lines instead of the whole block. The receipt anchors to
+the final report, whose verdict decides; the earlier text or Bash/Write INPUT of
+the same run must recompute to the same digest and state the same verdict
+(receipt_ledger.panel_block_entry). A tool RESULT never counts: a `cat` of the
+request file shows the block but the reviewer did not write it. A final report that
 repeats the whole block is still accepted; then the last block of that report
 is the one read.
 
@@ -119,9 +122,10 @@ CLI
     exit 1 when one would block. --panel-request --to operator runs the same
     preflight first and prints no block when it fails (--no-preflight skips it).
     For --to operator the digested and reviewed text is the reply plus the
-    footer lines of this session's provenance-ledger entries that count for
-    it, when the reply shows no footer (quiet provenance, the reply panel's
-    bound_reply_text), so the reviewer sees the Basis that sets the quorum.
+    footer line of the NEWEST provenance-ledger entry of this session that
+    counts for it, when the reply shows no footer (quiet provenance, the reply
+    panel's bound_reply_text): one Provenance line, never a stack. The source
+    class and quorum still read every entry that counts.
 A mail's body file is the subject line, then the body (then htmlBody).
 """
 from __future__ import annotations
@@ -707,8 +711,8 @@ def digests_for(tool_name: str, tool_input) -> list:
 # --------------------------------------------------------------------------
 
 def _bound_reply(text: str, transcript: str | None) -> str:
-    """The reply text plus the footer lines of the provenance-ledger entries
-    that count for it (provenance_ledger.reply_view), as the reply panel
+    """The reply text plus the footer line of the newest provenance-ledger
+    entry that counts for it (provenance_ledger.reply_view), as the reply panel
     digests it. A ledger that cannot be read is an error, never a silent
     fallback to the bare text."""
     import panel_preflight
@@ -768,7 +772,7 @@ def _cli(argv: list) -> int:
             print(f"PREFLIGHT: PASS, source class {res['class']}, reply panel quorum {res['quorum']}",
                   file=sys.stderr)
             # Quiet provenance: with no visible footer, the reviewed text is the
-            # reply plus the footer lines of the ledger entries that count for it,
+            # reply plus the footer line of the newest ledger entry that counts for it,
             # the same text g__stop__reply-panel.py digests (bound_reply_text).
             a.body_file, text_in = None, res.get("bound", text)
         else:

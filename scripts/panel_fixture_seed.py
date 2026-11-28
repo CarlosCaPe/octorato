@@ -60,7 +60,8 @@ def _uuid(seed: str) -> str:
 def seed_receipt(home: Path, session: str, msg, verdict: str, ts: str, agent_id: str,
                  agent_type: str = "Reality Checker", stated_digest: str | None = None,
                  shown=None, with_block: bool = True, short: bool = False,
-                 block_verdict: str | None = None) -> bool:
+                 block_verdict: str | None = None, block_in: str = "text",
+                 handback: bool = False) -> bool:
     """Write one reviewer transcript entry and its ledger row for message `msg`
     (a panel_digest.Message). The report carries the panel block of `shown`
     (default `msg`) and states `stated_digest` (default msg.digest), so a
@@ -69,7 +70,12 @@ def seed_receipt(home: Path, session: str, msg, verdict: str, ts: str, agent_id:
     it writes the two-message form: an earlier assistant message carrying the
     block with PANEL-VERDICT `block_verdict` (default `verdict`), then a final
     report of only the PANEL-VERDICT and PANEL-SHA256 lines, which the ledger
-    row anchors to. Returns False when this agent id was already seeded."""
+    row anchors to. `block_in` says where that earlier block sits: "text" (an
+    assistant message), "bash" (the input of the reviewer's own Bash heredoc,
+    with its tool_result), or "tool_result" (only in the RESULT of a Bash
+    `cat`, which must never count). handback=True delivers the final report as
+    a SubagentHandback call, as real reviewer runs do. Returns False when this
+    agent id was already seeded."""
     rel = Path(".claude") / "projects" / "fx" / session / "subagents" / f"agent-{agent_id}.jsonl"
     tp = home / rel
     if tp.exists():
@@ -92,16 +98,38 @@ def seed_receipt(home: Path, session: str, msg, verdict: str, ts: str, agent_id:
         b_ts = (t - _dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z")
         posted = (f"{block}\nPANEL-VERDICT: {block_verdict or verdict}\n"
                   f"PANEL-SHA256: {digest}")
+        if block_in == "text":
+            content = [{"type": "text", "text": posted}]
+        elif block_in == "bash":
+            content = [{"type": "tool_use", "id": f"tu_{agent_id}_b", "name": "Bash",
+                        "input": {"command": f"cat <<'EOF' > /tmp/fx/panel-{digest[:8]}.txt\n"
+                                             f"{posted}\nEOF"}}]
+        elif block_in == "tool_result":
+            content = [{"type": "tool_use", "id": f"tu_{agent_id}_b", "name": "Bash",
+                        "input": {"command": "cat /tmp/fx/panel-request.txt"}}]
+        else:
+            raise ValueError(f"block_in {block_in!r}")
         entries.append({"type": "assistant",
                         "message": {"role": "assistant", "id": f"msg_{agent_id}_b",
-                                    "content": [{"type": "text", "text": posted}]},
+                                    "content": content},
                         "uuid": block_uuid, "parentUuid": parent, "sessionId": session,
                         "timestamp": b_ts})
         parent = block_uuid
+        if block_in != "text":
+            out = posted if block_in == "tool_result" else ""
+            r_uuid = _uuid(agent_id + "r")
+            entries.append({"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": f"tu_{agent_id}_b", "content": out}]},
+                "uuid": r_uuid, "parentUuid": parent, "sessionId": session,
+                "timestamp": (t - _dt.timedelta(seconds=5)).isoformat().replace("+00:00", "Z")})
+            parent = r_uuid
         report = f"PANEL-VERDICT: {verdict}\nPANEL-SHA256: {digest}"
+    final = ([{"type": "tool_use", "id": f"tu_{agent_id}_h", "name": "SubagentHandback",
+               "input": {"message": report}}] if handback
+             else [{"type": "text", "text": report}])
     entries.append(
         {"type": "assistant", "message": {"role": "assistant", "id": f"msg_{agent_id}",
-                                          "content": [{"type": "text", "text": report}]},
+                                          "content": final},
          "uuid": entry_uuid, "parentUuid": parent, "sessionId": session, "timestamp": ts})
     tp.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries), encoding="utf-8")
     ledger = home / ".claude" / ".cache" / "receipts" / "global.jsonl"
