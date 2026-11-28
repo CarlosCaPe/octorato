@@ -174,6 +174,22 @@ class PanelRequest(_Home):
         self.assertIn(panel_digest.digest(bound, recipients=["operator"]), cp.stdout)
         self.assertNotIn(panel_digest.digest(DRAFT, recipients=["operator"]), cp.stdout)
 
+    def test_back_dated_record_written_after_still_becomes_the_footer(self):
+        from datetime import datetime, timedelta, timezone
+        now = datetime(2026, 10, 16, 9, 0, tzinfo=timezone.utc)
+        iso = lambda d: d.isoformat().replace("+00:00", "Z")
+        first = {"basis": "git log", "ts": iso(now - timedelta(minutes=5)), "written_at": iso(now)}
+        later = {"basis": "scripts/late.py", "ts": iso(now - timedelta(minutes=10)),
+                 "written_at": iso(now + timedelta(minutes=1))}
+        before = RP.bound_reply_text("Done.", [first])
+        # fresh_all order (effective_ts): the back-dated row sorts first
+        got = RP.bound_reply_text("Done.", [later, first])
+        self.assertEqual(got, "Done.\nProvenance: Basis: scripts/late.py")
+        self.assertNotEqual(got, before)
+        # rows without written_at fall back to the given order
+        self.assertEqual(RP.bound_reply_text("Done.", [{"basis": "a"}, {"basis": "b"}]),
+                         "Done.\nProvenance: Basis: b")
+
     def test_several_entries_one_provenance_line_and_gate_parity(self):
         import panel_digest
         import re

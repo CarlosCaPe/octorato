@@ -705,8 +705,8 @@ def bound_reply_text(msg: str, entries) -> str:
     """The text the operator-reply digest is computed over. A reply with a
     visible provenance line, or with no ledger entry, is its own text
     (unchanged digest, back-compat). Otherwise the rendered footer line of the
-    NEWEST entry used (the last of ledger_entries, which is sorted by
-    effective time: the one recorded for this reply) is joined under it, so
+    entry WRITTEN last (_last_written: greatest written_at, the one recorded
+    for this reply) is joined under it, so
     the reviewed block carries one Provenance line instead of a stack of
     every entry since the last full reply. A later record becomes the newest
     entry, so it still changes the digest (and voids the PASS). The source
@@ -717,7 +717,21 @@ def bound_reply_text(msg: str, entries) -> str:
     if not entries or _PROVENANCE.findall(msg or ""):
         return msg
     import provenance_ledger
-    return msg + "\n" + provenance_ledger.footer_line(entries[-1])
+    return msg + "\n" + provenance_ledger.footer_line(_last_written(entries))
+
+
+def _last_written(entries: list) -> dict:
+    """The entry written last: the greatest `written_at` (the wall clock of
+    the write, which provenance_ledger.record always stamps), ties and rows
+    without it falling back to their order in `entries`. Not effective_ts: a
+    record back-dated with an old `ts` after the review must still become the
+    bound footer, change the digest and void the PASS."""
+    from datetime import datetime, timezone
+    import provenance_ledger
+    floor = datetime.min.replace(tzinfo=timezone.utc)
+    best = max(range(len(entries)), key=lambda i: (
+        provenance_ledger._ts(entries[i].get("written_at")) or floor, i))
+    return entries[best]
 
 
 # ---------------------------------------------------------------------------
