@@ -45,10 +45,11 @@ FRESH (one definition, used by every reader)
 
 BOUND TO THE RECEIPT
   When the reply carries no visible footer, the reply panel's digest is over
-  the reply text plus the rendered footer line of every entry used
+  the reply text plus the rendered footer line of the NEWEST entry used
   (bound_reply_text in g__stop__reply-panel.py), and panel_digest.py
   --panel-request --to operator prints that same text in the reviewed block.
-  A later record changes the digest and voids the PASS.
+  The source class still reads every entry used. A later record becomes the
+  newest entry, so it changes the digest and voids the PASS.
 """
 from __future__ import annotations
 

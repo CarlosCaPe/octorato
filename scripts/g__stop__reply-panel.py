@@ -63,7 +63,7 @@ THE DECISION (FR-03, checked in this order; the first that holds exits 0)
      `self-review of <path>`) is not a self source.
      The digest is over bound_reply_text: the reply itself when it shows a
      provenance line or uses no entry, else the reply plus the rendered
-     footer of every entry used, which is the text panel_digest.py
+     footer of the newest entry used, which is the text panel_digest.py
      --panel-request --to operator puts in the reviewed block. A record made
      after the review changes the digest, so it voids the PASS.
 Otherwise exit 2, stderr naming the source class, the quorum, the digest, the
@@ -704,15 +704,34 @@ def ledger_entries(session_id: str, prompt_ts: str, turn_entries: list, msg: str
 def bound_reply_text(msg: str, entries) -> str:
     """The text the operator-reply digest is computed over. A reply with a
     visible provenance line, or with no ledger entry, is its own text
-    (unchanged digest, back-compat). Otherwise the rendered footer line of
-    every entry used is joined under it, one per line, so the reviewed block
-    shows the Basis that decides the quorum and a later record changes the
-    digest (and voids the PASS)."""
+    (unchanged digest, back-compat). Otherwise the rendered footer line of the
+    entry WRITTEN last (_last_written: greatest written_at, the one recorded
+    for this reply) is joined under it, so
+    the reviewed block carries one Provenance line instead of a stack of
+    every entry since the last full reply. A later record becomes the newest
+    entry, so it still changes the digest (and voids the PASS). The source
+    class and the quorum are NOT read from this text: source_class reads
+    every entry used, so an older SELF entry still sets quorum 3 though its
+    line is not in the block (R-19)."""
     entries = list(entries or ())
     if not entries or _PROVENANCE.findall(msg or ""):
         return msg
     import provenance_ledger
-    return msg + "\n" + "\n".join(provenance_ledger.footer_line(e) for e in entries)
+    return msg + "\n" + provenance_ledger.footer_line(_last_written(entries))
+
+
+def _last_written(entries: list) -> dict:
+    """The entry written last: the greatest `written_at` (the wall clock of
+    the write, which provenance_ledger.record always stamps), ties and rows
+    without it falling back to their order in `entries`. Not effective_ts: a
+    record back-dated with an old `ts` after the review must still become the
+    bound footer, change the digest and void the PASS."""
+    from datetime import datetime, timezone
+    import provenance_ledger
+    floor = datetime.min.replace(tzinfo=timezone.utc)
+    best = max(range(len(entries)), key=lambda i: (
+        provenance_ledger._ts(entries[i].get("written_at")) or floor, i))
+    return entries[best]
 
 
 # ---------------------------------------------------------------------------
@@ -766,7 +785,7 @@ def decide(data: dict) -> tuple:
         f"A reply is SOURCED only when it has provenance (a Provenance line, or an entry "
         f"recorded off-screen with `python3 ~/.claude/scripts/provenance_ledger.py record "
         f"--basis ...` after the operator's prompt and after your last full reply; "
-        f"without a visible footer the entries' footer lines are part of the digest, "
+        f"without a visible footer the newest entry's footer line is part of the digest, "
         f"so record BEFORE the panel request) and every Basis names a "
         f"source other than self or own reasoning; an INPUT reply only asks, on a last "
         f"line starting `input-needed:`, for a fact only the operator holds, and its "
@@ -776,8 +795,10 @@ def decide(data: dict) -> tuple:
         f"{need} reviewer subagent(s) whose agent type matches "
         f"qa|review|reality|evidence|checker|verif|audit|panel (Reality Checker, Code "
         f"Reviewer, Evidence Collector; general-purpose, claude and fork do not count). "
-        f"Each reviewer posts the block byte for byte with PANEL-VERDICT and PANEL-SHA256 "
-        f"as a normal message, then ends its final report with only the PANEL-VERDICT and "
+        f"Each reviewer writes the block byte for byte with PANEL-VERDICT and PANEL-SHA256 "
+        f"to a file with ONE Bash call (cat <<'EOF' > /tmp/<dir>/panel-<sha8>.txt ... EOF; a "
+        f"normal message also counts; a cat of the request file does not), then ends its "
+        f"final report with only the PANEL-VERDICT and "
         f"PANEL-SHA256 lines (plus one line of finding if NEEDS-WORK); a final report that "
         f"repeats the whole block still counts. "
         f"A receipted review on another engine counts as one more reviewer, never as the "

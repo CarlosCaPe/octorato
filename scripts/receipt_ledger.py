@@ -1170,6 +1170,36 @@ def _entry_texts(entry: dict) -> str:
                      if isinstance(b, dict) and b.get("type") == "text")
 
 
+# The reviewer's own tool calls whose INPUT may carry the panel block, and the
+# one input field read for each (a heredoc `cat <<'EOF' > panel-<sha8>.txt` in
+# Bash, or a Write of the block to a file). The input is what the reviewer
+# model wrote, recorded by the harness in its own transcript; a tool RESULT is
+# what the tool printed back (a file someone else wrote, a `cat` of the
+# request) and is never read.
+PANEL_BLOCK_TOOL_INPUTS = {"Bash": "command", "Write": "content"}
+
+
+def _entry_block_sources(entry: dict) -> list:
+    """The texts of one assistant entry that may carry a reviewer block, in
+    the entry's own order: its model-written text blocks (joined, as
+    _entry_texts) and the input field of each PANEL_BLOCK_TOOL_INPUTS call.
+    Thinking, tool results and every other tool's input are never read."""
+    out = []
+    text = _entry_texts(entry)
+    if text:
+        out.append(text)
+    content = (entry.get("message") or {}).get("content") or []
+    if isinstance(content, list):
+        for b in content:
+            if not isinstance(b, dict) or b.get("type") != "tool_use":
+                continue
+            field = PANEL_BLOCK_TOOL_INPUTS.get(str(b.get("name") or ""))
+            inp = b.get("input")
+            if field and isinstance(inp, dict) and isinstance(inp.get(field), str):
+                out.append(inp[field])
+    return out
+
+
 def panel_block_entry(transcript_path: str, final_uuid: str, verdict: str, digest: str):
     """The two-message panel protocol: (block_report, block_uuid) of the
     earlier assistant message whose reviewer block backs a SHORT final report
@@ -1180,12 +1210,14 @@ def panel_block_entry(transcript_path: str, final_uuid: str, verdict: str, diges
     prompt or at any SendMessage resume (stricter than _anchor_stands, which
     lets a mid tool loop resume through), and at an earlier delivered
     SubagentHandback (a previous final report). So a block from before a
-    resumed run never backs a later verdict. Of the entries inside that bound,
-    the NEWEST text entry whose block recomputes to `digest` and that states a
-    PANEL-VERDICT decides: it must state `verdict` and `digest`, or there is no
-    answer (an earlier PASS block never upgrades a final NEEDS-WORK, and a
-    final PASS never borrows a block that said NEEDS-WORK). A block echoed
-    with no verdict line is skipped."""
+    resumed run never backs a later verdict. Of the assistant entries inside
+    that bound, the block may sit in a text block or in the INPUT of one of
+    the reviewer's own Bash or Write calls (_entry_block_sources); tool results
+    and user entries are never read. The NEWEST such source whose block
+    recomputes to `digest` and that states a PANEL-VERDICT decides: it must
+    state `verdict` and `digest`, or there is no answer (an earlier PASS block
+    never upgrades a final NEEDS-WORK, and a final PASS never borrows a block
+    that said NEEDS-WORK). A block echoed with no verdict line is skipped."""
     want = str(digest or "").lower()
     if not final_uuid or not _SHA64.fullmatch(want) or not _regular_file(transcript_path):
         return None
@@ -1221,15 +1253,15 @@ def panel_block_entry(transcript_path: str, final_uuid: str, verdict: str, diges
                 and b.get("name") == HANDBACK_TOOL and b.get("id") not in refused
                 for b in blocks):
             return None  # a previous final report: the bound
-        text = _entry_texts(e)
-        if not text or panel_recompute(text) != want:
-            continue
-        said, sha = parse_panel(text)
-        if not said:
-            continue
-        if (said, sha) != (verdict, want):
-            return None
-        return text, str(e.get("uuid") or "")
+        for text in reversed(_entry_block_sources(e)):
+            if panel_recompute(text) != want:
+                continue
+            said, sha = parse_panel(text)
+            if not said:
+                continue
+            if (said, sha) != (verdict, want):
+                return None
+            return text, str(e.get("uuid") or "")
     return None
 
 

@@ -22,8 +22,9 @@ or the panel protocol (FLOW.panel-before-send)
     PANEL-VERDICT: PASS | NEEDS-WORK
     PANEL-SHA256: <64 hex>       (recomputed from the block; recorded only if equal)
 
-    (two-message form: the reviewer posts that whole block as an ordinary
-    message, then ends its final report with only PANEL-VERDICT and
+    (two-message form: the reviewer writes that whole block in an ordinary
+    message or in the input of one of its own Bash or Write calls, e.g. a
+    heredoc to a file, then ends its final report with only PANEL-VERDICT and
     PANEL-SHA256; the receipt anchors to the final report, which decides, and
     the earlier block of the same run must recompute to the same digest and
     state the same verdict; receipt_ledger.panel_block_entry)

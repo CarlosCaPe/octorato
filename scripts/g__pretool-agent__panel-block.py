@@ -88,11 +88,12 @@ _FIX = (
     "--body-file <file>` and paste its WHOLE output into the reviewer prompt, from the first "
     "PANEL-TO line through PANEL-BODY-END and the PANEL-SHA256 line (or save that output to a "
     "file and put `PANEL-REQUEST-FILE: <absolute path>` on its own line). Tell the reviewer to "
-    "post that block byte for byte, PANEL-TO through PANEL-BODY-END, followed by "
-    "`PANEL-VERDICT: PASS | NEEDS-WORK` and `PANEL-SHA256: <digest>`, as a normal message, then "
-    "end its final report with only the PANEL-VERDICT and PANEL-SHA256 lines (plus one line of "
-    "finding if NEEDS-WORK). A verdict-only review that never posted the block writes no "
-    "receipt. A builder prompt that needs a literal digest without asking for a "
+    "write that block byte for byte, PANEL-TO through PANEL-BODY-END, followed by "
+    "`PANEL-VERDICT: PASS | NEEDS-WORK` and `PANEL-SHA256: <digest>`, to a file with ONE Bash "
+    "call (`cat <<'EOF' > /tmp/<dir>/panel-<sha8>.txt` ... `EOF`; a normal message also "
+    "counts), then end its final report with only the PANEL-VERDICT and PANEL-SHA256 lines "
+    "(plus one line of finding if NEEDS-WORK). A verdict-only review that never wrote the "
+    "block itself (a `cat` of the request file does not count) writes no receipt. A builder prompt that needs a literal digest without asking for a "
     "review can write it without the PANEL-SHA256 prefix."
 )
 
