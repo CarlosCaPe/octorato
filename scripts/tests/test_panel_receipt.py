@@ -523,6 +523,83 @@ class PanelLedger(unittest.TestCase):
                        input=json.dumps(payload), text=True, env=dict(os.environ), capture_output=True)
         self.assertEqual([r for r in rl.read_global() if r.get("kind") == "panel"], [])
 
+    # -- two-message form: block posted earlier, short final report --------
+    def _reflex(self, agent_id):
+        (self.home / ".claude/.cache/receipts/global.jsonl").unlink()
+        tp = self.home / f".claude/projects/fx/s1/subagents/agent-{agent_id}.jsonl"
+        payload = {"session_id": "s1", "agent_id": agent_id, "agent_type": "Reality Checker",
+                   "agent_transcript_path": str(tp), "last_assistant_message": ""}
+        subprocess.run([sys.executable, str(SCRIPTS / "r__subagent-stop__qa-receipt.py")],
+                       input=json.dumps(payload), text=True, env=dict(os.environ),
+                       capture_output=True)
+        return tp, [r for r in rl.read_global() if r.get("kind") == "panel"]
+
+    def test_short_final_with_earlier_block_records_pass_anchored_to_final(self):
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T), "sh1", short=True)
+        tp, rows = self._reflex("sh1")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["verdict"], "PASS")
+        self.assertEqual(rows[0]["digest"], self.d)
+        self.assertEqual(rows[0]["entry_uuid"], seed._uuid("sh1a"))  # the final report
+        self.assertEqual(rows[0]["block_uuid"], seed._uuid("sh1b"))
+        final = rl.report_at(str(tp), rows[0]["entry_uuid"])[0]
+        self.assertNotIn("PANEL-BODY-BEGIN", final)
+        self.assertIsNotNone(rl.panel_pass_for(self.d, "s1", T))
+
+    def test_short_needs_work_never_borrows_an_earlier_pass_block(self):
+        seed.seed_receipt(self.home, "s1", self.m, "NEEDS-WORK", iso(T), "sh2", short=True,
+                          block_verdict="PASS")
+        _, rows = self._reflex("sh2")
+        self.assertEqual([r for r in rows if r["verdict"] == "PASS"], [])
+        self.assertIsNone(rl.panel_pass_for(self.d, "s1", T))
+
+    def test_short_pass_with_earlier_needs_work_block_records_nothing(self):
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T), "sh3", short=True,
+                          block_verdict="NEEDS-WORK")
+        self.assertIsNone(rl.panel_pass_for(self.d, "s1", T))  # forged row refused
+        _, rows = self._reflex("sh3")
+        self.assertEqual(rows, [])
+
+    def test_short_final_whose_digest_no_block_recomputes_to_records_nothing(self):
+        other = pd.Message("something else", [], ["1"])
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T), "sh4", short=True,
+                          shown=other)
+        self.assertIsNone(rl.panel_pass_for(self.d, "s1", T))  # forged row refused
+        _, rows = self._reflex("sh4")
+        self.assertEqual(rows, [])
+
+    def test_block_from_before_a_resume_does_not_back_a_later_verdict(self):
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T), "sh5", short=True)
+        tp = self.home / ".claude/projects/fx/s1/subagents/agent-sh5.jsonl"
+        lines = tp.read_text(encoding="utf-8").splitlines()
+        resume = {"type": "user", "isMeta": True,
+                  "message": {"role": "user", "content": "The coordinator sent a message: again"},
+                  "uuid": seed._uuid("sh5r"), "parentUuid": seed._uuid("sh5b"),
+                  "sessionId": "s1", "timestamp": iso(T - dt.timedelta(seconds=5))}
+        lines.insert(2, json.dumps(resume))
+        tp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        self.assertIsNone(rl.panel_pass_for(self.d, "s1", T))
+        _, rows = self._reflex("sh5")
+        self.assertEqual(rows, [])
+
+    def test_run_ending_on_a_block_for_another_digest_does_not_stand(self):
+        # The anchored entry binds by itself, but the run's final report states
+        # PASS for the same digest while its own block recomputes to another:
+        # that is not the same verdict, so the anchor does not stand.
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T - dt.timedelta(minutes=2)), "sd1")
+        self.assertIsNotNone(rl.panel_pass_for(self.d, "s1", T))
+        tp = self.home / ".claude/projects/fx/s1/subagents/agent-sd1.jsonl"
+        other = pd.Message("something else", [], ["1"]).panel_block().rsplit("\nPANEL-SHA256:", 1)[0]
+        final = {"type": "assistant",
+                 "message": {"role": "assistant", "id": "msg_sd1_f",
+                             "content": [{"type": "text", "text":
+                                          f"{other}\nPANEL-VERDICT: PASS\nPANEL-SHA256: {self.d}"}]},
+                 "uuid": seed._uuid("sd1f"), "parentUuid": seed._uuid("sd1a"),
+                 "sessionId": "s1", "timestamp": iso(T - dt.timedelta(minutes=1))}
+        with tp.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(final) + "\n")
+        self.assertIsNone(rl.panel_pass_for(self.d, "s1", T))
+
     def test_receipt_is_single_use(self):
         seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T), "c1")
         r = rl.panel_pass_for(self.d, "s1", T)

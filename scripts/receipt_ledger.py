@@ -1159,6 +1159,93 @@ def parse_panel(text: str) -> tuple:
     return verdict, (sha if _SHA64.fullmatch(sha) else "")
 
 
+def _entry_texts(entry: dict) -> str:
+    """The model-written text blocks of one assistant entry, joined; "" when
+    it has none. Tool inputs and thinking are never read: only what the
+    reviewer itself posted as a message."""
+    content = (entry.get("message") or {}).get("content") or []
+    if isinstance(content, str):
+        return content
+    return "\n".join(b.get("text", "") for b in content
+                     if isinstance(b, dict) and b.get("type") == "text")
+
+
+def panel_block_entry(transcript_path: str, final_uuid: str, verdict: str, digest: str):
+    """The two-message panel protocol: (block_report, block_uuid) of the
+    earlier assistant message whose reviewer block backs a SHORT final report
+    (PANEL-VERDICT and PANEL-SHA256 only), or None.
+
+    Walks back from the final report's entry (`final_uuid`, harness-written)
+    through the SAME transcript. The bound is the run: the walk stops at a real
+    prompt or at any SendMessage resume (stricter than _anchor_stands, which
+    lets a mid tool loop resume through), and at an earlier delivered
+    SubagentHandback (a previous final report). So a block from before a
+    resumed run never backs a later verdict. Of the entries inside that bound,
+    the NEWEST text entry whose block recomputes to `digest` and that states a
+    PANEL-VERDICT decides: it must state `verdict` and `digest`, or there is no
+    answer (an earlier PASS block never upgrades a final NEEDS-WORK, and a
+    final PASS never borrows a block that said NEEDS-WORK). A block echoed
+    with no verdict line is skipped."""
+    want = str(digest or "").lower()
+    if not final_uuid or not _SHA64.fullmatch(want) or not _regular_file(transcript_path):
+        return None
+    entries, refused = [], set()
+    try:
+        with open(transcript_path, "rb") as fh:
+            for raw in fh:
+                try:
+                    entry = json.loads(raw.decode("utf-8", errors="replace"))
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict) or not harness_entry(entry):
+                    continue
+                refused |= _refused_handbacks(entry)
+                if entry.get("type") in ("assistant", "user"):
+                    entries.append(entry)
+    except OSError:
+        return None
+    at = next((i for i, e in enumerate(entries)
+               if e.get("type") == "assistant" and e.get("uuid") == final_uuid), None)
+    if at is None:
+        return None
+    for e in reversed(entries[:at]):
+        if e.get("type") == "user":
+            if _is_prompt(e) or _is_resume(e):
+                return None
+            continue
+        if e.get("uuid") == final_uuid:
+            continue  # a repeated line of the final entry itself
+        blocks = (e.get("message") or {}).get("content") or []
+        if isinstance(blocks, list) and any(
+                isinstance(b, dict) and b.get("type") == "tool_use"
+                and b.get("name") == HANDBACK_TOOL and b.get("id") not in refused
+                for b in blocks):
+            return None  # a previous final report: the bound
+        text = _entry_texts(e)
+        if not text or panel_recompute(text) != want:
+            continue
+        said, sha = parse_panel(text)
+        if not said:
+            continue
+        if (said, sha) != (verdict, want):
+            return None
+        return text, str(e.get("uuid") or "")
+    return None
+
+
+def panel_report_bound(transcript_path: str, uuid: str, report: str, verdict: str,
+                       digest: str) -> bool:
+    """True when the panel report at entry `uuid` binds to `digest`: its own
+    last block recomputes to it (the one-message form), or it carries NO block
+    and panel_block_entry finds the earlier block message of the same run that
+    recomputes to it and states the same verdict (the two-message form). A
+    report whose own block recomputes to another digest never looks back."""
+    own = panel_recompute(report)
+    if own:
+        return own == digest
+    return panel_block_entry(transcript_path, uuid, verdict, digest) is not None
+
+
 def panel_receipts_for(digest: str, session_id: str, now=None,
                        window_minutes: float = PANEL_WINDOW_MINUTES) -> list:
     """Every panel receipt for `digest` in session `session_id` that passes
@@ -1200,7 +1287,13 @@ def panel_receipts_for(digest: str, session_id: str, now=None,
             continue
         report, ts = got
         verdict, sha = parse_panel(report)
-        if verdict != r.get("verdict") or sha != want or panel_recompute(report) != want:
+        if verdict != r.get("verdict") or sha != want:
+            continue
+        try:
+            bound = panel_report_bound(tp, uuid, report, verdict, want)
+        except Exception:
+            bound = False
+        if not bound:
             continue
         key = _ts_key(ts)
         if key is None:
@@ -1231,7 +1324,11 @@ def panel_receipts_for(digest: str, session_id: str, now=None,
         cands.append((_ts_key(got["verdict_ts"]), got["verdict"] != "PASS", got, None, None,
                       got["verdict_ts"]))
     cands.sort(key=lambda c: (c[0], c[1]), reverse=True)
-    same = lambda rep_: parse_panel(rep_) == ("PASS", want) and panel_recompute(rep_) == want
+    # The run must end on the same PASS. Its final report either carries the
+    # block itself or (two-message form) none at all; a final block for another
+    # digest is not the same verdict. The anchored entry's own binding was
+    # checked above by panel_report_bound.
+    same = lambda rep_: parse_panel(rep_) == ("PASS", want) and panel_recompute(rep_) in (want, "")
     revokes = lambda rep_: parse_panel(rep_) == ("NEEDS-WORK", want)
     out = []
     for key, is_revocation, r, tp, uuid, ts in cands:

@@ -695,5 +695,79 @@ class QaHeadAnchoring(unittest.TestCase):
             self.assertEqual(box["r"]["verdict"], "PASS")
 
 
+class PanelTwoMessageForm(unittest.TestCase):
+    """panel_block_entry / panel_report_bound: the short final report binds
+    only through an earlier block of the same run with the same verdict."""
+
+    def _write(self, entries):
+        d = tempfile.mkdtemp(prefix="pblock-")
+        tp = Path(d) / "agent-x.jsonl"
+        base = {"sessionId": "s1", "parentUuid": None}
+        _tr(tp, [dict(base, **e) for e in entries])
+        return str(tp)
+
+    def setUp(self):
+        import panel_digest as pd
+        self.m = pd.Message("hello", [], ["1"])
+        self.d = self.m.digest
+        self.block = self.m.panel_block().rsplit("\nPANEL-SHA256:", 1)[0]
+
+    def _a(self, uid, text, ts):
+        return {"type": "assistant", "uuid": uid, "timestamp": ts,
+                "message": {"id": "m-" + uid, "content": [{"type": "text", "text": text}]}}
+
+    def _short(self, verdict="PASS"):
+        return f"PANEL-VERDICT: {verdict}\nPANEL-SHA256: {self.d}"
+
+    def _posted(self, verdict="PASS"):
+        return f"{self.block}\nPANEL-VERDICT: {verdict}\nPANEL-SHA256: {self.d}"
+
+    def test_earlier_block_backs_short_final(self):
+        tp = self._write([
+            {"type": "user", "uuid": "p", "timestamp": "2026-10-02T11:00:00Z",
+             "message": {"content": "review"}},
+            self._a("b", self._posted(), "2026-10-02T11:00:10Z"),
+            self._a("f", self._short(), "2026-10-02T11:00:20Z")])
+        got = rl.panel_block_entry(tp, "f", "PASS", self.d)
+        self.assertEqual(got[1], "b")
+        self.assertTrue(rl.panel_report_bound(tp, "f", self._short(), "PASS", self.d))
+
+    def test_old_style_final_binds_by_itself(self):
+        tp = self._write([self._a("f", self._posted(), "2026-10-02T11:00:20Z")])
+        self.assertTrue(rl.panel_report_bound(tp, "f", self._posted(), "PASS", self.d))
+
+    def test_final_with_a_block_for_another_digest_never_looks_back(self):
+        import panel_digest as pd
+        other = pd.Message("other", [], ["1"]).panel_block()
+        final = other.rsplit("\nPANEL-SHA256:", 1)[0] + "\n" + self._short()
+        tp = self._write([
+            self._a("b", self._posted(), "2026-10-02T11:00:10Z"),
+            self._a("f", final, "2026-10-02T11:00:20Z")])
+        self.assertFalse(rl.panel_report_bound(tp, "f", final, "PASS", self.d))
+
+    def test_newest_block_with_a_verdict_decides(self):
+        tp = self._write([
+            self._a("b1", self._posted("PASS"), "2026-10-02T11:00:05Z"),
+            self._a("b2", self._posted("NEEDS-WORK"), "2026-10-02T11:00:10Z"),
+            self._a("e", self.block, "2026-10-02T11:00:15Z"),  # echo, no verdict: skipped
+            self._a("f", self._short("PASS"), "2026-10-02T11:00:20Z")])
+        self.assertIsNone(rl.panel_block_entry(tp, "f", "PASS", self.d))
+        self.assertEqual(rl.panel_block_entry(tp, "f", "NEEDS-WORK", self.d)[1], "b2")
+
+    def test_prompt_or_delivered_handback_bounds_the_walk(self):
+        handback = {"type": "assistant", "uuid": "h", "timestamp": "2026-10-02T11:00:12Z",
+                    "message": {"id": "m-h", "content": [
+                        {"type": "tool_use", "id": "t1", "name": "SubagentHandback",
+                         "input": {"message": "done"}}]}}
+        tp = self._write([self._a("b", self._posted(), "2026-10-02T11:00:10Z"), handback,
+                          self._a("f", self._short(), "2026-10-02T11:00:20Z")])
+        self.assertIsNone(rl.panel_block_entry(tp, "f", "PASS", self.d))
+        tp = self._write([self._a("b", self._posted(), "2026-10-02T11:00:10Z"),
+                          {"type": "user", "uuid": "p2", "timestamp": "2026-10-02T11:00:15Z",
+                           "message": {"content": "new task"}},
+                          self._a("f", self._short(), "2026-10-02T11:00:20Z")])
+        self.assertIsNone(rl.panel_block_entry(tp, "f", "PASS", self.d))
+
+
 if __name__ == "__main__":
     unittest.main()

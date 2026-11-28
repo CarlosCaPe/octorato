@@ -4,8 +4,10 @@
 THE FAILURE THIS EXISTS FOR
 A panel receipt is written by r__subagent-stop__qa-receipt.py only when
 panel_digest.recompute_from_report() reproduces the stated digest from the
-block the reviewer repeats at the end of its report (PANEL-TO ...,
-PANEL-BODY-BEGIN, the text, PANEL-BODY-END, PANEL-VERDICT, PANEL-SHA256).
+block the reviewer reproduces (PANEL-TO ..., PANEL-BODY-BEGIN, the text,
+PANEL-BODY-END, PANEL-VERDICT, PANEL-SHA256), either at the end of its final
+report or, in the two-message form, as an earlier message of the same run
+whose verdict and digest the short final report repeats.
 More than once the main loop launched a reviewer whose prompt carried only the
 digest and asked for a verdict-only ending. The reviewer could not repeat a
 block it never saw, no receipt was written, and the reply-panel Stop gate
@@ -34,8 +36,8 @@ them). So a verdict-only prompt, a block truncated before PANEL-BODY-END, a
 block for a different text or recipient, and a request file that is missing
 or holds another digest are all denied, and the deny names which.
 
-What it cannot see: whether the prompt also tells the reviewer to REPEAT the
-block at the end of its report. That instruction is prose; the deny message
+What it cannot see: whether the prompt also tells the reviewer to REPRODUCE
+the block (as a message before its short final report, or at the end of it). That instruction is prose; the deny message
 spells it out, and the receipt consumer remains the binding check.
 
 FAIL POLICY: closed for a request, open for everything else
@@ -86,9 +88,11 @@ _FIX = (
     "--body-file <file>` and paste its WHOLE output into the reviewer prompt, from the first "
     "PANEL-TO line through PANEL-BODY-END and the PANEL-SHA256 line (or save that output to a "
     "file and put `PANEL-REQUEST-FILE: <absolute path>` on its own line). Tell the reviewer to "
-    "end its report by repeating that block byte for byte, PANEL-TO through PANEL-BODY-END, "
-    "followed by `PANEL-VERDICT: PASS | NEEDS-WORK` and `PANEL-SHA256: <digest>`. A verdict-only "
-    "ending writes no receipt. A builder prompt that needs a literal digest without asking for a "
+    "post that block byte for byte, PANEL-TO through PANEL-BODY-END, followed by "
+    "`PANEL-VERDICT: PASS | NEEDS-WORK` and `PANEL-SHA256: <digest>`, as a normal message, then "
+    "end its final report with only the PANEL-VERDICT and PANEL-SHA256 lines (plus one line of "
+    "finding if NEEDS-WORK). A verdict-only review that never posted the block writes no "
+    "receipt. A builder prompt that needs a literal digest without asking for a "
     "review can write it without the PANEL-SHA256 prefix."
 )
 

@@ -776,7 +776,10 @@ def decide(data: dict) -> tuple:
         f"{need} reviewer subagent(s) whose agent type matches "
         f"qa|review|reality|evidence|checker|verif|audit|panel (Reality Checker, Code "
         f"Reviewer, Evidence Collector; general-purpose, claude and fork do not count). "
-        f"Each reviewer ends its report with the block, PANEL-VERDICT and PANEL-SHA256. "
+        f"Each reviewer posts the block byte for byte with PANEL-VERDICT and PANEL-SHA256 "
+        f"as a normal message, then ends its final report with only the PANEL-VERDICT and "
+        f"PANEL-SHA256 lines (plus one line of finding if NEEDS-WORK); a final report that "
+        f"repeats the whole block still counts. "
         f"A receipted review on another engine counts as one more reviewer, never as the "
         f"only one: at least one PASS must come from a harness reviewer subagent. "
         f"Then emit exactly the reviewed text. While a subagent runs, a status line of "
@@ -897,7 +900,8 @@ def _seed_case(sandbox: Path, session: str, msg: str, fx: dict) -> None:
         agent_id = r.get("agent_id") or hashlib.sha256(f"{session}:{i}".encode()).hexdigest()[:17]
         panel_fixture_seed.seed_reply_receipt(
             sandbox, session, r.get("text", msg), r["verdict"], r["ts"], agent_id,
-            r.get("agent_type", "Reality Checker"))
+            r.get("agent_type", "Reality Checker"),
+            short=bool(r.get("short")), block_verdict=r.get("block_verdict"))
         if int(r.get("ledger_copies", 1)) > 1:
             # The same reviewer's row recorded several times: still one reviewer.
             ledger = sandbox / ".claude" / ".cache" / "receipts" / "global.jsonl"

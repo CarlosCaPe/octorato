@@ -25,9 +25,9 @@ never by path.
 
 THE REVIEWER BLOCK (what binds a receipt to a message)
 A stated digest alone binds to nothing: the main loop could show a reviewer
-text A and hand it the digest of text B. So the reviewer's final report must
-carry the message itself, and the receipt consumer RECOMPUTES the digest from
-that block, never trusting the stated line alone:
+text A and hand it the digest of text B. So the reviewer must reproduce the
+message itself, and the receipt consumer RECOMPUTES the digest from that block,
+never trusting the stated line alone:
 
     PANEL-TO: <recipient>                 one line per recipient
     PANEL-MENTION: <who>                  one line per person mentioned
@@ -39,8 +39,15 @@ that block, never trusting the stated line alone:
     PANEL-SHA256: <digest>
 
 `panel_digest.py --panel-request ...` prints that block (without the verdict)
-for the main loop to hand to the reviewer, who repeats it and adds its
-verdict. The last block of the report is the one read.
+for the main loop to hand to the reviewer. The reviewer posts it byte for byte
+with its PANEL-VERDICT and PANEL-SHA256 as a normal message, then ends its
+final report with only the PANEL-VERDICT and PANEL-SHA256 lines (plus one line
+of finding if NEEDS-WORK), so the parent sees two lines instead of the whole
+block. The receipt anchors to the final report, whose verdict decides; the
+earlier message of the same run must recompute to the same digest and state
+the same verdict (receipt_ledger.panel_block_entry). A final report that
+repeats the whole block is still accepted; then the last block of that report
+is the one read.
 
 WHICH FIELDS (per tool; any other key denies)
 Each send tool has a KNOWN key set. A key outside it (a snake_case `draft_id`,
