@@ -582,6 +582,24 @@ class PanelLedger(unittest.TestCase):
         _, rows = self._reflex("sh5")
         self.assertEqual(rows, [])
 
+    def test_run_ending_on_a_block_for_another_digest_does_not_stand(self):
+        # The anchored entry binds by itself, but the run's final report states
+        # PASS for the same digest while its own block recomputes to another:
+        # that is not the same verdict, so the anchor does not stand.
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T - dt.timedelta(minutes=2)), "sd1")
+        self.assertIsNotNone(rl.panel_pass_for(self.d, "s1", T))
+        tp = self.home / ".claude/projects/fx/s1/subagents/agent-sd1.jsonl"
+        other = pd.Message("something else", [], ["1"]).panel_block().rsplit("\nPANEL-SHA256:", 1)[0]
+        final = {"type": "assistant",
+                 "message": {"role": "assistant", "id": "msg_sd1_f",
+                             "content": [{"type": "text", "text":
+                                          f"{other}\nPANEL-VERDICT: PASS\nPANEL-SHA256: {self.d}"}]},
+                 "uuid": seed._uuid("sd1f"), "parentUuid": seed._uuid("sd1a"),
+                 "sessionId": "s1", "timestamp": iso(T - dt.timedelta(minutes=1))}
+        with tp.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(final) + "\n")
+        self.assertIsNone(rl.panel_pass_for(self.d, "s1", T))
+
     def test_receipt_is_single_use(self):
         seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T), "c1")
         r = rl.panel_pass_for(self.d, "s1", T)
