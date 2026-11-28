@@ -15,6 +15,39 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-11-28]: v12.6.1
+### Fixes
+- fix(panel): accept the block from a reviewer tool input; bind one provenance footer (#485)
+
+## [2026-11-28]: v12.6.0
+### Features
+- feat(panel): accept a two-line final report backed by an earlier block (#484)
+
+## [2026-11-28]: v12.5.3
+### Other
+- chore(review): record the Fable baseline replay (#483)
+
+## [2026-11-27]: v12.5.2
+### Fixes
+- fix(review): write no candidate record when the engine refuses for quota (#482)
+
+## [2026-11-27]: v12.5.1
+### Fixes
+- fix(review): check the held-out set before any live replay call (#481)
+
+## [2026-11-27]: v12.5.0
+### Features
+- feat(review): replay that qualifies external reviewers, spec task T20 (#478)
+
+## [2026-11-27]: v12.4.0
+### Features
+- feat(comms): no-menu gate decides approval asks with /choice (#480)
+
+## [2026-11-27]: v12.3.1
+### Other
+- docs(execution-bias): every operator step carries its verified link (#479)
+- docs(changelog): backfill v12.3.0 (#476)
+
 ## [2026-11-23]: v12.3.0
 ### Features
 - feat(skills): add zero-knowledge-credential-handoff skill (#475)
